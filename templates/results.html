@@ -30,10 +30,17 @@ h1 {
     margin-top: 0;
 }
 
+h2 {
+    color: #dddddd;
+    font-size: 18px;
+    margin-bottom: 6px;
+    margin-top: 28px;
+}
+
 table {
     width: 100%;
     border-collapse: collapse;
-    margin-top: 20px;
+    margin-top: 12px;
 }
 
 td {
@@ -80,22 +87,90 @@ a.button {
 
 <tr>
 <td>Formula</td>
-<td>{{ formula }}</td>
+<td>{{ summary.formula }}</td>
 </tr>
 
 <tr>
 <td>Reduced Formula</td>
-<td>{{ reduced_formula }}</td>
+<td>{{ summary.reduced_formula }}</td>
 </tr>
 
 <tr>
 <td>Number of Atoms</td>
-<td>{{ natoms }}</td>
+<td>{{ summary.natoms }}</td>
 </tr>
 
 <tr>
 <td>Volume (Å³)</td>
-<td>{{ volume }}</td>
+<td>{{ summary.volume }}</td>
+</tr>
+
+<tr>
+<td>Density (g/cm³)</td>
+<td>{{ summary.density }}</td>
+</tr>
+
+</table>
+
+<h2>Lattice Parameters</h2>
+
+<table>
+
+<tr>
+<td>a (Å)</td>
+<td>{{ summary.lattice.a }}</td>
+</tr>
+
+<tr>
+<td>b (Å)</td>
+<td>{{ summary.lattice.b }}</td>
+</tr>
+
+<tr>
+<td>c (Å)</td>
+<td>{{ summary.lattice.c }}</td>
+</tr>
+
+</table>
+
+<h2>Lattice Angles</h2>
+
+<table>
+
+<tr>
+<td>α (degrees)</td>
+<td>{{ summary.angles.alpha }}</td>
+</tr>
+
+<tr>
+<td>β (degrees)</td>
+<td>{{ summary.angles.beta }}</td>
+</tr>
+
+<tr>
+<td>γ (degrees)</td>
+<td>{{ summary.angles.gamma }}</td>
+</tr>
+
+</table>
+
+<h2>Symmetry</h2>
+
+<table>
+
+<tr>
+<td>Space Group Symbol</td>
+<td>{{ summary.space_group_symbol or "Unknown" }}</td>
+</tr>
+
+<tr>
+<td>Space Group Number</td>
+<td>{{ summary.space_group_number or "Unknown" }}</td>
+</tr>
+
+<tr>
+<td>Crystal System</td>
+<td>{{ summary.crystal_system }}</td>
 </tr>
 
 </table>

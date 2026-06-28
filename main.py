@@ -2,6 +2,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.templating import Jinja2Templates
 
 from backend.parser import parse_structure
+from backend.summary import summarize_structure
 
 app = FastAPI()
 
@@ -24,16 +25,10 @@ def analyze(
     fmt: str = Form(...)
 ):
     structure_obj = parse_structure(structure, fmt)
-
-    context = {
-        "formula": structure_obj.formula,
-        "reduced_formula": structure_obj.composition.reduced_formula,
-        "natoms": len(structure_obj),
-        "volume": round(structure_obj.volume, 3),
-    }
+    summary = summarize_structure(structure_obj)
 
     return templates.TemplateResponse(
         request=request,
         name="results.html",
-        context=context,
+        context={"summary": summary},
     )
