@@ -41,31 +41,37 @@ Accept crystallographic input through the browser and present a scientific summa
 
 ---
 
-# Phase 2 — Workflow Construction
+# Phase 2 — Workflow Construction 🚧
 
 Goal:
-Build Atomate2 workflows from browser input without submitting them.
+Replace notebook workflow construction while remaining entirely local.
 
+Backend
+
+- [x] Extract workflow construction from notebook
+- [x] Build Atomate2 Flow
+- [x] Backend smoke test
+
+Browser
+
+- [ ] Workflow section
 - [ ] Workflow selector
+- [ ] Build Workflow button
 - [ ] Workflow summary
-- [ ] Build RelaxMaker flow
-- [ ] Build StaticMaker flow
-- [ ] Dry run
-- [ ] Display workflow information
-- [ ] Display generated job graph
+- [ ] Display generated Jobflow graph
 
 ---
 
 # Phase 3 — Remote Submission
 
 Goal:
-Replace the notebook's submission workflow.
+Replace notebook submission.
 
 - [ ] Submit workflow
 - [ ] Remote runner
 - [ ] PowerSLURM submission
 - [ ] Receive Job ID
-- [ ] Store JobRecord
+- [ ] JobRecord
 
 ---
 
@@ -98,7 +104,7 @@ Replace notebook parsing and visualization.
 # Phase 6 — Scientific Workflows
 
 Goal:
-Expand supported workflows.
+Expand supported Atomate2 workflows.
 
 - [ ] Relax → Static
 - [ ] Band Structure

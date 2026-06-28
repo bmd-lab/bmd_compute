@@ -303,3 +303,6 @@ The objective is not merely to build a web interface.
 
 The objective is to build a maintainable scientific application that eventually renders the notebook unnecessary while preserving its validated scientific workflows.
 
+The reference notebook is treated as a source of validated scientific behaviour. Backend modules should be extracted from the notebook in small, reviewable units rather than rewritten wholesale.
+
+Notebook migration should occur one backend module at a time. Each extracted module should be independently testable before integration into the web interface.
