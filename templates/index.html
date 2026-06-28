@@ -1,9 +1,12 @@
 <!DOCTYPE html>
 <html>
+
 <head>
+
 <title>BMD Compute</title>
 
 <style>
+
 body {
     background: #161616;
     color: #f2f2f2;
@@ -12,8 +15,8 @@ body {
 }
 
 .container {
-    width: 620px;
-    margin: 70px auto;
+    width: 700px;
+    margin: 60px auto;
 }
 
 .header {
@@ -43,53 +46,110 @@ label {
     color: #cccccc;
 }
 
-input, select {
+input,
+select,
+textarea {
+
     width: 100%;
     padding: 10px;
+
     background: #181818;
     color: #f2f2f2;
+
     border: 1px solid #555;
     border-radius: 6px;
+
+    box-sizing: border-box;
+}
+
+textarea {
+    font-family: Consolas, monospace;
+    resize: vertical;
 }
 
 button {
     margin-top: 24px;
+
     width: 100%;
     padding: 12px;
+
     background: #4FC3F7;
-    color: #000;
+    color: black;
+
     border: none;
     border-radius: 6px;
+
     font-size: 16px;
     cursor: pointer;
 }
+
+button:hover {
+    background: #81D4FA;
+}
+
 </style>
+
 </head>
 
 <body>
+
 <div class="container">
 
     <div class="header">
+
         <h1>BMD Compute</h1>
-        <div class="subtitle">Atomate2 / VASP workflow submission interface</div>
+
+        <div class="subtitle">
+            Atomate2 / VASP workflow submission interface
+        </div>
+
     </div>
 
     <div class="panel">
-        <form>
-            <label>Structure file</label>
-            <input type="file" name="structure">
 
-            <label>Workflow</label>
-            <select name="workflow">
-                <option>Static</option>
-                <option>Relaxation</option>
-                <option>Band Structure</option>
+        <form action="/analyze" method="post">
+
+            <label>Structure Format</label>
+
+            <select name="fmt">
+
+                <option value="poscar">POSCAR</option>
+
+                <option value="cif">CIF</option>
+
             </select>
 
-            <button type="button">Submit Workflow</button>
+            <label>Structure</label>
+
+            <textarea
+                name="structure"
+                rows="14"
+                placeholder="Paste your POSCAR or CIF here..."></textarea>
+
+            <label>Workflow</label>
+
+            <select name="workflow">
+
+                <option>Static</option>
+
+                <option>Relaxation</option>
+
+                <option>Band Structure</option>
+
+            </select>
+
+            <button type="submit">
+
+                Analyze Structure
+
+            </button>
+
         </form>
+
     </div>
 
 </div>
+
 </body>
+
 </html>

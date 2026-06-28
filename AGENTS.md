@@ -1,402 +1,305 @@
-\# AGENTS.md
+# AGENTS.md
 
+# BMD Compute
 
+This document defines the architectural philosophy of BMD Compute.
 
-\# BMD Compute
+It exists to keep human developers and coding agents aligned as the project evolves.
 
+This document describes **how decisions should be made**, not merely how the project is currently implemented.
 
+---
 
-This document describes the philosophy and architecture of the BMD Compute project.
+# Project Goal
 
+BMD Compute is a browser-based interface for building, submitting, monitoring and retrieving VASP calculations using an Atomate2 / Jobflow / PowerSLURM backend.
 
+The long-term goal is for BMD Compute to replace the existing Jupyter notebook as the primary user interface.
 
-The purpose of this document is to keep both human developers and coding agents aligned as the project evolves.
+The notebook is retained only as a validated reference implementation.
 
+---
 
+# Primary Design Principle
 
-\---
+The browser interface is the product.
 
+Everything else exists to support it.
 
+Users should interact with BMD Compute through a browser rather than notebooks, SSH sessions or shell scripts.
 
-\# Project Goal
+---
 
+# The Notebook
 
+The notebook located in `reference/` is **not legacy code**.
 
-BMD Compute is a browser-based interface for building, submitting, monitoring and retrieving VASP calculations using the existing Atomate2/Jobflow/PowerSLURM backend.
+It represents a validated scientific workflow.
 
+Its scientific behaviour should be preserved wherever practical.
 
-
-The long-term goal is for BMD Compute to replace the existing Jupyter notebook workflow as the primary user interface.
-
-
-
-The notebook remains only as a reference implementation and development aid.
-
-
-
-\---
-
-
-
-\# Guiding Principles
-
-
-
-\## The web interface is the product.
-
-
-
-Everything should ultimately serve the browser interface.
-
-
-
-Do not develop features exclusively for the notebook unless they are required for backend development.
-
-
-
-\---
-
-
-
-\## Never duplicate scientific logic.
-
-
-
-Scientific functionality should exist in exactly one place.
-
-
-
-Avoid situations where both the notebook and the web interface implement the same scientific workflow independently.
-
-
-
-Instead:
-
-
-
-Notebook
-
-&#x20;       ↓
-
-Backend
-
-&#x20;       ↑
-
-Web Interface
-
-
-
-Both interfaces should call the same backend functions.
-
-
-
-\---
-
-
-
-\## Keep FastAPI thin.
-
-
-
-FastAPI should only
-
-
-
-\- receive user input
-
-\- validate requests
-
-\- call backend functions
-
-\- return results
-
-
-
-FastAPI should NOT contain
-
-
-
-\- workflow construction
-
-\- SLURM submission logic
-
-\- pymatgen logic
-
-\- parsing logic
-
-\- scientific calculations
-
-
-
-\---
-
-
-
-\## The backend owns the science.
-
-
-
-Scientific code belongs in backend/.
-
-
-
-Examples include
-
-
-
-\- structure parsing
-
-\- workflow generation
-
-\- submission
-
-\- monitoring
-
-\- result parsing
-
-
-
-These modules should remain usable independently of the web interface.
-
-
-
-\---
-
-
-
-\# Structure Philosophy
-
-
-
-Regardless of input source
-
-
-
-\- POSCAR text
-
-\- CIF text
-
-\- uploaded file
-
-\- Materials Project
-
-\- future databases
-
-
-
-all inputs should become
-
-
-
-pymatgen.Structure
-
-
-
-as early as possible.
-
-
-
-From that point onward every workflow should operate only on Structure objects.
-
-
-
-\---
-
-
-
-\# User Interface Philosophy
-
-
-
-Expose scientific workflows.
-
-
-
-Do NOT expose unnecessary VASP implementation details.
-
-
-
-Preferred interface
-
-
-
-\- Relaxation
-
-\- Static
-
-\- Band Structure
-
-\- HSE06
-
-
-
-Avoid exposing large numbers of INCAR tags unless scientifically justified.
-
-
-
-The interface should feel like software written by computational materials scientists rather than generic HPC software.
-
-
-
-\---
-
-
-
-\# Development Philosophy
-
-
-
-Develop incrementally.
-
-
-
-Every commit should
-
-
-
-\- compile
-
-\- run
-
-\- be testable
-
-
-
-Avoid large rewrites.
-
-
-
-Each feature should be implemented in small, verifiable steps.
-
-
-
-\---
-
-
-
-\# Migration Strategy
-
-
-
-The existing notebook is the reference implementation.
-
-
-
-Features should migrate according to the following pattern:
-
-
+When migrating notebook functionality:
 
 Notebook feature
 
-&#x20;       ↓
+↓
 
-Reusable backend function
+Reusable backend module
 
-&#x20;       ↓
+↓
 
 Web interface
 
+Do **not** rewrite notebook functionality directly inside FastAPI.
 
+Refactor behaviour into reusable backend modules.
 
-Avoid rewriting notebook functionality directly inside FastAPI.
+The notebook remains the reference specification until BMD Compute fully replaces it.
 
+---
 
+# Architecture
 
-\---
+The intended architecture is
 
+Browser
 
+↓
 
-\# Repository Layout
+FastAPI
 
+↓
 
+Backend
 
+↓
+
+Atomate2
+
+↓
+
+Jobflow
+
+↓
+
+PowerSLURM
+
+↓
+
+VASP
+
+FastAPI should remain a thin controller.
+
+Scientific logic belongs in the backend.
+
+---
+
+# Responsibilities
+
+## FastAPI
+
+FastAPI should only
+
+* receive requests
+* validate inputs
+* call backend functions
+* return responses
+
+FastAPI should **not** contain
+
+* workflow construction
+* pymatgen logic
+* Atomate2 logic
+* SLURM logic
+* scientific calculations
+
+---
+
+## Backend
+
+The backend owns all scientific behaviour.
+
+Typical backend modules include
+
+* structures
+* workflows
+* submission
+* monitoring
+* results
+
+Backend modules should remain usable independently of the web interface.
+
+---
+
+## Infrastructure
+
+Infrastructure code is separate from scientific code.
+
+Examples include
+
+* SSH
+* SLURM
+* remote execution
+* configuration
+* deployment
+
+Scientific modules should not depend directly on infrastructure wherever practical.
+
+---
+
+# Structure Philosophy
+
+Every supported input method
+
+* POSCAR
+* CIF
+* uploaded file
+* Materials Project
+* future databases
+
+should converge as early as possible to
+
+`pymatgen.Structure`
+
+Once a Structure exists, downstream workflow code should not care where it originated.
+
+---
+
+# Scientific Workflows
+
+Expose scientific workflows rather than implementation details.
+
+Preferred interface
+
+* Relaxation
+* Static
+* Band Structure
+* HSE06
+
+Avoid exposing large numbers of INCAR parameters unless there is a compelling scientific reason.
+
+Users should think in terms of scientific tasks rather than VASP implementation details.
+
+---
+
+# Stable Interfaces
+
+Backend modules should expose stable interfaces.
+
+Implementation may evolve.
+
+Interfaces should change only when necessary.
+
+For example,
+
+`parse_structure()`
+
+may become more sophisticated internally while remaining the canonical interface for structure parsing.
+
+---
+
+# Development Philosophy
+
+Develop incrementally.
+
+Every commit should
+
+* run
+* be testable
+* leave the application in a working state
+
+Avoid large rewrites.
+
+Prefer many small working commits over one large implementation.
+
+---
+
+# Deployment Philosophy
+
+Local development should closely mirror the deployed application.
+
+Avoid implementing features that only function in the local development environment.
+
+The deployed application should use the same codebase as local development.
+
+---
+
+# Application State
+
+Avoid relying on temporary local files as the application grows.
+
+Eventually, application state should be represented explicitly through objects such as
+
+* WorkflowSpec
+* JobRecord
+* ResultSummary
+
+rather than scattered JSON files.
+
+This should happen naturally as functionality is added rather than through premature abstraction.
+
+---
+
+# Migration Strategy
+
+When migrating notebook functionality:
+
+1. Understand the notebook behaviour.
+2. Extract reusable backend functionality.
+3. Test backend functionality independently.
+4. Connect it to FastAPI.
+5. Replace the notebook feature.
+
+Never migrate notebook code directly into FastAPI.
+
+---
+
+# Repository Philosophy
+
+The repository should remain understandable to a new developer.
+
+Prefer
+
+```
 backend/
+```
 
-&#x20;   Scientific logic
+over large monolithic modules.
 
+Keep scientific code, infrastructure code and web code clearly separated.
 
+---
 
-templates/
-
-&#x20;   HTML templates
-
-
-
-static/
-
-&#x20;   CSS, JavaScript and images
-
-
-
-uploads/
-
-&#x20;   Temporary uploaded files
-
-
-
-reference/
-
-&#x20;   Reference notebook and supporting design material
-
-
-
-\---
-
-
-
-\# Long-Term Vision
-
-
+# Long-Term Vision
 
 A user should be able to
 
+1. Enter a structure.
+2. Choose a workflow.
+3. Submit.
+4. Monitor.
+5. Retrieve results.
 
+without directly interacting with
 
-1\. Enter a structure.
-
-2\. Choose a workflow.
-
-3\. Submit the workflow.
-
-4\. Monitor progress.
-
-5\. Retrieve results.
-
-
-
-without interacting directly with
-
-
-
-\- SSH
-
-\- SLURM
-
-\- Atomate2 internals
-
-\- Jobflow internals
-
-
+* SSH
+* SLURM
+* Atomate2 internals
+* Jobflow internals
 
 The computational infrastructure should remain hidden behind a clean scientific interface.
 
+---
 
+# Design Rule
 
-\---
+Whenever making an architectural decision, ask:
 
-
-
-\# Design Rule
-
-
-
-When making architectural decisions, ask:
-
-
-
-"Does this move BMD Compute closer to replacing the notebook?"
-
-
+> Does this move BMD Compute closer to replacing the notebook?
 
 If the answer is no, reconsider the design.
+
+The objective is not merely to build a web interface.
+
+The objective is to build a maintainable scientific application that eventually renders the notebook unnecessary while preserving its validated scientific workflows.
 

@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+
+<title>BMD Compute</title>
+
+<style>
+
+body {
+    background: #161616;
+    color: #f2f2f2;
+    font-family: Arial, sans-serif;
+    margin: 0;
+}
+
+.container {
+    width: 700px;
+    margin: 60px auto;
+}
+
+.panel {
+    background: #242424;
+    border: 1px solid #3a3a3a;
+    border-radius: 12px;
+    padding: 28px;
+}
+
+h1 {
+    margin-top: 0;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+}
+
+td {
+    padding: 12px;
+    border-bottom: 1px solid #444;
+}
+
+td:first-child {
+    color: #bbbbbb;
+    width: 220px;
+}
+
+a.button {
+
+    display: inline-block;
+
+    margin-top: 25px;
+
+    padding: 10px 20px;
+
+    text-decoration: none;
+
+    background: #4FC3F7;
+
+    color: black;
+
+    border-radius: 6px;
+
+}
+
+</style>
+
+</head>
+
+<body>
+
+<div class="container">
+
+<div class="panel">
+
+<h1>Structure Summary</h1>
+
+<table>
+
+<tr>
+<td>Formula</td>
+<td>{{ formula }}</td>
+</tr>
+
+<tr>
+<td>Reduced Formula</td>
+<td>{{ reduced_formula }}</td>
+</tr>
+
+<tr>
+<td>Number of Atoms</td>
+<td>{{ natoms }}</td>
+</tr>
+
+<tr>
+<td>Volume (Å³)</td>
+<td>{{ volume }}</td>
+</tr>
+
+</table>
+
+<a class="button" href="/">Analyze Another Structure</a>
+
+</div>
+
+</div>
+
+</body>
+
+</html>

@@ -1,44 +1,39 @@
-from fastapi import FastAPI, Request
-from pydantic import BaseModel 
+from fastapi import FastAPI, Form, Request
 from fastapi.templating import Jinja2Templates
+
+from backend.parser import parse_structure
 
 app = FastAPI()
 
 templates = Jinja2Templates(directory="templates")
+
 
 @app.get("/")
 def home(request: Request):
     return templates.TemplateResponse(
         request=request,
         name="index.html",
-        context={
-            "message": "Welcome to the Burton Materials Design Lab!"
-        },
+        context={}
     )
 
-@app.get("/about")
-def about():
-    return {
-        "lab": "Burton Materials Design Lab",
-        "university": "Tel Aviv University",
-        "purpose": "Computational materials design"
+
+@app.post("/analyze")
+def analyze(
+    request: Request,
+    structure: str = Form(...),
+    fmt: str = Form(...)
+):
+    structure_obj = parse_structure(structure, fmt)
+
+    context = {
+        "formula": structure_obj.formula,
+        "reduced_formula": structure_obj.composition.reduced_formula,
+        "natoms": len(structure_obj),
+        "volume": round(structure_obj.volume, 3),
     }
 
-@app.get("/hello/{name}")
-def hello(name: str):
-    return {
-        "name": name,
-        "length": len(name),
-        "uppercase": name.upper()
-    }
-
-class Material(BaseModel):
-    formula: str
-
-
-@app.post("/material")
-def material(material: Material):
-    return {
-        "formula": material.formula,
-        "message": f"You submitted {material.formula}"
-    }
+    return templates.TemplateResponse(
+        request=request,
+        name="results.html",
+        context=context,
+    )
