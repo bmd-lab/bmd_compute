@@ -306,3 +306,27 @@ The objective is to build a maintainable scientific application that eventually 
 The reference notebook is treated as a source of validated scientific behaviour. Backend modules should be extracted from the notebook in small, reviewable units rather than rewritten wholesale.
 
 Notebook migration should occur one backend module at a time. Each extracted module should be independently testable before integration into the web interface.
+
+## User Experience Philosophy
+
+BMD Compute should behave like a scientific workbench rather than a traditional website.
+
+The preferred interaction model is progressive disclosure:
+
+Structure
+    ↓
+Structure Summary
+    ↓
+Workflow
+    ↓
+Workflow Summary
+    ↓
+Submission
+    ↓
+Monitoring
+    ↓
+Results
+
+Each successful action reveals the next stage while preserving all previous information.
+
+Avoid unnecessary page navigation.

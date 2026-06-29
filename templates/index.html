@@ -15,8 +15,8 @@ body {
 }
 
 .container {
-    width: 700px;
     margin: 60px auto;
+    width: 700px;
 }
 
 .header {
@@ -26,6 +26,13 @@ body {
 h1 {
     font-size: 32px;
     margin-bottom: 5px;
+}
+
+h2 {
+    color: #dddddd;
+    font-size: 18px;
+    margin-bottom: 6px;
+    margin-top: 28px;
 }
 
 .subtitle {
@@ -40,26 +47,22 @@ h1 {
 }
 
 label {
-    display: block;
-    margin-top: 18px;
-    margin-bottom: 8px;
     color: #cccccc;
+    display: block;
+    margin-bottom: 8px;
+    margin-top: 18px;
 }
 
 input,
 select,
 textarea {
-
-    width: 100%;
-    padding: 10px;
-
     background: #181818;
-    color: #f2f2f2;
-
     border: 1px solid #555;
     border-radius: 6px;
-
     box-sizing: border-box;
+    color: #f2f2f2;
+    padding: 10px;
+    width: 100%;
 }
 
 textarea {
@@ -67,24 +70,58 @@ textarea {
     resize: vertical;
 }
 
-button {
-    margin-top: 24px;
-
-    width: 100%;
-    padding: 12px;
-
+button,
+a.button {
     background: #4FC3F7;
-    color: black;
-
     border: none;
     border-radius: 6px;
-
-    font-size: 16px;
+    box-sizing: border-box;
+    color: black;
     cursor: pointer;
+    display: inline-block;
+    font-size: 16px;
+    margin-top: 24px;
+    padding: 12px;
+    text-align: center;
+    text-decoration: none;
+    width: 100%;
 }
 
-button:hover {
+button:hover,
+a.button:hover {
     background: #81D4FA;
+}
+
+table {
+    border-collapse: collapse;
+    margin-top: 12px;
+    width: 100%;
+}
+
+td {
+    border-bottom: 1px solid #444;
+    padding: 12px;
+    vertical-align: top;
+}
+
+td:first-child {
+    color: #bbbbbb;
+    width: 220px;
+}
+
+ul {
+    margin: 0;
+    padding-left: 18px;
+}
+
+.section {
+    border-top: 1px solid #3a3a3a;
+    margin-top: 28px;
+    padding-top: 2px;
+}
+
+.hidden-field {
+    display: none;
 }
 
 </style>
@@ -112,11 +149,8 @@ button:hover {
             <label>Structure Format</label>
 
             <select name="fmt">
-
-                <option value="poscar">POSCAR</option>
-
-                <option value="cif">CIF</option>
-
+                <option value="poscar" {% if fmt == "poscar" %}selected{% endif %}>POSCAR</option>
+                <option value="cif" {% if fmt == "cif" %}selected{% endif %}>CIF</option>
             </select>
 
             <label>Structure</label>
@@ -124,27 +158,183 @@ button:hover {
             <textarea
                 name="structure"
                 rows="14"
-                placeholder="Paste your POSCAR or CIF here..."></textarea>
-
-            <label>Workflow</label>
-
-            <select name="workflow">
-
-                <option>Static</option>
-
-                <option>Relaxation</option>
-
-                <option>Band Structure</option>
-
-            </select>
+                placeholder="Paste your POSCAR or CIF here...">{{ structure_text }}</textarea>
 
             <button type="submit">
-
                 Analyze Structure
-
             </button>
 
         </form>
+
+        {% if summary %}
+        <div class="section">
+
+            <h2>Structure Summary</h2>
+
+            <table>
+
+            <tr>
+            <td>Formula</td>
+            <td>{{ summary.formula }}</td>
+            </tr>
+
+            <tr>
+            <td>Reduced Formula</td>
+            <td>{{ summary.reduced_formula }}</td>
+            </tr>
+
+            <tr>
+            <td>Number of Atoms</td>
+            <td>{{ summary.natoms }}</td>
+            </tr>
+
+            <tr>
+            <td>Volume (Å³)</td>
+            <td>{{ summary.volume }}</td>
+            </tr>
+
+            <tr>
+            <td>Density (g/cm³)</td>
+            <td>{{ summary.density }}</td>
+            </tr>
+
+            </table>
+
+            <h2>Lattice Parameters</h2>
+
+            <table>
+
+            <tr>
+            <td>a (Å)</td>
+            <td>{{ summary.lattice.a }}</td>
+            </tr>
+
+            <tr>
+            <td>b (Å)</td>
+            <td>{{ summary.lattice.b }}</td>
+            </tr>
+
+            <tr>
+            <td>c (Å)</td>
+            <td>{{ summary.lattice.c }}</td>
+            </tr>
+
+            </table>
+
+            <h2>Lattice Angles</h2>
+
+            <table>
+
+            <tr>
+            <td>α (degrees)</td>
+            <td>{{ summary.angles.alpha }}</td>
+            </tr>
+
+            <tr>
+            <td>β (degrees)</td>
+            <td>{{ summary.angles.beta }}</td>
+            </tr>
+
+            <tr>
+            <td>γ (degrees)</td>
+            <td>{{ summary.angles.gamma }}</td>
+            </tr>
+
+            </table>
+
+            <h2>Symmetry</h2>
+
+            <table>
+
+            <tr>
+            <td>Space Group Symbol</td>
+            <td>{{ summary.space_group_symbol or "Unknown" }}</td>
+            </tr>
+
+            <tr>
+            <td>Space Group Number</td>
+            <td>{{ summary.space_group_number or "Unknown" }}</td>
+            </tr>
+
+            <tr>
+            <td>Crystal System</td>
+            <td>{{ summary.crystal_system }}</td>
+            </tr>
+
+            </table>
+
+        </div>
+
+        <div class="section">
+
+            <h2>Workflow</h2>
+
+            <form action="/build-workflow" method="post">
+
+                <textarea class="hidden-field" name="structure">{{ structure_text }}</textarea>
+                <input type="hidden" name="fmt" value="{{ fmt }}">
+
+                <label>Workflow</label>
+                <select name="workflow">
+                    <option value="static" {% if selected_workflow == "static" %}selected{% endif %}>Static</option>
+                    <option value="relax" {% if selected_workflow == "relax" %}selected{% endif %}>Relaxation</option>
+                    <option value="relax_ions" {% if selected_workflow == "relax_ions" %}selected{% endif %}>Relax Ions</option>
+                </select>
+
+                <label>Method</label>
+                <select name="method">
+                    <option value="PBE_64" {% if selected_method == "PBE_64" %}selected{% endif %}>PBE</option>
+                </select>
+
+                <button type="submit">Build Workflow</button>
+
+            </form>
+
+        </div>
+        {% endif %}
+
+        {% if workflow %}
+        <div class="section">
+
+            <h2>Workflow Summary</h2>
+
+            <table>
+
+            <tr>
+            <td>Workflow Type</td>
+            <td>{{ workflow.workflow_type }}</td>
+            </tr>
+
+            <tr>
+            <td>Flow Name</td>
+            <td>{{ workflow.flow_name }}</td>
+            </tr>
+
+            <tr>
+            <td>Number of Jobs</td>
+            <td>{{ workflow.number_of_jobs }}</td>
+            </tr>
+
+            <tr>
+            <td>Job Names</td>
+            <td>
+            <ul>
+            {% for job_name in workflow.job_names %}
+            <li>{{ job_name }}</li>
+            {% endfor %}
+            </ul>
+            </td>
+            </tr>
+
+            <tr>
+            <td>Status</td>
+            <td>{% if workflow.ready_for_submission %}Ready for submission{% else %}Not ready{% endif %}</td>
+            </tr>
+
+            </table>
+
+        </div>
+        {% endif %}
 
     </div>
 

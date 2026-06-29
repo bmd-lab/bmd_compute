@@ -53,7 +53,8 @@ td:first-child {
     width: 220px;
 }
 
-a.button {
+a.button,
+button {
 
     display: inline-block;
 
@@ -67,7 +68,46 @@ a.button {
 
     color: black;
 
+    border: none;
     border-radius: 6px;
+
+    cursor: pointer;
+    font-size: 16px;
+
+}
+
+button {
+    width: 100%;
+
+}
+
+button:hover,
+a.button:hover {
+    background: #81D4FA;
+
+}
+
+label {
+    color: #cccccc;
+    display: block;
+    margin-bottom: 8px;
+    margin-top: 18px;
+
+}
+
+select {
+    background: #181818;
+    border: 1px solid #555;
+    border-radius: 6px;
+    box-sizing: border-box;
+    color: #f2f2f2;
+    padding: 10px;
+    width: 100%;
+
+}
+
+.hidden-field {
+    display: none;
 
 }
 
@@ -174,6 +214,29 @@ a.button {
 </tr>
 
 </table>
+
+<h2>Workflow</h2>
+
+<form action="/build-workflow" method="post">
+
+<textarea class="hidden-field" name="structure">{{ structure_text }}</textarea>
+<input type="hidden" name="fmt" value="{{ fmt }}">
+
+<label>Workflow</label>
+<select name="workflow">
+<option value="static">Static</option>
+<option value="relax">Relaxation</option>
+<option value="relax_ions">Relax Ions</option>
+</select>
+
+<label>Method</label>
+<select name="method">
+<option value="PBE_64">PBE</option>
+</select>
+
+<button type="submit">Build Workflow</button>
+
+</form>
 
 <a class="button" href="/">Analyze Another Structure</a>
 

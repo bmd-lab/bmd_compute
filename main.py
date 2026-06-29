@@ -3,10 +3,31 @@ from fastapi.templating import Jinja2Templates
 
 from backend.parser import parse_structure
 from backend.summary import summarize_structure
+from backend.workflow_summary import summarize_workflow
+from backend.workflows import build_atomate2_flow
 
 app = FastAPI()
 
 templates = Jinja2Templates(directory="templates")
+
+
+def page_context(
+    *,
+    structure_text: str = "",
+    fmt: str = "poscar",
+    summary=None,
+    selected_workflow: str = "static",
+    selected_method: str = "PBE_64",
+    workflow_summary=None,
+):
+    return {
+        "structure_text": structure_text,
+        "fmt": fmt,
+        "summary": summary,
+        "selected_workflow": selected_workflow,
+        "selected_method": selected_method,
+        "workflow": workflow_summary,
+    }
 
 
 @app.get("/")
@@ -14,7 +35,7 @@ def home(request: Request):
     return templates.TemplateResponse(
         request=request,
         name="index.html",
-        context={}
+        context=page_context(),
     )
 
 
@@ -29,6 +50,41 @@ def analyze(
 
     return templates.TemplateResponse(
         request=request,
-        name="results.html",
-        context={"summary": summary},
+        name="index.html",
+        context=page_context(
+            structure_text=structure,
+            fmt=fmt,
+            summary=summary,
+        ),
+    )
+
+
+@app.post("/build-workflow")
+def build_workflow(
+    request: Request,
+    structure: str = Form(...),
+    fmt: str = Form(...),
+    workflow: str = Form(...),
+    method: str = Form(...)
+):
+    structure_obj = parse_structure(structure, fmt)
+    summary = summarize_structure(structure_obj)
+    flow = build_atomate2_flow(
+        structure=structure_obj,
+        workflow=workflow,
+        potcar_functional=method,
+    )
+    workflow_summary = summarize_workflow(flow, workflow)
+
+    return templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context=page_context(
+            structure_text=structure,
+            fmt=fmt,
+            summary=summary,
+            selected_workflow=workflow,
+            selected_method=method,
+            workflow_summary=workflow_summary,
+        ),
     )
