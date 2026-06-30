@@ -48,6 +48,59 @@ POTCAR_LINK_MAP = {
     "LDA": ["POT_LDA_PAW"],
 }
 
+MP_RECOMMENDED_POTCAR_SYMBOLS = {
+    "Ba": "Ba_sv",
+    "Be": "Be_sv",
+    "Ca": "Ca_sv",
+    "Cr": "Cr_pv",
+    "Cs": "Cs_sv",
+    "Cu": "Cu_pv",
+    "Dy": "Dy_3",
+    "Er": "Er_3",
+    "Eu": "Eu",
+    "Fe": "Fe_pv",
+    "Ga": "Ga_d",
+    "Gd": "Gd",
+    "Ge": "Ge_d",
+    "Hf": "Hf_pv",
+    "Ho": "Ho_3",
+    "In": "In_d",
+    "K": "K_sv",
+    "La": "La",
+    "Li": "Li_sv",
+    "Lu": "Lu_3",
+    "Mg": "Mg_pv",
+    "Mn": "Mn_pv",
+    "Mo": "Mo_pv",
+    "Na": "Na_pv",
+    "Nb": "Nb_pv",
+    "Nd": "Nd_3",
+    "Ni": "Ni_pv",
+    "Os": "Os_pv",
+    "Pb": "Pb_d",
+    "Pm": "Pm_3",
+    "Pr": "Pr_3",
+    "Rb": "Rb_sv",
+    "Re": "Re_pv",
+    "Rh": "Rh_pv",
+    "Ru": "Ru_pv",
+    "Sc": "Sc_sv",
+    "Sm": "Sm_3",
+    "Sn": "Sn_d",
+    "Sr": "Sr_sv",
+    "Ta": "Ta_pv",
+    "Tb": "Tb_3",
+    "Tc": "Tc_pv",
+    "Ti": "Ti_pv",
+    "Tl": "Tl_d",
+    "Tm": "Tm_3",
+    "V": "V_pv",
+    "W": "W_pv",
+    "Y": "Y_sv",
+    "Yb": "Yb_2",
+    "Zr": "Zr_sv",
+}
+
 
 def sanitize_label(label: str) -> str:
     label = (label or "").strip()
@@ -91,9 +144,97 @@ def default_resources_for_workflow(workflow: str | None = None) -> dict:
     return resources
 
 
+def _species_name(species) -> str:
+    if isinstance(species, str):
+        return species
+
+    for attr in ("symbol", "species_string"):
+        value = getattr(species, attr, None)
+        if value:
+            return str(value)
+
+    return str(species)
+
+
+def _structure_species(structure) -> list[str]:
+    if structure is None:
+        return []
+
+    species = []
+    raw_species = getattr(structure, "types_of_species", None)
+    if raw_species:
+        species = [_species_name(item) for item in raw_species]
+
+    if not species:
+        composition = getattr(structure, "composition", None)
+        elements = getattr(composition, "elements", None)
+        if elements:
+            species = [_species_name(item) for item in elements]
+
+    unique_species = []
+    seen = set()
+    for name in species:
+        if name not in seen:
+            unique_species.append(name)
+            seen.add(name)
+
+    return unique_species
+
+
+def _pymatgen_potcar_symbols(structure, potcar_functional: str) -> list[str] | None:
+    try:
+        from pymatgen.io.vasp.sets import MPRelaxSet
+
+        vasp_set = MPRelaxSet(
+            structure,
+            user_potcar_functional=potcar_functional,
+        )
+        return [str(symbol) for symbol in vasp_set.potcar_symbols]
+    except Exception:
+        return None
+
+
+def summarize_potcar_species(structure, potcar_functional: str | None = None) -> dict:
+    """
+    Return a display-friendly species to POTCAR-symbol mapping.
+
+    This uses pymatgen's VASP input-set metadata when available and falls back
+    to the Materials Project-style recommended suffixes used by pymatgen. It
+    does not read POTCAR files or inspect remote filesystem paths.
+    """
+
+    functional = potcar_functional or DEFAULT_POTCAR_FUNCTIONAL
+    species = _structure_species(structure)
+    symbols = _pymatgen_potcar_symbols(structure, functional) if structure is not None else None
+    source = "pymatgen"
+
+    if not symbols or len(symbols) != len(species):
+        symbols = [
+            MP_RECOMMENDED_POTCAR_SYMBOLS.get(name, name)
+            for name in species
+        ]
+        source = "fallback"
+
+    rows = [
+        {
+            "species": species_name,
+            "potcar_symbol": symbol,
+        }
+        for species_name, symbol in zip(species, symbols)
+    ]
+
+    return {
+        "functional": functional,
+        "source": source,
+        "species": rows,
+        "symbols": list(symbols),
+    }
+
+
 def create_submission_spec(
     flow_spec: dict,
     *,
+    structure=None,
     label: str = "vasp_run",
     timestamp: str | None = None,
     nodes=None,
@@ -165,6 +306,7 @@ def create_submission_spec(
     )
 
     potcar_functional = flow_spec_copy.get("potcar_functional", DEFAULT_POTCAR_FUNCTIONAL)
+    potcar_species = summarize_potcar_species(structure, potcar_functional)
     potcar_target = posixpath.join(resolved_potcars_dir, potcar_functional)
     potcar_links = [
         posixpath.join(resolved_potcars_dir, link_name)
@@ -235,6 +377,9 @@ def create_submission_spec(
         },
         "potcar": {
             "functional": potcar_functional,
+            "species": potcar_species["species"],
+            "symbols": potcar_species["symbols"],
+            "symbol_source": potcar_species["source"],
             "target": potcar_target,
             "symlink_targets": potcar_links,
         },
@@ -261,4 +406,5 @@ __all__ = [
     "create_submission_spec",
     "default_resources_for_workflow",
     "sanitize_label",
+    "summarize_potcar_species",
 ]

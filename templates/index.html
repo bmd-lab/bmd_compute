@@ -7,81 +7,199 @@
 
 <style>
 
+:root {
+    --bg: #111111;
+    --panel: #202020;
+    --line: #3a3a3a;
+    --line-strong: #555555;
+    --text: #f2f2f2;
+    --muted: #a8a8a8;
+    --soft: #d6d6d6;
+    --accent: #4FC3F7;
+    --accent-2: #B2EBF2;
+    --ok: #7ED957;
+}
+
 body {
-    background: #161616;
-    color: #f2f2f2;
+    background: var(--bg);
+    color: var(--text);
     font-family: Arial, sans-serif;
     margin: 0;
 }
 
 .container {
-    margin: 60px auto;
-    width: 700px;
+    margin: 40px auto 56px;
+    max-width: 980px;
+    padding: 0 24px;
 }
 
 .header {
-    margin-bottom: 30px;
+    align-items: baseline;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 22px;
+    padding-bottom: 18px;
 }
 
 h1 {
-    font-size: 32px;
-    margin-bottom: 5px;
+    font-size: 30px;
+    letter-spacing: 0;
+    line-height: 1.1;
+    margin: 0;
 }
 
 h2 {
-    color: #dddddd;
-    font-size: 18px;
-    margin-bottom: 6px;
-    margin-top: 28px;
+    color: var(--text);
+    font-size: 20px;
+    letter-spacing: 0;
+    margin: 0;
 }
 
 .subtitle {
-    color: #9e9e9e;
+    color: var(--muted);
+    font-size: 14px;
 }
 
 .panel {
-    background: #242424;
-    border: 1px solid #3a3a3a;
-    border-radius: 12px;
-    padding: 28px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+}
+
+.stage {
+    border-top: 1px solid var(--line);
+    padding: 26px 30px 30px;
+}
+
+.stage:first-child {
+    border-top: none;
+}
+
+.stage-header {
+    align-items: flex-start;
+    display: flex;
+    gap: 18px;
+    justify-content: space-between;
+    margin-bottom: 18px;
+}
+
+.stage-title {
+    align-items: center;
+    display: flex;
+    gap: 10px;
+}
+
+.stage-number {
+    align-items: center;
+    background: #181818;
+    border: 1px solid var(--line-strong);
+    border-radius: 50%;
+    color: var(--accent-2);
+    display: inline-flex;
+    font-size: 13px;
+    font-weight: 700;
+    height: 28px;
+    justify-content: center;
+    width: 28px;
+}
+
+.stage-status {
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.5;
+    margin-top: 3px;
+    text-align: right;
+}
+
+.summary-line {
+    color: var(--soft);
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.metric-strip {
+    border-bottom: 1px solid var(--line);
+    border-top: 1px solid var(--line);
+    display: grid;
+    gap: 0;
+    grid-template-columns: repeat(5, 1fr);
+    margin: 14px 0 18px;
+}
+
+.metric {
+    border-left: 1px solid var(--line);
+    min-width: 0;
+    padding: 14px 16px;
+}
+
+.metric:first-child {
+    border-left: none;
+}
+
+.metric-label {
+    color: var(--muted);
+    font-size: 12px;
+    margin-bottom: 6px;
+}
+
+.metric-value {
+    color: var(--text);
+    font-size: 17px;
+    font-weight: 700;
+    overflow-wrap: anywhere;
+}
+
+.form-grid {
+    display: grid;
+    gap: 16px;
+    grid-template-columns: 1fr 1fr;
+}
+
+.form-row {
+    margin-top: 18px;
 }
 
 label {
-    color: #cccccc;
+    color: var(--soft);
     display: block;
-    margin-bottom: 8px;
-    margin-top: 18px;
+    font-size: 13px;
+    font-weight: 700;
+    margin-bottom: 7px;
 }
 
 input,
 select,
 textarea {
-    background: #181818;
-    border: 1px solid #555;
+    background: #171717;
+    border: 1px solid var(--line-strong);
     border-radius: 6px;
     box-sizing: border-box;
-    color: #f2f2f2;
-    padding: 10px;
+    color: var(--text);
+    font-size: 15px;
+    padding: 11px;
     width: 100%;
 }
 
 textarea {
     font-family: Consolas, monospace;
+    line-height: 1.45;
     resize: vertical;
 }
 
 button,
 a.button {
-    background: #4FC3F7;
+    background: var(--accent);
     border: none;
     border-radius: 6px;
     box-sizing: border-box;
-    color: black;
+    color: #081014;
     cursor: pointer;
     display: inline-block;
-    font-size: 16px;
-    margin-top: 24px;
-    padding: 12px;
+    font-size: 15px;
+    font-weight: 700;
+    margin-top: 22px;
+    padding: 12px 16px;
     text-align: center;
     text-decoration: none;
     width: 100%;
@@ -93,26 +211,68 @@ a.button:hover {
 }
 
 button:disabled {
-    background: #555;
+    background: #555555;
     color: #bbbbbb;
     cursor: not-allowed;
 }
 
+.hidden-field {
+    display: none;
+}
+
+.details-grid {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: 1fr 1fr;
+    margin-top: 18px;
+}
+
+.details-wide {
+    grid-column: 1 / -1;
+}
+
+details.disclosure {
+    background: #1b1b1b;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+details.disclosure > summary {
+    color: var(--soft);
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 700;
+    list-style-position: inside;
+    padding: 13px 14px;
+}
+
+details.disclosure[open] > summary {
+    border-bottom: 1px solid var(--line);
+}
+
 table {
     border-collapse: collapse;
-    margin-top: 12px;
     width: 100%;
 }
 
 td {
-    border-bottom: 1px solid #444;
-    padding: 12px;
+    border-bottom: 1px solid var(--line);
+    padding: 11px 14px;
     vertical-align: top;
 }
 
+tr:last-child td {
+    border-bottom: none;
+}
+
 td:first-child {
-    color: #bbbbbb;
-    width: 220px;
+    color: var(--muted);
+    width: 210px;
+}
+
+.compact-table td {
+    padding: 9px 14px;
 }
 
 ul {
@@ -120,19 +280,105 @@ ul {
     padding-left: 18px;
 }
 
-.section {
-    border-top: 1px solid #3a3a3a;
-    margin-top: 28px;
-    padding-top: 2px;
-}
-
-.hidden-field {
-    display: none;
-}
-
 .mono {
     font-family: Consolas, monospace;
     overflow-wrap: anywhere;
+}
+
+.pill {
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
+    color: var(--soft);
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
+    padding: 7px 10px;
+}
+
+.pill.ready {
+    border-color: rgba(126, 217, 87, 0.75);
+    color: var(--ok);
+}
+
+.workflow-layout {
+    display: grid;
+    gap: 18px;
+    grid-template-columns: 1fr 1fr;
+}
+
+.workflow-actions {
+    align-self: end;
+}
+
+.callout {
+    background: #1b1b1b;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px;
+}
+
+.callout-title {
+    color: var(--muted);
+    font-size: 12px;
+    margin-bottom: 8px;
+}
+
+.callout-value {
+    color: var(--text);
+    font-size: 16px;
+    font-weight: 700;
+    overflow-wrap: anywhere;
+}
+
+.submission-grid {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(4, 1fr);
+    margin: 14px 0 18px;
+}
+
+@media (max-width: 760px) {
+    .container {
+        margin-top: 22px;
+        padding: 0 14px;
+    }
+
+    .header,
+    .stage-header {
+        display: block;
+    }
+
+    .stage {
+        padding: 22px 18px 24px;
+    }
+
+    .stage-status {
+        margin-top: 8px;
+        text-align: left;
+    }
+
+    .metric-strip,
+    .details-grid,
+    .form-grid,
+    .workflow-layout,
+    .submission-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .metric,
+    .metric:first-child {
+        border-left: none;
+        border-top: 1px solid var(--line);
+    }
+
+    .metric:first-child {
+        border-top: none;
+    }
+
+    td:first-child {
+        width: 42%;
+    }
 }
 
 </style>
@@ -155,307 +401,424 @@ ul {
 
     <div class="panel">
 
-        <form action="/analyze" method="post">
+        <section class="stage">
 
-            <label>Structure Format</label>
+            <div class="stage-header">
+                <div>
+                    <div class="stage-title">
+                        <span class="stage-number">1</span>
+                        <h2>Structure</h2>
+                    </div>
+                    <div class="summary-line">Input format: {{ fmt | upper }}</div>
+                </div>
+                <div class="stage-status">
+                    {% if summary %}<span class="pill ready">Analyzed</span>{% else %}<span class="pill">Pending</span>{% endif %}
+                </div>
+            </div>
 
-            <select name="fmt">
-                <option value="poscar" {% if fmt == "poscar" %}selected{% endif %}>POSCAR</option>
-                <option value="cif" {% if fmt == "cif" %}selected{% endif %}>CIF</option>
-            </select>
+            <form action="/analyze" method="post">
 
-            <label>Structure</label>
+                <div class="form-row">
+                    <label>Structure Format</label>
+                    <select name="fmt">
+                        <option value="poscar" {% if fmt == "poscar" %}selected{% endif %}>POSCAR</option>
+                        <option value="cif" {% if fmt == "cif" %}selected{% endif %}>CIF</option>
+                    </select>
+                </div>
 
-            <textarea
-                name="structure"
-                rows="14"
-                placeholder="Paste your POSCAR or CIF here...">{{ structure_text }}</textarea>
+                <div class="form-row">
+                    <label>Structure</label>
+                    <textarea
+                        name="structure"
+                        rows="14"
+                        placeholder="Paste your POSCAR or CIF here...">{{ structure_text }}</textarea>
+                </div>
 
-            <button type="submit">
-                Analyze Structure
-            </button>
+                <button type="submit">
+                    Analyze Structure
+                </button>
 
-        </form>
+            </form>
+
+        </section>
 
         {% if summary %}
-        <div class="section">
+        <section class="stage">
 
-            <h2>Structure Summary</h2>
+            <div class="stage-header">
+                <div>
+                    <div class="stage-title">
+                        <span class="stage-number">2</span>
+                        <h2>Structure Summary</h2>
+                    </div>
+                    <div class="summary-line">
+                        {{ summary.reduced_formula }} · {{ summary.natoms }} atoms · {{ summary.volume }} Å³
+                    </div>
+                </div>
+                <div class="stage-status">
+                    {{ summary.space_group_symbol or "Unknown" }}
+                    {% if summary.space_group_number %} #{{ summary.space_group_number }}{% endif %}
+                </div>
+            </div>
 
-            <table>
+            <div class="metric-strip">
+                <div class="metric">
+                    <div class="metric-label">Formula</div>
+                    <div class="metric-value">{{ summary.formula }}</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-label">Reduced</div>
+                    <div class="metric-value">{{ summary.reduced_formula }}</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-label">Atoms</div>
+                    <div class="metric-value">{{ summary.natoms }}</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-label">Volume</div>
+                    <div class="metric-value">{{ summary.volume }} Å³</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-label">Density</div>
+                    <div class="metric-value">{{ summary.density }} g/cm³</div>
+                </div>
+            </div>
 
-            <tr>
-            <td>Formula</td>
-            <td>{{ summary.formula }}</td>
-            </tr>
+            <div class="details-grid">
 
-            <tr>
-            <td>Reduced Formula</td>
-            <td>{{ summary.reduced_formula }}</td>
-            </tr>
+                <details class="disclosure">
+                    <summary>Lattice Parameters</summary>
+                    <table class="compact-table">
+                        <tr>
+                            <td>a (Å)</td>
+                            <td>{{ summary.lattice.a }}</td>
+                        </tr>
+                        <tr>
+                            <td>b (Å)</td>
+                            <td>{{ summary.lattice.b }}</td>
+                        </tr>
+                        <tr>
+                            <td>c (Å)</td>
+                            <td>{{ summary.lattice.c }}</td>
+                        </tr>
+                    </table>
+                </details>
 
-            <tr>
-            <td>Number of Atoms</td>
-            <td>{{ summary.natoms }}</td>
-            </tr>
+                <details class="disclosure">
+                    <summary>Lattice Angles</summary>
+                    <table class="compact-table">
+                        <tr>
+                            <td>α (degrees)</td>
+                            <td>{{ summary.angles.alpha }}</td>
+                        </tr>
+                        <tr>
+                            <td>β (degrees)</td>
+                            <td>{{ summary.angles.beta }}</td>
+                        </tr>
+                        <tr>
+                            <td>γ (degrees)</td>
+                            <td>{{ summary.angles.gamma }}</td>
+                        </tr>
+                    </table>
+                </details>
 
-            <tr>
-            <td>Volume (Å³)</td>
-            <td>{{ summary.volume }}</td>
-            </tr>
+                <details class="disclosure">
+                    <summary>Symmetry</summary>
+                    <table class="compact-table">
+                        <tr>
+                            <td>Space Group Symbol</td>
+                            <td>{{ summary.space_group_symbol or "Unknown" }}</td>
+                        </tr>
+                        <tr>
+                            <td>Space Group Number</td>
+                            <td>{{ summary.space_group_number or "Unknown" }}</td>
+                        </tr>
+                        <tr>
+                            <td>Crystal System</td>
+                            <td>{{ summary.crystal_system }}</td>
+                        </tr>
+                    </table>
+                </details>
 
-            <tr>
-            <td>Density (g/cm³)</td>
-            <td>{{ summary.density }}</td>
-            </tr>
+            </div>
 
-            </table>
+        </section>
 
-            <h2>Lattice Parameters</h2>
+        <section class="stage">
 
-            <table>
-
-            <tr>
-            <td>a (Å)</td>
-            <td>{{ summary.lattice.a }}</td>
-            </tr>
-
-            <tr>
-            <td>b (Å)</td>
-            <td>{{ summary.lattice.b }}</td>
-            </tr>
-
-            <tr>
-            <td>c (Å)</td>
-            <td>{{ summary.lattice.c }}</td>
-            </tr>
-
-            </table>
-
-            <h2>Lattice Angles</h2>
-
-            <table>
-
-            <tr>
-            <td>α (degrees)</td>
-            <td>{{ summary.angles.alpha }}</td>
-            </tr>
-
-            <tr>
-            <td>β (degrees)</td>
-            <td>{{ summary.angles.beta }}</td>
-            </tr>
-
-            <tr>
-            <td>γ (degrees)</td>
-            <td>{{ summary.angles.gamma }}</td>
-            </tr>
-
-            </table>
-
-            <h2>Symmetry</h2>
-
-            <table>
-
-            <tr>
-            <td>Space Group Symbol</td>
-            <td>{{ summary.space_group_symbol or "Unknown" }}</td>
-            </tr>
-
-            <tr>
-            <td>Space Group Number</td>
-            <td>{{ summary.space_group_number or "Unknown" }}</td>
-            </tr>
-
-            <tr>
-            <td>Crystal System</td>
-            <td>{{ summary.crystal_system }}</td>
-            </tr>
-
-            </table>
-
-        </div>
-
-        <div class="section">
-
-            <h2>Workflow</h2>
+            <div class="stage-header">
+                <div>
+                    <div class="stage-title">
+                        <span class="stage-number">3</span>
+                        <h2>Workflow</h2>
+                    </div>
+                    <div class="summary-line">
+                        {{ selected_workflow | replace("_", " ") | title }} · PBE
+                    </div>
+                </div>
+                <div class="stage-status">
+                    {% if workflow %}<span class="pill ready">Built</span>{% else %}<span class="pill">Ready to build</span>{% endif %}
+                </div>
+            </div>
 
             <form action="/build-workflow" method="post">
 
                 <textarea class="hidden-field" name="structure">{{ structure_text }}</textarea>
                 <input type="hidden" name="fmt" value="{{ fmt }}">
 
-                <label>Workflow</label>
-                <select name="workflow">
-                    <option value="static" {% if selected_workflow == "static" %}selected{% endif %}>Static</option>
-                    <option value="relax" {% if selected_workflow == "relax" %}selected{% endif %}>Relaxation</option>
-                    <option value="relax_ions" {% if selected_workflow == "relax_ions" %}selected{% endif %}>Relax Ions</option>
-                </select>
+                <div class="workflow-layout">
+                    <div class="form-grid">
+                        <div>
+                            <label>Workflow</label>
+                            <select name="workflow">
+                                <option value="static" {% if selected_workflow == "static" %}selected{% endif %}>Static</option>
+                                <option value="relax" {% if selected_workflow == "relax" %}selected{% endif %}>Relaxation</option>
+                                <option value="relax_ions" {% if selected_workflow == "relax_ions" %}selected{% endif %}>Relax Ions</option>
+                            </select>
+                        </div>
 
-                <label>Method</label>
-                <select name="method">
-                    <option value="PBE_64" {% if selected_method == "PBE_64" %}selected{% endif %}>PBE</option>
-                </select>
+                        <div>
+                            <label>Method</label>
+                            <select name="method">
+                                <option value="PBE_64" {% if selected_method == "PBE_64" %}selected{% endif %}>PBE</option>
+                            </select>
+                        </div>
+                    </div>
 
-                <button type="submit">Build Workflow</button>
+                    <div class="workflow-actions">
+                        <button type="submit">Build Workflow</button>
+                    </div>
+                </div>
 
             </form>
 
-        </div>
+        </section>
         {% endif %}
 
         {% if workflow %}
-        <div class="section">
+        <section class="stage">
 
-            <h2>Workflow Summary</h2>
+            <div class="stage-header">
+                <div>
+                    <div class="stage-title">
+                        <span class="stage-number">4</span>
+                        <h2>Workflow Summary</h2>
+                    </div>
+                    <div class="summary-line">
+                        {{ workflow.flow_name }} · {{ workflow.number_of_jobs }} job{% if workflow.number_of_jobs != 1 %}s{% endif %}
+                    </div>
+                </div>
+                <div class="stage-status">
+                    {% if workflow.ready_for_submission %}<span class="pill ready">Ready for submission</span>{% else %}<span class="pill">Not ready</span>{% endif %}
+                </div>
+            </div>
 
-            <table>
+            <div class="details-grid">
+                <div class="callout">
+                    <div class="callout-title">Workflow Type</div>
+                    <div class="callout-value">{{ workflow.workflow_type }}</div>
+                </div>
+                <div class="callout">
+                    <div class="callout-title">Flow Name</div>
+                    <div class="callout-value mono">{{ workflow.flow_name }}</div>
+                </div>
+                <div class="callout">
+                    <div class="callout-title">Number of Jobs</div>
+                    <div class="callout-value">{{ workflow.number_of_jobs }}</div>
+                </div>
+                <div class="callout">
+                    <div class="callout-title">Status</div>
+                    <div class="callout-value">{% if workflow.ready_for_submission %}Ready for submission{% else %}Not ready{% endif %}</div>
+                </div>
+            </div>
 
-            <tr>
-            <td>Workflow Type</td>
-            <td>{{ workflow.workflow_type }}</td>
-            </tr>
+            <details class="disclosure" open>
+                <summary>Job Names</summary>
+                <table class="compact-table">
+                    <tr>
+                        <td>Job Names</td>
+                        <td>
+                            <ul>
+                                {% for job_name in workflow.job_names %}
+                                <li>{{ job_name }}</li>
+                                {% endfor %}
+                            </ul>
+                        </td>
+                    </tr>
+                </table>
+            </details>
 
-            <tr>
-            <td>Flow Name</td>
-            <td>{{ workflow.flow_name }}</td>
-            </tr>
-
-            <tr>
-            <td>Number of Jobs</td>
-            <td>{{ workflow.number_of_jobs }}</td>
-            </tr>
-
-            <tr>
-            <td>Job Names</td>
-            <td>
-            <ul>
-            {% for job_name in workflow.job_names %}
-            <li>{{ job_name }}</li>
-            {% endfor %}
-            </ul>
-            </td>
-            </tr>
-
-            <tr>
-            <td>Status</td>
-            <td>{% if workflow.ready_for_submission %}Ready for submission{% else %}Not ready{% endif %}</td>
-            </tr>
-
-            </table>
-
-        </div>
+        </section>
         {% endif %}
 
         {% if submission_spec %}
-        <div class="section">
+        <section class="stage">
 
-            <h2>Submission Preview</h2>
+            <div class="stage-header">
+                <div>
+                    <div class="stage-title">
+                        <span class="stage-number">5</span>
+                        <h2>Submission Preview</h2>
+                    </div>
+                    <div class="summary-line">
+                        {{ submission_spec.run_name }} · {{ submission_spec.resources.ntasks }} tasks · {{ submission_spec.resources.walltime }}
+                    </div>
+                </div>
+                <div class="stage-status">
+                    <span class="pill">{{ submission_spec.status }}</span>
+                </div>
+            </div>
 
-            <table>
+            <div class="submission-grid">
+                <div class="callout">
+                    <div class="callout-title">Run Name</div>
+                    <div class="callout-value mono">{{ submission_spec.run_name }}</div>
+                </div>
+                <div class="callout">
+                    <div class="callout-title">Cluster</div>
+                    <div class="callout-value mono">{{ submission_spec.cluster.remote_host }}</div>
+                </div>
+                <div class="callout">
+                    <div class="callout-title">Resources</div>
+                    <div class="callout-value">
+                        {{ submission_spec.resources.nodes }} node · {{ submission_spec.resources.ntasks }} tasks · {{ submission_spec.resources.mem_gb }}G
+                    </div>
+                </div>
+                <div class="callout">
+                    <div class="callout-title">POTCAR</div>
+                    <div class="callout-value mono">
+                        {% if submission_spec.potcar.species %}
+                        {% for row in submission_spec.potcar.species %}
+                        {{ row.species }} &rarr; {{ row.potcar_symbol }}{% if not loop.last %}<br>{% endif %}
+                        {% endfor %}
+                        {% else %}
+                        {{ submission_spec.potcar.functional }}
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
 
-            <tr>
-            <td>Status</td>
-            <td>{{ submission_spec.status }}</td>
-            </tr>
+            <div class="details-grid">
 
-            <tr>
-            <td>Run Name</td>
-            <td class="mono">{{ submission_spec.run_name }}</td>
-            </tr>
+                <details class="disclosure" open>
+                    <summary>Cluster and Resources</summary>
+                    <table class="compact-table">
+                        <tr>
+                            <td>Status</td>
+                            <td>{{ submission_spec.status }}</td>
+                        </tr>
+                        <tr>
+                            <td>Cluster</td>
+                            <td class="mono">
+                                {{ submission_spec.cluster.remote_host }}<br>
+                                {{ submission_spec.cluster.username }}<br>
+                                partition={{ submission_spec.cluster.partition }}<br>
+                                account={{ submission_spec.cluster.account }}
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>Resources</td>
+                            <td class="mono">
+                                nodes={{ submission_spec.resources.nodes }}<br>
+                                ntasks={{ submission_spec.resources.ntasks }}<br>
+                                memory={{ submission_spec.resources.mem_gb }}G<br>
+                                walltime={{ submission_spec.resources.walltime }}
+                            </td>
+                        </tr>
+                    </table>
+                </details>
 
-            <tr>
-            <td>Cluster</td>
-            <td class="mono">
-                {{ submission_spec.cluster.remote_host }}<br>
-                {{ submission_spec.cluster.username }}<br>
-                partition={{ submission_spec.cluster.partition }}<br>
-                account={{ submission_spec.cluster.account }}
-            </td>
-            </tr>
+                <details class="disclosure" open>
+                    <summary>POTCAR Species</summary>
+                    <table class="compact-table">
+                        <tr>
+                            <td>Functional</td>
+                            <td>{{ submission_spec.potcar.functional }}</td>
+                        </tr>
+                        <tr>
+                            <td>Species Mapping</td>
+                            <td class="mono">
+                                {% if submission_spec.potcar.species %}
+                                {% for row in submission_spec.potcar.species %}
+                                {{ row.species }} &rarr; {{ row.potcar_symbol }}<br>
+                                {% endfor %}
+                                {% else %}
+                                No species mapping available
+                                {% endif %}
+                            </td>
+                        </tr>
+                    </table>
+                </details>
 
-            <tr>
-            <td>Resources</td>
-            <td class="mono">
-                nodes={{ submission_spec.resources.nodes }}<br>
-                ntasks={{ submission_spec.resources.ntasks }}<br>
-                memory={{ submission_spec.resources.mem_gb }}G<br>
-                walltime={{ submission_spec.resources.walltime }}
-            </td>
-            </tr>
+                <details class="disclosure details-wide">
+                    <summary>Advanced / Diagnostics</summary>
+                    <table class="compact-table">
+                        <tr>
+                            <td>Run Directory</td>
+                            <td class="mono">{{ submission_spec.paths.run_dir }}</td>
+                        </tr>
+                        <tr>
+                            <td>Logs</td>
+                            <td class="mono">
+                                stdout={{ submission_spec.paths.log_out }}<br>
+                                stderr={{ submission_spec.paths.log_err }}<br>
+                                slurm stdout={{ submission_spec.paths.slurm_out }}<br>
+                                slurm stderr={{ submission_spec.paths.slurm_err }}
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>Remote Script</td>
+                            <td class="mono">{{ submission_spec.paths.remote_script }}</td>
+                        </tr>
+                        <tr>
+                            <td>Modules</td>
+                            <td class="mono">
+                                {% if submission_spec.modules.purge_first %}module purge<br>{% endif %}
+                                {% for module_name in submission_spec.modules.load %}
+                                module load {{ module_name }}<br>
+                                {% endfor %}
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>Environment</td>
+                            <td class="mono">
+                                VASP_CMD={{ submission_spec.environment.VASP_CMD }}<br>
+                                JOBFLOW_CONFIG_FILE={{ submission_spec.environment.JOBFLOW_CONFIG_FILE }}<br>
+                                PMG_VASP_PSP_DIR={{ submission_spec.environment.PMG_VASP_PSP_DIR }}<br>
+                                CUSTODIAN_NO_GZIP={{ submission_spec.environment.CUSTODIAN_NO_GZIP }}<br>
+                                ATOMATE2_VASP_ZIP_FILES={{ submission_spec.environment.ATOMATE2_VASP_ZIP_FILES }}<br>
+                                ATOMATE2_REMOTE_ENV={{ submission_spec.environment.ATOMATE2_REMOTE_ENV }}
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>POTCAR Paths</td>
+                            <td class="mono">
+                                target={{ submission_spec.potcar.target }}<br>
+                                {% for symlink_target in submission_spec.potcar.symlink_targets %}
+                                symlink={{ symlink_target }}<br>
+                                {% endfor %}
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>Runner</td>
+                            <td class="mono">
+                                python={{ submission_spec.runner.python }}<br>
+                                script={{ submission_spec.runner.script_name }}<br>
+                                working directory={{ submission_spec.runner.working_directory }}
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>Submission</td>
+                            <td>{{ submission_spec.submission.reason }}</td>
+                        </tr>
+                    </table>
+                </details>
 
-            <tr>
-            <td>Run Directory</td>
-            <td class="mono">{{ submission_spec.paths.run_dir }}</td>
-            </tr>
-
-            <tr>
-            <td>Logs</td>
-            <td class="mono">
-                stdout={{ submission_spec.paths.log_out }}<br>
-                stderr={{ submission_spec.paths.log_err }}<br>
-                slurm stdout={{ submission_spec.paths.slurm_out }}<br>
-                slurm stderr={{ submission_spec.paths.slurm_err }}
-            </td>
-            </tr>
-
-            <tr>
-            <td>Remote Script</td>
-            <td class="mono">{{ submission_spec.paths.remote_script }}</td>
-            </tr>
-
-            <tr>
-            <td>Modules</td>
-            <td class="mono">
-            {% if submission_spec.modules.purge_first %}module purge<br>{% endif %}
-            {% for module_name in submission_spec.modules.load %}
-            module load {{ module_name }}<br>
-            {% endfor %}
-            </td>
-            </tr>
-
-            <tr>
-            <td>Environment</td>
-            <td class="mono">
-                VASP_CMD={{ submission_spec.environment.VASP_CMD }}<br>
-                JOBFLOW_CONFIG_FILE={{ submission_spec.environment.JOBFLOW_CONFIG_FILE }}<br>
-                PMG_VASP_PSP_DIR={{ submission_spec.environment.PMG_VASP_PSP_DIR }}<br>
-                CUSTODIAN_NO_GZIP={{ submission_spec.environment.CUSTODIAN_NO_GZIP }}<br>
-                ATOMATE2_VASP_ZIP_FILES={{ submission_spec.environment.ATOMATE2_VASP_ZIP_FILES }}<br>
-                ATOMATE2_REMOTE_ENV={{ submission_spec.environment.ATOMATE2_REMOTE_ENV }}
-            </td>
-            </tr>
-
-            <tr>
-            <td>POTCAR</td>
-            <td class="mono">
-                functional={{ submission_spec.potcar.functional }}<br>
-                target={{ submission_spec.potcar.target }}<br>
-                {% for symlink_target in submission_spec.potcar.symlink_targets %}
-                symlink={{ symlink_target }}<br>
-                {% endfor %}
-            </td>
-            </tr>
-
-            <tr>
-            <td>Runner</td>
-            <td class="mono">
-                python={{ submission_spec.runner.python }}<br>
-                script={{ submission_spec.runner.script_name }}<br>
-                working directory={{ submission_spec.runner.working_directory }}
-            </td>
-            </tr>
-
-            <tr>
-            <td>Submission</td>
-            <td>{{ submission_spec.submission.reason }}</td>
-            </tr>
-
-            </table>
+            </div>
 
             <button type="button" disabled>Submit Workflow</button>
 
-        </div>
+        </section>
         {% endif %}
 
     </div>

@@ -91,6 +91,7 @@ def build_workflow(
     }
     submission_spec = create_submission_spec(
         flow_spec,
+        structure=structure_obj,
         label=workflow_summary["flow_name"],
     )
 

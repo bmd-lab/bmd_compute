@@ -1,4 +1,8 @@
-from backend.submission import create_submission_spec, default_resources_for_workflow
+from backend.submission import (
+    create_submission_spec,
+    default_resources_for_workflow,
+    summarize_potcar_species,
+)
 
 
 flow_spec = {
@@ -8,6 +12,10 @@ flow_spec = {
     "incar": {},
     "structure": {"type": "parsed"},
 }
+
+
+class FakeStructure:
+    types_of_species = ["Ti", "O"]
 
 
 spec = create_submission_spec(
@@ -47,6 +55,7 @@ assert spec["potcar"]["symlink_targets"] == [
     "/bmd-db/lee/potcars/POT_GGA_PAW_PBE_64",
     "/bmd-db/lee/potcars/POT_PAW_PBE_64",
 ]
+assert spec["potcar"]["species"] == []
 assert spec["preflight"]["requires_remote_structure_check"] is False
 assert spec["submission"]["ready"] is True
 assert spec["submission"]["submitted"] is False
@@ -68,5 +77,20 @@ assert env_spec["environment"]["VASP_CMD"] == "srun -n $SLURM_NTASKS vasp_std"
 assert default_resources_for_workflow("gw_static")["ntasks"] == 12
 assert default_resources_for_workflow("gw_static")["mem_gb"] == 240
 assert default_resources_for_workflow("relax_static_bands")["mem_gb"] == 160
+
+potcar_summary = summarize_potcar_species(FakeStructure(), "PBE_64")
+assert potcar_summary["species"] == [
+    {"species": "Ti", "potcar_symbol": "Ti_pv"},
+    {"species": "O", "potcar_symbol": "O"},
+]
+
+structure_spec = create_submission_spec(
+    flow_spec,
+    structure=FakeStructure(),
+    timestamp="20260629-120000",
+    env={},
+)
+assert structure_spec["potcar"]["species"] == potcar_summary["species"]
+assert structure_spec["potcar"]["symbols"] == ["Ti_pv", "O"]
 
 print("submission spec smoke test passed")
