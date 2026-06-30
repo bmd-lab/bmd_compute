@@ -2,6 +2,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.templating import Jinja2Templates
 
 from backend.parser import parse_structure
+from backend.submission import create_submission_spec
 from backend.summary import summarize_structure
 from backend.workflow_summary import summarize_workflow
 from backend.workflows import build_atomate2_flow
@@ -19,6 +20,7 @@ def page_context(
     selected_workflow: str = "static",
     selected_method: str = "PBE_64",
     workflow_summary=None,
+    submission_spec=None,
 ):
     return {
         "structure_text": structure_text,
@@ -27,6 +29,7 @@ def page_context(
         "selected_workflow": selected_workflow,
         "selected_method": selected_method,
         "workflow": workflow_summary,
+        "submission_spec": submission_spec,
     }
 
 
@@ -75,6 +78,21 @@ def build_workflow(
         potcar_functional=method,
     )
     workflow_summary = summarize_workflow(flow, workflow)
+    flow_spec = {
+        "workflow": workflow,
+        "potcar_functional": method,
+        "kpoints": None,
+        "incar": {},
+        "structure": {
+            "type": "pasted_text",
+            "format": fmt,
+            "text": structure,
+        },
+    }
+    submission_spec = create_submission_spec(
+        flow_spec,
+        label=workflow_summary["flow_name"],
+    )
 
     return templates.TemplateResponse(
         request=request,
@@ -86,5 +104,6 @@ def build_workflow(
             selected_workflow=workflow,
             selected_method=method,
             workflow_summary=workflow_summary,
+            submission_spec=submission_spec,
         ),
     )

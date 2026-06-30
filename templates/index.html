@@ -92,6 +92,12 @@ a.button:hover {
     background: #81D4FA;
 }
 
+button:disabled {
+    background: #555;
+    color: #bbbbbb;
+    cursor: not-allowed;
+}
+
 table {
     border-collapse: collapse;
     margin-top: 12px;
@@ -122,6 +128,11 @@ ul {
 
 .hidden-field {
     display: none;
+}
+
+.mono {
+    font-family: Consolas, monospace;
+    overflow-wrap: anywhere;
 }
 
 </style>
@@ -332,6 +343,117 @@ ul {
             </tr>
 
             </table>
+
+        </div>
+        {% endif %}
+
+        {% if submission_spec %}
+        <div class="section">
+
+            <h2>Submission Preview</h2>
+
+            <table>
+
+            <tr>
+            <td>Status</td>
+            <td>{{ submission_spec.status }}</td>
+            </tr>
+
+            <tr>
+            <td>Run Name</td>
+            <td class="mono">{{ submission_spec.run_name }}</td>
+            </tr>
+
+            <tr>
+            <td>Cluster</td>
+            <td class="mono">
+                {{ submission_spec.cluster.remote_host }}<br>
+                {{ submission_spec.cluster.username }}<br>
+                partition={{ submission_spec.cluster.partition }}<br>
+                account={{ submission_spec.cluster.account }}
+            </td>
+            </tr>
+
+            <tr>
+            <td>Resources</td>
+            <td class="mono">
+                nodes={{ submission_spec.resources.nodes }}<br>
+                ntasks={{ submission_spec.resources.ntasks }}<br>
+                memory={{ submission_spec.resources.mem_gb }}G<br>
+                walltime={{ submission_spec.resources.walltime }}
+            </td>
+            </tr>
+
+            <tr>
+            <td>Run Directory</td>
+            <td class="mono">{{ submission_spec.paths.run_dir }}</td>
+            </tr>
+
+            <tr>
+            <td>Logs</td>
+            <td class="mono">
+                stdout={{ submission_spec.paths.log_out }}<br>
+                stderr={{ submission_spec.paths.log_err }}<br>
+                slurm stdout={{ submission_spec.paths.slurm_out }}<br>
+                slurm stderr={{ submission_spec.paths.slurm_err }}
+            </td>
+            </tr>
+
+            <tr>
+            <td>Remote Script</td>
+            <td class="mono">{{ submission_spec.paths.remote_script }}</td>
+            </tr>
+
+            <tr>
+            <td>Modules</td>
+            <td class="mono">
+            {% if submission_spec.modules.purge_first %}module purge<br>{% endif %}
+            {% for module_name in submission_spec.modules.load %}
+            module load {{ module_name }}<br>
+            {% endfor %}
+            </td>
+            </tr>
+
+            <tr>
+            <td>Environment</td>
+            <td class="mono">
+                VASP_CMD={{ submission_spec.environment.VASP_CMD }}<br>
+                JOBFLOW_CONFIG_FILE={{ submission_spec.environment.JOBFLOW_CONFIG_FILE }}<br>
+                PMG_VASP_PSP_DIR={{ submission_spec.environment.PMG_VASP_PSP_DIR }}<br>
+                CUSTODIAN_NO_GZIP={{ submission_spec.environment.CUSTODIAN_NO_GZIP }}<br>
+                ATOMATE2_VASP_ZIP_FILES={{ submission_spec.environment.ATOMATE2_VASP_ZIP_FILES }}<br>
+                ATOMATE2_REMOTE_ENV={{ submission_spec.environment.ATOMATE2_REMOTE_ENV }}
+            </td>
+            </tr>
+
+            <tr>
+            <td>POTCAR</td>
+            <td class="mono">
+                functional={{ submission_spec.potcar.functional }}<br>
+                target={{ submission_spec.potcar.target }}<br>
+                {% for symlink_target in submission_spec.potcar.symlink_targets %}
+                symlink={{ symlink_target }}<br>
+                {% endfor %}
+            </td>
+            </tr>
+
+            <tr>
+            <td>Runner</td>
+            <td class="mono">
+                python={{ submission_spec.runner.python }}<br>
+                script={{ submission_spec.runner.script_name }}<br>
+                working directory={{ submission_spec.runner.working_directory }}
+            </td>
+            </tr>
+
+            <tr>
+            <td>Submission</td>
+            <td>{{ submission_spec.submission.reason }}</td>
+            </tr>
+
+            </table>
+
+            <button type="button" disabled>Submit Workflow</button>
 
         </div>
         {% endif %}
