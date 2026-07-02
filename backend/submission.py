@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import posixpath
 import re
+import shlex
 import time
 from copy import deepcopy
 
@@ -47,6 +48,14 @@ POTCAR_LINK_MAP = {
     "PBE_52": ["POT_GGA_PAW_PBE_52", "POT_GGA_PAW_PBE"],
     "LDA": ["POT_LDA_PAW"],
 }
+
+SUBMISSION_ENV_KEYS = (
+    "VASP_CMD",
+    "JOBFLOW_CONFIG_FILE",
+    "PMG_VASP_PSP_DIR",
+    "CUSTODIAN_NO_GZIP",
+    "ATOMATE2_VASP_ZIP_FILES",
+)
 
 MP_RECOMMENDED_POTCAR_SYMBOLS = {
     "Ba": "Ba_sv",
@@ -231,6 +240,472 @@ def summarize_potcar_species(structure, potcar_functional: str | None = None) ->
     }
 
 
+def _shell_export(name: str, value: str | None) -> str:
+    if value is None:
+        return ""
+    return f"export {name}={shlex.quote(str(value))}"
+
+
+def _module_lines(submission_spec: dict) -> list[str]:
+    modules = submission_spec.get("modules", {})
+    lines = []
+
+    if modules.get("purge_first"):
+        lines.append("module purge >/dev/null 2>&1 || true")
+
+    for module_name in modules.get("load", []):
+        lines.append(f"module load {shlex.quote(str(module_name))} >/dev/null 2>&1 || true")
+
+    return lines
+
+
+def _submission_env_exports(submission_spec: dict) -> list[str]:
+    environment = submission_spec.get("environment", {})
+    return [
+        _shell_export(key, environment.get(key))
+        for key in SUBMISSION_ENV_KEYS
+        if environment.get(key) is not None
+    ]
+
+
+def _remote_runner_python() -> str:
+    return r'''
+import json
+import os
+import sys
+import traceback
+
+print("[runner] python:", sys.version.replace("\n", " "))
+
+def _pkg_ver(name):
+    try:
+        module = __import__(name)
+        version = getattr(module, "__version__", "<no __version__>")
+        print(f"[runner] {name} version:", version)
+    except Exception as exc:
+        print(f"[runner] {name} import failed:", exc)
+
+for package in ("atomate2", "jobflow", "pymatgen", "custodian"):
+    _pkg_ver(package)
+
+spec = json.loads(__SPEC_JSON__)
+flow_spec = spec["flow_spec"]
+workflow = (flow_spec.get("workflow") or "static").lower()
+potcar_functional = flow_spec.get("potcar_functional") or "PBE_64"
+incar = flow_spec.get("incar") or flow_spec.get("incar_overrides") or {}
+kpoints_config = flow_spec.get("kpoints")
+
+ENCUT_STATIC_FINAL_DEFAULT = 620
+ENCUT_RELAX_DEFAULT = 580
+
+def _is_hse_incar(settings):
+    if not isinstance(settings, dict):
+        return False
+    value = settings.get("LHFCALC")
+    if isinstance(value, str) and value.strip().strip(".").upper() in ("T", "TRUE", "YES"):
+        return True
+    if value is True:
+        return True
+    for key in ("AEXX", "HFSCREEN", "ALDAC", "LHFCALC_HYBRID"):
+        if key in settings:
+            return True
+    gga = settings.get("GGA")
+    return isinstance(gga, str) and "HSE" in gga.upper()
+
+def incar_static(settings, allow_ncore=True):
+    user_settings = dict(settings or {})
+    for key in ("GGA", "ENAUG", "LMIXTAU"):
+        user_settings.setdefault(key, None)
+    user_settings.setdefault("LWAVE", False)
+    user_settings.setdefault("LCHARG", True)
+    user_settings.setdefault("ISMEAR", -5)
+    user_settings.setdefault("SIGMA", 0.05)
+    user_settings.setdefault("NEDOS", 4001)
+    user_settings.setdefault("LORBIT", 11)
+    user_settings.setdefault("LREAL", False)
+    user_settings.setdefault("PREC", "Accurate")
+    user_settings.setdefault("ADDGRID", True)
+    try:
+        encut_now = int(float(user_settings.get("ENCUT", 0)))
+    except Exception:
+        encut_now = 0
+    user_settings["ENCUT"] = max(encut_now, ENCUT_STATIC_FINAL_DEFAULT)
+    if allow_ncore and not _is_hse_incar(user_settings):
+        user_settings.setdefault("NCORE", 2)
+    return user_settings
+
+def incar_relax(settings, user=None):
+    user_settings = dict(settings or {})
+    explicit_settings = dict(user or {})
+    if "LCHARG" not in explicit_settings:
+        user_settings["LCHARG"] = False
+    if "LWAVE" not in explicit_settings:
+        user_settings["LWAVE"] = False
+    for key in ("LAECHG", "LVTOT", "LELF", "LVHAR", "LORBIT"):
+        if key not in explicit_settings:
+            user_settings[key] = None
+    for key in ("GGA", "ENAUG", "LMIXTAU"):
+        user_settings.setdefault(key, None)
+    user_settings.setdefault("ALGO", "Fast")
+    user_settings.setdefault("ADDGRID", True)
+    user_settings.setdefault("EDIFFG", -0.01)
+    if _is_hse_incar(user_settings) or _is_hse_incar(explicit_settings):
+        user_settings.setdefault("PRECFOCK", "Fast")
+        user_settings.setdefault("ALGO", "Damped")
+    if not _is_hse_incar(user_settings) and not _is_hse_incar(explicit_settings):
+        user_settings.setdefault("NCORE", 2)
+    return user_settings
+
+def ksettings(structure, kpoints):
+    if not kpoints:
+        return None
+    mode = kpoints.get("mode")
+    value = kpoints.get("value")
+    if mode == "mesh":
+        from pymatgen.io.vasp.inputs import Kpoints
+        nx, ny, nz = (int(value[0]), int(value[1]), int(value[2]))
+        natoms = len(structure)
+        target = (nx, ny, nz)
+        kppa = max(1, nx * ny * nz * max(1, natoms))
+        seen = set()
+        found = None
+        def mesh_for(candidate_kppa):
+            kp = Kpoints.automatic_density(structure, int(max(1, candidate_kppa)))
+            if kp.kpts:
+                mesh = kp.kpts[0]
+                if isinstance(mesh, (list, tuple)) and len(mesh) >= 3:
+                    return (int(mesh[0]), int(mesh[1]), int(mesh[2]))
+            return (0, 0, 0)
+        for _ in range(64):
+            mesh = mesh_for(kppa)
+            if mesh == target:
+                found = kppa
+                break
+            if mesh in seen:
+                break
+            seen.add(mesh)
+            target_product = nx * ny * nz
+            mesh_product = max(1, mesh[0] * mesh[1] * mesh[2])
+            scale = max(
+                target_product / mesh_product,
+                nx / max(1, mesh[0]),
+                ny / max(1, mesh[1]),
+                nz / max(1, mesh[2]),
+            )
+            kppa = int(max(1, kppa * (1.25 if scale < 1 else min(3.0, 1.15 * scale))))
+        return {"grid_density": float(found if found is not None else kppa)}
+    return {mode: float(value)}
+
+def build_structure(structure_spec):
+    from pymatgen.core import Lattice, Structure
+    kind = structure_spec.get("type")
+    if kind == "path":
+        return Structure.from_file(structure_spec["path"])
+    if kind == "pasted_text":
+        fmt = structure_spec.get("format") or "poscar"
+        return Structure.from_str(structure_spec["text"], fmt=fmt)
+    if kind == "builder":
+        import numpy as np
+        lattice_spec = structure_spec.get("lattice", {}) or {}
+        lattice = Lattice.from_parameters(
+            float(lattice_spec.get("a", 3.84)),
+            float(lattice_spec.get("b", 3.84)),
+            float(lattice_spec.get("c", 3.84)),
+            float(lattice_spec.get("alpha", 120.0)),
+            float(lattice_spec.get("beta", 90.0)),
+            float(lattice_spec.get("gamma", 60.0)),
+        )
+        coords = structure_spec["coords"]
+        if structure_spec.get("coord_kind", "frac") == "cart":
+            inv = np.linalg.inv(lattice.matrix.T)
+            coords = [list(inv.dot(np.array(coord, float))) for coord in coords]
+        return Structure(lattice, structure_spec["species"], coords)
+    if kind == "mp":
+        from mp_api.client import MPRester
+        key = os.environ.get("MP_API_KEY")
+        if not key:
+            raise RuntimeError("MP_API_KEY not set")
+        with MPRester(key) as mpr:
+            result = mpr.materials.summary.search(material_ids=[structure_spec["query"]])
+            if not result:
+                raise RuntimeError(f"MP-ID not found: {structure_spec['query']}")
+            structure = result[0].structure
+        if structure_spec.get("conventional", True):
+            from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
+            structure = SpacegroupAnalyzer(structure, symprec=1e-3).get_conventional_standard_structure(
+                international_monoclinic=True
+            )
+        if structure_spec.get("symmetrize", False):
+            from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
+            structure = SpacegroupAnalyzer(structure, symprec=1e-3).get_refined_structure()
+        return structure
+    raise RuntimeError(f"Unsupported structure spec: {structure_spec}")
+
+try:
+    structure = build_structure(flow_spec["structure"])
+    kpoints = ksettings(structure, kpoints_config)
+
+    from atomate2.vasp.jobs.core import RelaxMaker, StaticMaker
+    from atomate2.vasp.sets.core import RelaxSetGenerator, StaticSetGenerator
+    from jobflow import Flow
+    from jobflow.managers.local import run_locally
+
+    if workflow == "static":
+        generator = StaticSetGenerator(
+            user_potcar_functional=potcar_functional,
+            user_kpoints_settings=kpoints,
+            user_incar_settings=incar_static(incar),
+        )
+        maker = StaticMaker(input_set_generator=generator, name="static")
+    elif workflow in ("relax", "relax_ions"):
+        user_incar = dict(incar)
+        user_incar.setdefault("ENCUT", ENCUT_RELAX_DEFAULT)
+        user_incar.setdefault("ISPIN", 2)
+        user_incar.setdefault("EDIFF", 1e-6)
+        user_incar.setdefault("ADDGRID", True)
+        user_incar.setdefault("EDIFFG", -0.01)
+        if workflow == "relax_ions":
+            user_incar["ISIF"] = 2
+        generator = RelaxSetGenerator(
+            user_potcar_functional=potcar_functional,
+            user_kpoints_settings=kpoints,
+            user_incar_settings=incar_relax(user_incar, user=incar),
+        )
+        maker = RelaxMaker(
+            input_set_generator=generator,
+            name=("relax_ions" if workflow == "relax_ions" else "relax"),
+        )
+    else:
+        raise RuntimeError(f"Unsupported workflow for BMD Compute submission: {workflow}")
+
+    flow = Flow([maker.make(structure)], name=spec["run_name"])
+    try:
+        run_locally(flow, ensure_success=True, create_folders=False)
+    except TypeError:
+        run_locally(flow, ensure_success=True)
+    print("JOBFLOW_LOCAL_DONE")
+except Exception:
+    traceback.print_exc(file=sys.stderr)
+    sys.exit(1)
+'''.strip()
+
+
+def build_job_body(submission_spec: dict) -> str:
+    paths = submission_spec["paths"]
+    runner = submission_spec["runner"]
+    environment = submission_spec["environment"]
+    spec_json = json_dumps_for_shell(submission_spec)
+    job_python = _remote_runner_python().replace("__SPEC_JSON__", repr(spec_json))
+    mp_api_key = submission_spec.get("preflight", {}).get("mp_api_key")
+    mp_export = (
+        f"export MP_API_KEY={shlex.quote(str(mp_api_key))}"
+        if mp_api_key
+        else 'echo "[sbatch] MP_API_KEY not provided for this run."'
+    )
+
+    psp_dir = environment.get("PMG_VASP_PSP_DIR")
+    jobflow_config = environment.get("JOBFLOW_CONFIG_FILE")
+
+    return f"""
+set -e -o pipefail
+mkdir -p {shlex.quote(paths["run_dir"])}
+cd {shlex.quote(paths["run_dir"])}
+{mp_export}
+export CUSTODIAN_NO_GZIP=1
+export ATOMATE2_VASP_ZIP_FILES=False
+{_shell_export("VASP_CMD", environment.get("VASP_CMD"))}
+{_shell_export("PMG_VASP_PSP_DIR", psp_dir) if psp_dir else 'echo "[sbatch] PMG_VASP_PSP_DIR not set"'}
+{_shell_export("JOBFLOW_CONFIG_FILE", jobflow_config) if jobflow_config else "true"}
+echo "[sbatch] Using partition={submission_spec["cluster"]["partition"]} account={submission_spec["cluster"]["account"]}"
+echo "[sbatch] VASP_CMD=$VASP_CMD"
+echo "[sbatch] SLURM_NTASKS=${{SLURM_NTASKS:-<unset>}}"
+which srun 2>/dev/null || true; srun --version 2>/dev/null | head -n1 || true
+which {shlex.quote(runner["python"])} || true
+python --version || true
+cat > {shlex.quote(runner["script_name"])} <<'PY'
+{job_python}
+PY
+{shlex.quote(runner["python"])} -u {shlex.quote(runner["script_name"])} 1>{shlex.quote(runner["stdout"])} 2>{shlex.quote(runner["stderr"])}
+echo "Done. Logs:"; echo {shlex.quote(runner["stdout"])}; echo {shlex.quote(runner["stderr"])}
+""".lstrip()
+
+
+def build_sbatch_script(submission_spec: dict) -> str:
+    paths = submission_spec["paths"]
+    run_name = submission_spec["run_name"]
+    module_lines = _module_lines(submission_spec)
+    exports = _submission_env_exports(submission_spec)
+    job_body = build_job_body(submission_spec)
+
+    header = (
+        f"#SBATCH --job-name={run_name}\n"
+        f"#SBATCH --output={paths['slurm_out']}\n"
+        f"#SBATCH --error={paths['slurm_err']}"
+    )
+
+    body = f"""#!/usr/bin/env bash
+{header}
+set -e -o pipefail
+
+# -- quiet module loads (compute node) --
+{os.linesep.join(module_lines)}
+
+# -- reasonable stack size for VASP --
+ulimit -s 81920 || true
+
+# -- propagate environment expected by the runner --
+{os.linesep.join(exports)}
+
+# -- POTCAR sanity (warn and show layout) --
+echo "PMG_VASP_PSP_DIR=$PMG_VASP_PSP_DIR"
+ls -ld "$PMG_VASP_PSP_DIR"/POT_* >/dev/null 2>&1 || echo "[warn] No POT_* dir found under $PMG_VASP_PSP_DIR"
+
+# -- runner body --
+{job_body.strip()}
+"""
+    return body.rstrip() + "\n"
+
+
+def build_submission_command(submission_spec: dict, *, dry_run: bool = False) -> str:
+    paths = submission_spec["paths"]
+    resources = submission_spec["resources"]
+    cluster = submission_spec["cluster"]
+    potcar = submission_spec["potcar"]
+    sbatch_script = build_sbatch_script(submission_spec)
+    pot_links = " ".join(shlex.quote(link) for link in potcar.get("symlink_targets", []))
+    link_command = (
+        f"for L in {pot_links}; do ln -sfn {shlex.quote(potcar['target'])} \"$L\"; done"
+        if pot_links
+        else "true"
+    )
+    sbatch_line = (
+        f"sbatch -p {shlex.quote(str(cluster['partition']))} "
+        f"-A {shlex.quote(str(cluster['account']))} "
+        f"-N {int(resources['nodes'])} "
+        f"-n {int(resources['ntasks'])} "
+        f"--mem={int(resources['mem_gb'])}G "
+        f"-t {shlex.quote(str(resources['walltime']))} "
+        f"--parsable {shlex.quote(paths['remote_script'])}"
+    )
+
+    directories = " ".join(
+        shlex.quote(path)
+        for path in paths.get("directories_to_prepare", [])
+    )
+
+    if dry_run:
+        return _build_verified_dry_run_command(paths, potcar, sbatch_script)
+
+    command = f"""set -e -o pipefail
+mkdir -p {directories}
+{link_command}
+cat > {shlex.quote(paths['remote_script'])} <<'SBATCH'
+{sbatch_script}
+SBATCH
+"""
+
+    return command + f"""\
+echo "Submitting with: {sbatch_line}"
+out=$({sbatch_line} 2>&1); rc=$?; echo "SBATCH_RAW_OUT=$out"; exit $rc
+"""
+
+
+def _build_verified_dry_run_command(paths: dict, potcar: dict, sbatch_script: str) -> str:
+    parent_dirs = list(paths.get("directories_to_prepare", []))
+    run_dir = paths["run_dir"]
+    parent_dir_commands = "\n".join(
+        _verified_mkdir_command(path, "Remote directories prepared")
+        for path in parent_dirs
+    )
+    link_commands = "\n".join(
+        _verified_symlink_command(potcar["target"], link, "POTCAR links prepared")
+        for link in potcar.get("symlink_targets", [])
+    ) or "true"
+
+    return f"""set -e -o pipefail
+prep_fail() {{
+    echo "PREP_FAILED_STAGE=$1"
+    echo "PREP_FAILED_REASON=$2"
+    exit 42
+}}
+prep_ok() {{
+    echo "PREP_OK=$1"
+}}
+verify_dir() {{
+    test -d "$2" || prep_fail "$1" "Expected directory does not exist: $2"
+}}
+verify_file() {{
+    test -f "$2" || prep_fail "$1" "Expected file does not exist: $2"
+}}
+verify_symlink() {{
+    test -L "$3" || prep_fail "$1" "Expected POTCAR symlink does not exist: $3"
+    target="$(readlink "$3" 2>/dev/null || true)"
+    test "$target" = "$2" || prep_fail "$1" "POTCAR symlink points to $target instead of $2"
+}}
+{parent_dir_commands}
+prep_ok "Remote directories prepared"
+{_verified_mkdir_command(run_dir, "Working directory created")}
+prep_ok "Working directory created"
+{link_commands}
+prep_ok "POTCAR links prepared"
+{{
+cat > {shlex.quote(paths['remote_script'])} <<'SBATCH'
+{sbatch_script}
+SBATCH
+}} || prep_fail "Submission script written" "Unable to write submission script: {paths['remote_script']}"
+verify_file "Submission script written" {shlex.quote(paths['remote_script'])}
+prep_ok "Submission script written"
+prep_ok "Ready for submission"
+echo DRY RUN
+exit 0
+"""
+
+
+def _verified_mkdir_command(path: str, stage: str) -> str:
+    quoted_path = shlex.quote(path)
+    quoted_stage = shlex.quote(stage)
+    reason = shlex.quote(f"Unable to create directory: {path}")
+    return (
+        f"mkdir -p {quoted_path} || prep_fail {quoted_stage} {reason}\n"
+        f"verify_dir {quoted_stage} {quoted_path}"
+    )
+
+
+def _verified_symlink_command(target: str, link: str, stage: str) -> str:
+    quoted_target = shlex.quote(target)
+    quoted_link = shlex.quote(link)
+    quoted_stage = shlex.quote(stage)
+    reason = shlex.quote(f"Unable to create POTCAR symlink: {link}")
+    return (
+        f"ln -sfn {quoted_target} {quoted_link} || prep_fail {quoted_stage} {reason}\n"
+        f"verify_symlink {quoted_stage} {quoted_target} {quoted_link}"
+    )
+
+
+def json_dumps_for_shell(value: dict) -> str:
+    import json
+
+    return json.dumps(value)
+
+
+def parse_sbatch_job_id(output: str) -> str:
+    output = output or ""
+    patterns = (
+        r"(?m)^JOBID=(\d+)\b",
+        r"(?m)^SBATCH_RAW_OUT=(\d+)\b",
+        r"(?m)^(\d+)\b",
+        r"Submitted batch job\s+(\d+)",
+        r"\b(\d+)\b",
+    )
+
+    for pattern in patterns:
+        match = re.search(pattern, output)
+        if match:
+            return match.group(1)
+
+    raise RuntimeError("Could not parse job id from sbatch output above.")
+
+
 def create_submission_spec(
     flow_spec: dict,
     *,
@@ -403,8 +878,11 @@ __all__ = [
     "MODULES",
     "NOTEBOOK_DEFAULTS",
     "POTCAR_LINK_MAP",
+    "build_sbatch_script",
+    "build_submission_command",
     "create_submission_spec",
     "default_resources_for_workflow",
+    "parse_sbatch_job_id",
     "sanitize_label",
     "summarize_potcar_species",
 ]

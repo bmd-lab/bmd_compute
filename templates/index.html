@@ -18,6 +18,7 @@
     --accent: #4FC3F7;
     --accent-2: #B2EBF2;
     --ok: #7ED957;
+    --bad: #FF8A80;
 }
 
 body {
@@ -301,6 +302,11 @@ ul {
     color: var(--ok);
 }
 
+.pill.failed {
+    border-color: rgba(255, 138, 128, 0.75);
+    color: var(--bad);
+}
+
 .workflow-layout {
     display: grid;
     gap: 18px;
@@ -338,6 +344,83 @@ ul {
     margin: 14px 0 18px;
 }
 
+.button-row {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: 1fr 1fr;
+    margin-top: 18px;
+}
+
+.button-row form,
+.button-row button {
+    margin: 0;
+}
+
+.prep-panel {
+    background: #1b1b1b;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    margin-top: 18px;
+    padding: 16px;
+}
+
+.prep-panel.success {
+    border-color: rgba(126, 217, 87, 0.55);
+}
+
+.prep-panel.failed {
+    border-color: rgba(255, 138, 128, 0.65);
+}
+
+.prep-title {
+    color: var(--text);
+    font-size: 16px;
+    font-weight: 700;
+    margin-bottom: 12px;
+}
+
+.prep-list {
+    display: grid;
+    gap: 9px;
+    list-style: none;
+    padding-left: 0;
+}
+
+.prep-list li {
+    align-items: center;
+    color: var(--soft);
+    display: flex;
+    gap: 10px;
+}
+
+.step-mark {
+    align-items: center;
+    border: 1px solid var(--line-strong);
+    border-radius: 50%;
+    color: var(--muted);
+    display: inline-flex;
+    flex: 0 0 auto;
+    font-size: 12px;
+    font-weight: 700;
+    height: 22px;
+    justify-content: center;
+    width: 22px;
+}
+
+.complete .step-mark {
+    border-color: rgba(126, 217, 87, 0.75);
+    color: var(--ok);
+}
+
+.failed .step-mark {
+    border-color: rgba(255, 138, 128, 0.75);
+    color: var(--bad);
+}
+
+.failure-table {
+    margin-top: 10px;
+}
+
 @media (max-width: 760px) {
     .container {
         margin-top: 22px;
@@ -362,7 +445,8 @@ ul {
     .details-grid,
     .form-grid,
     .workflow-layout,
-    .submission-grid {
+    .submission-grid,
+    .button-row {
         grid-template-columns: 1fr;
     }
 
@@ -816,7 +900,103 @@ ul {
 
             </div>
 
-            <button type="button" disabled>Submit Workflow</button>
+        </section>
+
+        <section class="stage">
+
+            <div class="stage-header">
+                <div>
+                    <div class="stage-title">
+                        <span class="stage-number">6</span>
+                        <h2>Remote Preparation</h2>
+                    </div>
+                    <div class="summary-line">
+                        {{ submission_spec.cluster.remote_host }} · {{ submission_spec.paths.run_dir }}
+                    </div>
+                </div>
+                <div class="stage-status">
+                    {% if remote_preparation and remote_preparation.status == "success" %}
+                    <span class="pill ready">Prepared</span>
+                    {% elif remote_preparation and remote_preparation.status == "failed" %}
+                    <span class="pill failed">Failed</span>
+                    {% else %}
+                    <span class="pill">Pending</span>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="button-row">
+                <form action="/prepare-remote" method="post">
+                    <textarea class="hidden-field" name="structure">{{ structure_text }}</textarea>
+                    <input type="hidden" name="fmt" value="{{ fmt }}">
+                    <input type="hidden" name="workflow" value="{{ selected_workflow }}">
+                    <input type="hidden" name="method" value="{{ selected_method }}">
+                    <input type="hidden" name="created_at" value="{{ submission_spec.created_at }}">
+                    <button type="submit">Prepare Remote</button>
+                </form>
+
+                <button
+                    type="button"
+                    {% if not remote_preparation or remote_preparation.status != "success" %}disabled{% endif %}>
+                    Submit Workflow
+                </button>
+            </div>
+
+            {% if remote_preparation %}
+                {% if remote_preparation.status == "success" %}
+                <div class="prep-panel success">
+                    <div class="prep-title">Remote Preparation Complete</div>
+                    <ul class="prep-list">
+                        {% for step in remote_preparation.steps %}
+                        <li class="{{ step.state }}">
+                            <span class="step-mark">&#10003;</span>
+                            <span>{{ step.label }}</span>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+
+                <details class="disclosure details-wide">
+                    <summary>Remote Preparation Diagnostics</summary>
+                    <table class="compact-table">
+                        <tr>
+                            <td>Status</td>
+                            <td>{{ remote_preparation.job_record.status }}</td>
+                        </tr>
+                        <tr>
+                            <td>Job ID</td>
+                            <td>{{ remote_preparation.job_record.job_id or "None" }}</td>
+                        </tr>
+                        <tr>
+                            <td>Run Directory</td>
+                            <td class="mono">{{ remote_preparation.job_record.run_dir }}</td>
+                        </tr>
+                        <tr>
+                            <td>Submission Script</td>
+                            <td class="mono">{{ remote_preparation.job_record.remote_script }}</td>
+                        </tr>
+                    </table>
+                </details>
+                {% elif remote_preparation.status == "failed" %}
+                <div class="prep-panel failed">
+                    <div class="prep-title">Remote Preparation Failed</div>
+                    <table class="compact-table failure-table">
+                        <tr>
+                            <td>Stage</td>
+                            <td>{{ remote_preparation.stage }}</td>
+                        </tr>
+                        <tr>
+                            <td>Reason</td>
+                            <td>{{ remote_preparation.reason }}</td>
+                        </tr>
+                        <tr>
+                            <td>Suggestion</td>
+                            <td>{{ remote_preparation.suggestion }}</td>
+                        </tr>
+                    </table>
+                </div>
+                {% endif %}
+            {% endif %}
 
         </section>
         {% endif %}

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping
 
 
@@ -171,6 +171,25 @@ class RemoteJobStatus:
     workdir: str | None = None
     job_name: str | None = None
     raw: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class JobRecord:
+    job_id: str | None
+    run_name: str
+    run_dir: str
+    remote_script: str
+    log_paths: dict[str, str]
+    cluster: dict[str, Any]
+    resources: dict[str, Any]
+    submitted_at: str
+    raw_output: str = ""
+    status: str = "submitted"
+    submission_spec: dict[str, Any] = field(default_factory=dict)
+    remote_state_path: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 class RemoteRunner(ABC):
@@ -360,6 +379,11 @@ class RemoteRunner(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def submit(self, submission_spec: Mapping[str, Any], dry_run: bool = False) -> JobRecord:
+        """Submit a prepared SubmissionSpec and return a JobRecord."""
+        raise NotImplementedError
+
+    @abstractmethod
     def query_job(self, job_id: str) -> RemoteJobStatus:
         """Query scheduler state for a job."""
         raise NotImplementedError
@@ -378,6 +402,7 @@ class RemoteRunner(ABC):
 __all__ = [
     "BatchSubmissionRequest",
     "BatchSubmissionResult",
+    "JobRecord",
     "NOTEBOOK_REMOTE_INTERACTIONS",
     "RemoteCommandResult",
     "RemoteConnectionProfile",
