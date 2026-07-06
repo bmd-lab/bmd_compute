@@ -13,6 +13,9 @@ SUCCESS_STEPS = [
     "Remote preflight checks completed",
     "Remote directories prepared",
     "Working directory created",
+    "submission.json uploaded",
+    "Execution module uploaded",
+    "run_job.py uploaded",
     "POTCAR links prepared",
     "Submission script written",
     "Ready for submission",
@@ -21,6 +24,9 @@ SUCCESS_STEPS = [
 REMOTE_STATE_STEPS = [
     "Remote directories prepared",
     "Working directory created",
+    "submission.json uploaded",
+    "Execution module uploaded",
+    "run_job.py uploaded",
     "POTCAR links prepared",
     "Submission script written",
     "Ready for submission",
@@ -41,7 +47,7 @@ def prepare_remote_submission(
     """
 
     runner = (runner_factory or ParamikoRemoteRunner)()
-    profile = _connection_profile(submission_spec)
+    profile = connection_profile_from_submission_spec(submission_spec)
     stage = "SSH Connection"
 
     try:
@@ -59,7 +65,34 @@ def prepare_remote_submission(
     return _success_result(record, submission_spec)
 
 
-def _connection_profile(submission_spec: dict) -> RemoteConnectionProfile:
+def remembered_successful_preparation(submission_spec: dict) -> dict:
+    """
+    Recreate the template context for a remote preparation that already
+    completed successfully in the progressive browser flow.
+    """
+
+    paths = submission_spec["paths"]
+    record = JobRecord(
+        job_id=None,
+        run_name=submission_spec["run_name"],
+        run_dir=paths["run_dir"],
+        remote_script=paths["remote_script"],
+        log_paths={
+            "stdout": paths["log_out"],
+            "stderr": paths["log_err"],
+            "slurm_out": paths["slurm_out"],
+            "slurm_err": paths["slurm_err"],
+        },
+        cluster=dict(submission_spec["cluster"]),
+        resources=dict(submission_spec["resources"]),
+        submitted_at="",
+        raw_output="\n".join(f"PREP_OK={step}" for step in REMOTE_STATE_STEPS) + "\n",
+        status="dry_run",
+    )
+    return _success_result(record, submission_spec)
+
+
+def connection_profile_from_submission_spec(submission_spec: dict) -> RemoteConnectionProfile:
     cluster = submission_spec["cluster"]
     return RemoteConnectionProfile(
         host=cluster["remote_host"],
@@ -120,6 +153,9 @@ def _required_remote_state_steps(submission_spec: dict) -> list[str]:
     steps = [
         "Remote directories prepared",
         "Working directory created",
+        "submission.json uploaded",
+        "Execution module uploaded",
+        "run_job.py uploaded",
     ]
 
     if submission_spec.get("potcar", {}).get("symlink_targets"):
@@ -283,6 +319,8 @@ def _marker_value(output: str, marker: str) -> str | None:
 def _suggestion_for_stage(stage: str) -> str:
     if stage in {"Remote directories prepared", "Working directory created"}:
         return "Check permissions and available space for the configured remote working directories."
+    if stage in {"submission.json uploaded", "Execution module uploaded", "run_job.py uploaded"}:
+        return "Check write permissions for the remote run directory."
     if stage == "POTCAR links prepared":
         return "Check the configured POTCAR directory and whether existing paths can be replaced by symlinks."
     if stage == "Submission script written":
@@ -323,5 +361,7 @@ def _clean_message(exc: Exception) -> str:
 __all__ = [
     "REMOTE_STATE_STEPS",
     "SUCCESS_STEPS",
+    "connection_profile_from_submission_spec",
+    "remembered_successful_preparation",
     "prepare_remote_submission",
 ]

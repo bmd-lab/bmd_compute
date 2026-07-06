@@ -2,7 +2,8 @@ from fastapi import FastAPI, Form, Request
 from fastapi.templating import Jinja2Templates
 
 from backend.parser import parse_structure
-from backend.remote_preparation import prepare_remote_submission
+from backend.remote_preparation import prepare_remote_submission, remembered_successful_preparation
+from backend.remote_submission import submit_remote_workflow
 from backend.submission import create_submission_spec
 from backend.summary import summarize_structure
 from backend.workflow_summary import summarize_workflow
@@ -23,6 +24,7 @@ def page_context(
     workflow_summary=None,
     submission_spec=None,
     remote_preparation=None,
+    submission_result=None,
 ):
     return {
         "structure_text": structure_text,
@@ -33,6 +35,7 @@ def page_context(
         "workflow": workflow_summary,
         "submission_spec": submission_spec,
         "remote_preparation": remote_preparation,
+        "submission_result": submission_result,
     }
 
 
@@ -161,5 +164,50 @@ def prepare_remote(
             workflow_summary=workflow_summary,
             submission_spec=submission_spec,
             remote_preparation=remote_preparation,
+        ),
+    )
+
+
+@app.post("/submit")
+def submit_workflow(
+    request: Request,
+    structure: str = Form(...),
+    fmt: str = Form(...),
+    workflow: str = Form(...),
+    method: str = Form(...),
+    created_at: str = Form(...),
+    remote_prepared: str = Form("false"),
+):
+    summary, workflow_summary, submission_spec = build_submission_state(
+        structure_text=structure,
+        fmt=fmt,
+        workflow=workflow,
+        method=method,
+        timestamp=created_at,
+    )
+    prepared = remote_prepared.lower() == "true"
+    submission_result = submit_remote_workflow(
+        submission_spec,
+        remote_prepared=prepared,
+    )
+    remote_preparation = (
+        remembered_successful_preparation(submission_spec)
+        if prepared
+        else None
+    )
+
+    return templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context=page_context(
+            structure_text=structure,
+            fmt=fmt,
+            summary=summary,
+            selected_workflow=workflow,
+            selected_method=method,
+            workflow_summary=workflow_summary,
+            submission_spec=submission_spec,
+            remote_preparation=remote_preparation,
+            submission_result=submission_result,
         ),
     )

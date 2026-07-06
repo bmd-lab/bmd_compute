@@ -27,6 +27,9 @@ verified_output = "\n".join(
     [
         "PREP_OK=Remote directories prepared",
         "PREP_OK=Working directory created",
+        "PREP_OK=submission.json uploaded",
+        "PREP_OK=Execution module uploaded",
+        "PREP_OK=run_job.py uploaded",
         "PREP_OK=POTCAR links prepared",
         "PREP_OK=Submission script written",
         "PREP_OK=Ready for submission",
@@ -212,6 +215,132 @@ assert verified_failure["stage"] == "Working directory created"
 assert "Expected directory does not exist" in verified_failure["reason"]
 assert verified_failure["steps"][-1] == {
     "label": "Working directory created",
+    "state": "failed",
+}
+
+
+class RunJobUploadFailureRunner:
+    def __init__(self):
+        self.closed = False
+
+    def connect(self, profile):
+        return None
+
+    def submit(self, spec, dry_run=False):
+        result = RemoteCommandResult(
+            command="verified dry run",
+            returncode=42,
+            stdout=(
+                "PREP_OK=Remote directories prepared\n"
+                "PREP_OK=Working directory created\n"
+                "PREP_OK=submission.json uploaded\n"
+                "PREP_OK=Execution module uploaded\n"
+                "PREP_FAILED_STAGE=run_job.py uploaded\n"
+                "PREP_FAILED_REASON=Expected file does not exist: "
+                "/bmd-db/lee/flows/TiO2-static-20260629-120000/run_job.py\n"
+            ),
+        )
+        raise RemoteExecutionError(result)
+
+    def close(self):
+        self.closed = True
+
+
+run_job_failure_runner = RunJobUploadFailureRunner()
+run_job_failure = prepare_remote_submission(
+    submission_spec,
+    runner_factory=lambda: run_job_failure_runner,
+)
+
+assert run_job_failure_runner.closed is True
+assert run_job_failure["status"] == "failed"
+assert run_job_failure["stage"] == "run_job.py uploaded"
+assert "Expected file does not exist" in run_job_failure["reason"]
+assert run_job_failure["steps"][-1] == {
+    "label": "run_job.py uploaded",
+    "state": "failed",
+}
+
+
+class SubmissionJsonUploadFailureRunner:
+    def __init__(self):
+        self.closed = False
+
+    def connect(self, profile):
+        return None
+
+    def submit(self, spec, dry_run=False):
+        result = RemoteCommandResult(
+            command="verified dry run",
+            returncode=42,
+            stdout=(
+                "PREP_OK=Remote directories prepared\n"
+                "PREP_OK=Working directory created\n"
+                "PREP_FAILED_STAGE=submission.json uploaded\n"
+                "PREP_FAILED_REASON=Expected file does not exist: "
+                "/bmd-db/lee/flows/TiO2-static-20260629-120000/submission.json\n"
+            ),
+        )
+        raise RemoteExecutionError(result)
+
+    def close(self):
+        self.closed = True
+
+
+submission_json_failure_runner = SubmissionJsonUploadFailureRunner()
+submission_json_failure = prepare_remote_submission(
+    submission_spec,
+    runner_factory=lambda: submission_json_failure_runner,
+)
+
+assert submission_json_failure_runner.closed is True
+assert submission_json_failure["status"] == "failed"
+assert submission_json_failure["stage"] == "submission.json uploaded"
+assert "Expected file does not exist" in submission_json_failure["reason"]
+assert submission_json_failure["steps"][-1] == {
+    "label": "submission.json uploaded",
+    "state": "failed",
+}
+
+
+class ExecutionModuleUploadFailureRunner:
+    def __init__(self):
+        self.closed = False
+
+    def connect(self, profile):
+        return None
+
+    def submit(self, spec, dry_run=False):
+        result = RemoteCommandResult(
+            command="verified dry run",
+            returncode=42,
+            stdout=(
+                "PREP_OK=Remote directories prepared\n"
+                "PREP_OK=Working directory created\n"
+                "PREP_OK=submission.json uploaded\n"
+                "PREP_FAILED_STAGE=Execution module uploaded\n"
+                "PREP_FAILED_REASON=Expected file does not exist: "
+                "/bmd-db/lee/flows/TiO2-static-20260629-120000/backend/execution.py\n"
+            ),
+        )
+        raise RemoteExecutionError(result)
+
+    def close(self):
+        self.closed = True
+
+
+execution_module_failure_runner = ExecutionModuleUploadFailureRunner()
+execution_module_failure = prepare_remote_submission(
+    submission_spec,
+    runner_factory=lambda: execution_module_failure_runner,
+)
+
+assert execution_module_failure_runner.closed is True
+assert execution_module_failure["status"] == "failed"
+assert execution_module_failure["stage"] == "Execution module uploaded"
+assert "Expected file does not exist" in execution_module_failure["reason"]
+assert execution_module_failure["steps"][-1] == {
+    "label": "Execution module uploaded",
     "state": "failed",
 }
 

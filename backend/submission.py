@@ -6,6 +6,7 @@ import re
 import shlex
 import time
 from copy import deepcopy
+from pathlib import Path
 
 
 NOTEBOOK_DEFAULTS = {
@@ -27,15 +28,24 @@ NOTEBOOK_DEFAULTS = {
 
 DEFAULT_RESOURCES = {
     "nodes": 1,
-    "ntasks": 24,
-    "mem_gb": 120,
+    "ntasks": 48,
+    "mem_gb": 128,
     "walltime": "72:00:00",
 }
 
-DEFAULT_PARTITION = "power-leeburton"
-DEFAULT_ACCOUNT = "power-leeburton-users"
+DEFAULT_PARTITION = "leeburton-pool"
+DEFAULT_ACCOUNT = "power-leeburton-users_v2"
 DEFAULT_POTCAR_FUNCTIONAL = "PBE_64"
 DEFAULT_VASP_LAUNCHER = "srun --mpi=pmi2 -n $SLURM_NTASKS vasp_std"
+SUBMISSION_SPEC_FILENAME = "submission.json"
+REMOTE_BACKEND_PACKAGE_DIR = "backend"
+REMOTE_EXECUTION_MODULE_FILENAME = "execution.py"
+REMOTE_BACKEND_INIT_FILENAME = "__init__.py"
+REMOTE_BACKEND_MODULE_FILENAMES = (
+    REMOTE_EXECUTION_MODULE_FILENAME,
+    "parser.py",
+    "workflows.py",
+)
 
 MODULES = [
     "intel/rocky8-oneAPI-2023",
@@ -268,234 +278,129 @@ def _submission_env_exports(submission_spec: dict) -> list[str]:
     ]
 
 
-def _remote_runner_python() -> str:
+def _run_job_launcher_python() -> str:
     return r'''
 import json
 import os
 import sys
 import traceback
 
-print("[runner] python:", sys.version.replace("\n", " "))
+from backend.execution import run_submission
 
-def _pkg_ver(name):
-    try:
-        module = __import__(name)
-        version = getattr(module, "__version__", "<no __version__>")
-        print(f"[runner] {name} version:", version)
-    except Exception as exc:
-        print(f"[runner] {name} import failed:", exc)
 
-for package in ("atomate2", "jobflow", "pymatgen", "custodian"):
-    _pkg_ver(package)
-
-spec = json.loads(__SPEC_JSON__)
-flow_spec = spec["flow_spec"]
-workflow = (flow_spec.get("workflow") or "static").lower()
-potcar_functional = flow_spec.get("potcar_functional") or "PBE_64"
-incar = flow_spec.get("incar") or flow_spec.get("incar_overrides") or {}
-kpoints_config = flow_spec.get("kpoints")
-
-ENCUT_STATIC_FINAL_DEFAULT = 620
-ENCUT_RELAX_DEFAULT = 580
-
-def _is_hse_incar(settings):
-    if not isinstance(settings, dict):
-        return False
-    value = settings.get("LHFCALC")
-    if isinstance(value, str) and value.strip().strip(".").upper() in ("T", "TRUE", "YES"):
-        return True
-    if value is True:
-        return True
-    for key in ("AEXX", "HFSCREEN", "ALDAC", "LHFCALC_HYBRID"):
-        if key in settings:
-            return True
-    gga = settings.get("GGA")
-    return isinstance(gga, str) and "HSE" in gga.upper()
-
-def incar_static(settings, allow_ncore=True):
-    user_settings = dict(settings or {})
-    for key in ("GGA", "ENAUG", "LMIXTAU"):
-        user_settings.setdefault(key, None)
-    user_settings.setdefault("LWAVE", False)
-    user_settings.setdefault("LCHARG", True)
-    user_settings.setdefault("ISMEAR", -5)
-    user_settings.setdefault("SIGMA", 0.05)
-    user_settings.setdefault("NEDOS", 4001)
-    user_settings.setdefault("LORBIT", 11)
-    user_settings.setdefault("LREAL", False)
-    user_settings.setdefault("PREC", "Accurate")
-    user_settings.setdefault("ADDGRID", True)
-    try:
-        encut_now = int(float(user_settings.get("ENCUT", 0)))
-    except Exception:
-        encut_now = 0
-    user_settings["ENCUT"] = max(encut_now, ENCUT_STATIC_FINAL_DEFAULT)
-    if allow_ncore and not _is_hse_incar(user_settings):
-        user_settings.setdefault("NCORE", 2)
-    return user_settings
-
-def incar_relax(settings, user=None):
-    user_settings = dict(settings or {})
-    explicit_settings = dict(user or {})
-    if "LCHARG" not in explicit_settings:
-        user_settings["LCHARG"] = False
-    if "LWAVE" not in explicit_settings:
-        user_settings["LWAVE"] = False
-    for key in ("LAECHG", "LVTOT", "LELF", "LVHAR", "LORBIT"):
-        if key not in explicit_settings:
-            user_settings[key] = None
-    for key in ("GGA", "ENAUG", "LMIXTAU"):
-        user_settings.setdefault(key, None)
-    user_settings.setdefault("ALGO", "Fast")
-    user_settings.setdefault("ADDGRID", True)
-    user_settings.setdefault("EDIFFG", -0.01)
-    if _is_hse_incar(user_settings) or _is_hse_incar(explicit_settings):
-        user_settings.setdefault("PRECFOCK", "Fast")
-        user_settings.setdefault("ALGO", "Damped")
-    if not _is_hse_incar(user_settings) and not _is_hse_incar(explicit_settings):
-        user_settings.setdefault("NCORE", 2)
-    return user_settings
-
-def ksettings(structure, kpoints):
-    if not kpoints:
-        return None
-    mode = kpoints.get("mode")
-    value = kpoints.get("value")
-    if mode == "mesh":
-        from pymatgen.io.vasp.inputs import Kpoints
-        nx, ny, nz = (int(value[0]), int(value[1]), int(value[2]))
-        natoms = len(structure)
-        target = (nx, ny, nz)
-        kppa = max(1, nx * ny * nz * max(1, natoms))
-        seen = set()
-        found = None
-        def mesh_for(candidate_kppa):
-            kp = Kpoints.automatic_density(structure, int(max(1, candidate_kppa)))
-            if kp.kpts:
-                mesh = kp.kpts[0]
-                if isinstance(mesh, (list, tuple)) and len(mesh) >= 3:
-                    return (int(mesh[0]), int(mesh[1]), int(mesh[2]))
-            return (0, 0, 0)
-        for _ in range(64):
-            mesh = mesh_for(kppa)
-            if mesh == target:
-                found = kppa
-                break
-            if mesh in seen:
-                break
-            seen.add(mesh)
-            target_product = nx * ny * nz
-            mesh_product = max(1, mesh[0] * mesh[1] * mesh[2])
-            scale = max(
-                target_product / mesh_product,
-                nx / max(1, mesh[0]),
-                ny / max(1, mesh[1]),
-                nz / max(1, mesh[2]),
-            )
-            kppa = int(max(1, kppa * (1.25 if scale < 1 else min(3.0, 1.15 * scale))))
-        return {"grid_density": float(found if found is not None else kppa)}
-    return {mode: float(value)}
-
-def build_structure(structure_spec):
-    from pymatgen.core import Lattice, Structure
-    kind = structure_spec.get("type")
-    if kind == "path":
-        return Structure.from_file(structure_spec["path"])
-    if kind == "pasted_text":
-        fmt = structure_spec.get("format") or "poscar"
-        return Structure.from_str(structure_spec["text"], fmt=fmt)
-    if kind == "builder":
-        import numpy as np
-        lattice_spec = structure_spec.get("lattice", {}) or {}
-        lattice = Lattice.from_parameters(
-            float(lattice_spec.get("a", 3.84)),
-            float(lattice_spec.get("b", 3.84)),
-            float(lattice_spec.get("c", 3.84)),
-            float(lattice_spec.get("alpha", 120.0)),
-            float(lattice_spec.get("beta", 90.0)),
-            float(lattice_spec.get("gamma", 60.0)),
-        )
-        coords = structure_spec["coords"]
-        if structure_spec.get("coord_kind", "frac") == "cart":
-            inv = np.linalg.inv(lattice.matrix.T)
-            coords = [list(inv.dot(np.array(coord, float))) for coord in coords]
-        return Structure(lattice, structure_spec["species"], coords)
-    if kind == "mp":
-        from mp_api.client import MPRester
-        key = os.environ.get("MP_API_KEY")
-        if not key:
-            raise RuntimeError("MP_API_KEY not set")
-        with MPRester(key) as mpr:
-            result = mpr.materials.summary.search(material_ids=[structure_spec["query"]])
-            if not result:
-                raise RuntimeError(f"MP-ID not found: {structure_spec['query']}")
-            structure = result[0].structure
-        if structure_spec.get("conventional", True):
-            from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
-            structure = SpacegroupAnalyzer(structure, symprec=1e-3).get_conventional_standard_structure(
-                international_monoclinic=True
-            )
-        if structure_spec.get("symmetrize", False):
-            from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
-            structure = SpacegroupAnalyzer(structure, symprec=1e-3).get_refined_structure()
-        return structure
-    raise RuntimeError(f"Unsupported structure spec: {structure_spec}")
+spec_path = os.environ.get("BMD_SUBMISSION_SPEC")
+if not spec_path:
+    spec_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "submission.json")
+print("[runner] submission spec:", spec_path)
+with open(spec_path, "r", encoding="utf-8") as handle:
+    spec = json.load(handle)
 
 try:
-    structure = build_structure(flow_spec["structure"])
-    kpoints = ksettings(structure, kpoints_config)
-
-    from atomate2.vasp.jobs.core import RelaxMaker, StaticMaker
-    from atomate2.vasp.sets.core import RelaxSetGenerator, StaticSetGenerator
-    from jobflow import Flow
-    from jobflow.managers.local import run_locally
-
-    if workflow == "static":
-        generator = StaticSetGenerator(
-            user_potcar_functional=potcar_functional,
-            user_kpoints_settings=kpoints,
-            user_incar_settings=incar_static(incar),
-        )
-        maker = StaticMaker(input_set_generator=generator, name="static")
-    elif workflow in ("relax", "relax_ions"):
-        user_incar = dict(incar)
-        user_incar.setdefault("ENCUT", ENCUT_RELAX_DEFAULT)
-        user_incar.setdefault("ISPIN", 2)
-        user_incar.setdefault("EDIFF", 1e-6)
-        user_incar.setdefault("ADDGRID", True)
-        user_incar.setdefault("EDIFFG", -0.01)
-        if workflow == "relax_ions":
-            user_incar["ISIF"] = 2
-        generator = RelaxSetGenerator(
-            user_potcar_functional=potcar_functional,
-            user_kpoints_settings=kpoints,
-            user_incar_settings=incar_relax(user_incar, user=incar),
-        )
-        maker = RelaxMaker(
-            input_set_generator=generator,
-            name=("relax_ions" if workflow == "relax_ions" else "relax"),
-        )
-    else:
-        raise RuntimeError(f"Unsupported workflow for BMD Compute submission: {workflow}")
-
-    flow = Flow([maker.make(structure)], name=spec["run_name"])
-    try:
-        run_locally(flow, ensure_success=True, create_folders=False)
-    except TypeError:
-        run_locally(flow, ensure_success=True)
-    print("JOBFLOW_LOCAL_DONE")
+    run_submission(spec)
 except Exception:
     traceback.print_exc(file=sys.stderr)
     sys.exit(1)
 '''.strip()
 
 
+def build_run_job_script(submission_spec: dict | None = None) -> str:
+    del submission_spec
+    return _run_job_launcher_python()
+
+
+def build_execution_module_source() -> str:
+    return build_backend_module_sources()[REMOTE_EXECUTION_MODULE_FILENAME]
+
+
+def build_backend_module_sources() -> dict[str, str]:
+    backend_dir = Path(__file__).resolve().parent
+    return {
+        filename: (backend_dir / filename).read_text(encoding="utf-8")
+        for filename in REMOTE_BACKEND_MODULE_FILENAMES
+    }
+
+
+def _run_job_path(submission_spec: dict) -> str:
+    paths = submission_spec["paths"]
+    runner = submission_spec["runner"]
+    script_name = runner["script_name"]
+
+    if str(script_name).startswith("/"):
+        return script_name
+
+    return posixpath.join(paths["run_dir"], script_name)
+
+
+def _submission_json_path(submission_spec: dict) -> str:
+    paths = submission_spec["paths"]
+    runner = submission_spec["runner"]
+    spec_name = runner.get("submission_spec_name", SUBMISSION_SPEC_FILENAME)
+
+    if str(spec_name).startswith("/"):
+        return spec_name
+
+    return posixpath.join(paths["run_dir"], spec_name)
+
+
+def _remote_backend_dir(submission_spec: dict) -> str:
+    paths = submission_spec["paths"]
+    runner = submission_spec["runner"]
+    backend_dir = runner.get("backend_package_dir", REMOTE_BACKEND_PACKAGE_DIR)
+
+    if str(backend_dir).startswith("/"):
+        return backend_dir
+
+    return posixpath.join(paths["run_dir"], backend_dir)
+
+
+def _execution_module_path(submission_spec: dict) -> str:
+    runner = submission_spec["runner"]
+    module_name = runner.get("execution_module_name", REMOTE_EXECUTION_MODULE_FILENAME)
+
+    if str(module_name).startswith("/"):
+        return module_name
+
+    return posixpath.join(_remote_backend_dir(submission_spec), module_name)
+
+
+def _backend_module_paths(submission_spec: dict) -> dict[str, str]:
+    paths = {
+        filename: posixpath.join(_remote_backend_dir(submission_spec), filename)
+        for filename in REMOTE_BACKEND_MODULE_FILENAMES
+    }
+    paths[REMOTE_EXECUTION_MODULE_FILENAME] = _execution_module_path(submission_spec)
+    return paths
+
+
+def _backend_init_path(submission_spec: dict) -> str:
+    runner = submission_spec["runner"]
+    init_name = runner.get("backend_init_name", REMOTE_BACKEND_INIT_FILENAME)
+
+    if str(init_name).startswith("/"):
+        return init_name
+
+    return posixpath.join(_remote_backend_dir(submission_spec), init_name)
+
+
 def build_job_body(submission_spec: dict) -> str:
     paths = submission_spec["paths"]
     runner = submission_spec["runner"]
     environment = submission_spec["environment"]
-    spec_json = json_dumps_for_shell(submission_spec)
-    job_python = _remote_runner_python().replace("__SPEC_JSON__", repr(spec_json))
+    run_job_path = _run_job_path(submission_spec)
+    submission_json_path = _submission_json_path(submission_spec)
+    backend_module_paths = _backend_module_paths(submission_spec)
+    backend_module_checks = "\n".join(
+        (
+            f"test -f {shlex.quote(path)} || "
+            f'{{ echo "[sbatch] Missing execution module at {path}"; exit 1; }}'
+        )
+        if filename == REMOTE_EXECUTION_MODULE_FILENAME
+        else (
+            f"test -f {shlex.quote(path)} || "
+            f'{{ echo "[sbatch] Missing backend module {filename} at {path}"; exit 1; }}'
+        )
+        for filename, path in backend_module_paths.items()
+    )
     mp_api_key = submission_spec.get("preflight", {}).get("mp_api_key")
     mp_export = (
         f"export MP_API_KEY={shlex.quote(str(mp_api_key))}"
@@ -522,9 +427,10 @@ echo "[sbatch] SLURM_NTASKS=${{SLURM_NTASKS:-<unset>}}"
 which srun 2>/dev/null || true; srun --version 2>/dev/null | head -n1 || true
 which {shlex.quote(runner["python"])} || true
 python --version || true
-cat > {shlex.quote(runner["script_name"])} <<'PY'
-{job_python}
-PY
+test -f {shlex.quote(run_job_path)} || {{ echo "[sbatch] Missing run_job.py at {run_job_path}"; exit 1; }}
+test -f {shlex.quote(submission_json_path)} || {{ echo "[sbatch] Missing submission.json at {submission_json_path}"; exit 1; }}
+{backend_module_checks}
+export BMD_SUBMISSION_SPEC={shlex.quote(submission_json_path)}
 {shlex.quote(runner["python"])} -u {shlex.quote(runner["script_name"])} 1>{shlex.quote(runner["stdout"])} 2>{shlex.quote(runner["stderr"])}
 echo "Done. Logs:"; echo {shlex.quote(runner["stdout"])}; echo {shlex.quote(runner["stderr"])}
 """.lstrip()
@@ -571,6 +477,14 @@ def build_submission_command(submission_spec: dict, *, dry_run: bool = False) ->
     resources = submission_spec["resources"]
     cluster = submission_spec["cluster"]
     potcar = submission_spec["potcar"]
+    submission_json = json_dumps_for_remote_file(submission_spec)
+    submission_json_path = _submission_json_path(submission_spec)
+    backend_dir = _remote_backend_dir(submission_spec)
+    backend_init_path = _backend_init_path(submission_spec)
+    backend_module_paths = _backend_module_paths(submission_spec)
+    backend_module_sources = build_backend_module_sources()
+    run_job_script = build_run_job_script(submission_spec)
+    run_job_path = _run_job_path(submission_spec)
     sbatch_script = build_sbatch_script(submission_spec)
     pot_links = " ".join(shlex.quote(link) for link in potcar.get("symlink_targets", []))
     link_command = (
@@ -594,11 +508,36 @@ def build_submission_command(submission_spec: dict, *, dry_run: bool = False) ->
     )
 
     if dry_run:
-        return _build_verified_dry_run_command(paths, potcar, sbatch_script)
+        return _build_verified_dry_run_command(
+            paths,
+            potcar,
+            submission_json_path,
+            submission_json,
+            backend_dir,
+            backend_init_path,
+            backend_module_paths,
+            backend_module_sources,
+            run_job_path,
+            run_job_script,
+            sbatch_script,
+        )
 
     command = f"""set -e -o pipefail
 mkdir -p {directories}
+mkdir -p {shlex.quote(paths['run_dir'])}
+mkdir -p {shlex.quote(backend_dir)}
 {link_command}
+cat > {shlex.quote(submission_json_path)} <<'JSON'
+{submission_json}
+JSON
+test -f {shlex.quote(submission_json_path)}
+cat > {shlex.quote(backend_init_path)} <<'PY'
+PY
+{_backend_module_write_commands(backend_module_paths, backend_module_sources)}
+cat > {shlex.quote(run_job_path)} <<'PY'
+{run_job_script}
+PY
+test -f {shlex.quote(run_job_path)}
 cat > {shlex.quote(paths['remote_script'])} <<'SBATCH'
 {sbatch_script}
 SBATCH
@@ -606,13 +545,31 @@ SBATCH
 
     return command + f"""\
 echo "Submitting with: {sbatch_line}"
-out=$({sbatch_line} 2>&1); rc=$?; echo "SBATCH_RAW_OUT=$out"; exit $rc
+set +e
+out=$({sbatch_line} 2>&1)
+rc=$?
+set -e
+echo "SBATCH_RAW_OUT=$out"
+exit $rc
 """
 
 
-def _build_verified_dry_run_command(paths: dict, potcar: dict, sbatch_script: str) -> str:
+def _build_verified_dry_run_command(
+    paths: dict,
+    potcar: dict,
+    submission_json_path: str,
+    submission_json: str,
+    backend_dir: str,
+    backend_init_path: str,
+    backend_module_paths: dict[str, str],
+    backend_module_sources: dict[str, str],
+    run_job_path: str,
+    run_job_script: str,
+    sbatch_script: str,
+) -> str:
     parent_dirs = list(paths.get("directories_to_prepare", []))
     run_dir = paths["run_dir"]
+    execution_module_path = backend_module_paths[REMOTE_EXECUTION_MODULE_FILENAME]
     parent_dir_commands = "\n".join(
         _verified_mkdir_command(path, "Remote directories prepared")
         for path in parent_dirs
@@ -646,6 +603,28 @@ verify_symlink() {{
 prep_ok "Remote directories prepared"
 {_verified_mkdir_command(run_dir, "Working directory created")}
 prep_ok "Working directory created"
+{{
+cat > {shlex.quote(submission_json_path)} <<'JSON'
+{submission_json}
+JSON
+}} || prep_fail "submission.json uploaded" "Unable to write submission.json: {submission_json_path}"
+verify_file "submission.json uploaded" {shlex.quote(submission_json_path)}
+prep_ok "submission.json uploaded"
+{_verified_mkdir_command(backend_dir, "Execution module uploaded")}
+{{
+cat > {shlex.quote(backend_init_path)} <<'PY'
+PY
+{_backend_module_write_commands(backend_module_paths, backend_module_sources, verify=False)}
+}} || prep_fail "Execution module uploaded" "Unable to write execution module: {execution_module_path}"
+{_backend_module_verify_commands(backend_module_paths, "Execution module uploaded")}
+prep_ok "Execution module uploaded"
+{{
+cat > {shlex.quote(run_job_path)} <<'PY'
+{run_job_script}
+PY
+}} || prep_fail "run_job.py uploaded" "Unable to write run_job.py: {run_job_path}"
+verify_file "run_job.py uploaded" {shlex.quote(run_job_path)}
+prep_ok "run_job.py uploaded"
 {link_commands}
 prep_ok "POTCAR links prepared"
 {{
@@ -659,6 +638,33 @@ prep_ok "Ready for submission"
 echo DRY RUN
 exit 0
 """
+
+
+def _backend_module_write_commands(
+    module_paths: dict[str, str],
+    module_sources: dict[str, str],
+    *,
+    verify: bool = True,
+) -> str:
+    lines = []
+    for filename in REMOTE_BACKEND_MODULE_FILENAMES:
+        path = module_paths[filename]
+        source = module_sources[filename]
+        lines.append(
+            f"cat > {shlex.quote(path)} <<'PY'\n"
+            f"{source}\n"
+            "PY"
+        )
+        if verify:
+            lines.append(f"test -f {shlex.quote(path)}")
+    return "\n".join(lines)
+
+
+def _backend_module_verify_commands(module_paths: dict[str, str], stage: str) -> str:
+    return "\n".join(
+        f"verify_file {shlex.quote(stage)} {shlex.quote(module_paths[filename])}"
+        for filename in REMOTE_BACKEND_MODULE_FILENAMES
+    )
 
 
 def _verified_mkdir_command(path: str, stage: str) -> str:
@@ -682,10 +688,10 @@ def _verified_symlink_command(target: str, link: str, stage: str) -> str:
     )
 
 
-def json_dumps_for_shell(value: dict) -> str:
+def json_dumps_for_remote_file(value: dict) -> str:
     import json
 
-    return json.dumps(value)
+    return json.dumps(value, indent=2)
 
 
 def parse_sbatch_job_id(output: str) -> str:
@@ -847,6 +853,10 @@ def create_submission_spec(
             "working_directory": run_dir,
             "python": posixpath.join(_env_bin(resolved_remote_env_dir), "python"),
             "script_name": "run_job.py",
+            "submission_spec_name": SUBMISSION_SPEC_FILENAME,
+            "backend_package_dir": REMOTE_BACKEND_PACKAGE_DIR,
+            "backend_init_name": REMOTE_BACKEND_INIT_FILENAME,
+            "execution_module_name": REMOTE_EXECUTION_MODULE_FILENAME,
             "stdout": log_out,
             "stderr": log_err,
         },
@@ -878,7 +888,15 @@ __all__ = [
     "MODULES",
     "NOTEBOOK_DEFAULTS",
     "POTCAR_LINK_MAP",
+    "REMOTE_BACKEND_INIT_FILENAME",
+    "REMOTE_BACKEND_MODULE_FILENAMES",
+    "REMOTE_BACKEND_PACKAGE_DIR",
+    "REMOTE_EXECUTION_MODULE_FILENAME",
+    "SUBMISSION_SPEC_FILENAME",
+    "build_backend_module_sources",
+    "build_execution_module_source",
     "build_sbatch_script",
+    "build_run_job_script",
     "build_submission_command",
     "create_submission_spec",
     "default_resources_for_workflow",

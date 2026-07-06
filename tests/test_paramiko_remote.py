@@ -68,9 +68,30 @@ assert runner.commands[0] == "test -f /remote/POSCAR || test -d /remote/POSCAR"
 submit_command = runner.commands[1]
 assert "mkdir -p" in submit_command
 assert "ln -sfn /bmd-db/lee/potcars/PBE_64" in submit_command
+assert "cat > /bmd-db/lee/flows/TiO2-static-20260629-120000/submission.json <<'JSON'" in submit_command
+assert "test -f /bmd-db/lee/flows/TiO2-static-20260629-120000/submission.json" in submit_command
+assert "mkdir -p /bmd-db/lee/flows/TiO2-static-20260629-120000/backend" in submit_command
+assert "cat > /bmd-db/lee/flows/TiO2-static-20260629-120000/backend/execution.py <<'PY'" in submit_command
+assert "test -f /bmd-db/lee/flows/TiO2-static-20260629-120000/backend/execution.py" in submit_command
+assert "cat > /bmd-db/lee/flows/TiO2-static-20260629-120000/backend/parser.py <<'PY'" in submit_command
+assert "test -f /bmd-db/lee/flows/TiO2-static-20260629-120000/backend/parser.py" in submit_command
+assert "cat > /bmd-db/lee/flows/TiO2-static-20260629-120000/backend/workflows.py <<'PY'" in submit_command
+assert "test -f /bmd-db/lee/flows/TiO2-static-20260629-120000/backend/workflows.py" in submit_command
+assert "cat > /bmd-db/lee/flows/TiO2-static-20260629-120000/run_job.py <<'PY'" in submit_command
+assert "test -f /bmd-db/lee/flows/TiO2-static-20260629-120000/run_job.py" in submit_command
 assert "cat > /bmd-db/lee/flows/TiO2-static-20260629-120000.sbatch.sh" in submit_command
-assert "sbatch -p power-leeburton -A power-leeburton-users" in submit_command
-assert "-N 1 -n 24 --mem=120G -t 72:00:00 --parsable" in submit_command
+assert "cat > run_job.py <<'PY'" not in submit_command
+assert "__SPEC_JSON__" not in submit_command
+assert "json.load(handle)" in submit_command
+assert "from backend.execution import run_submission" in submit_command
+assert "export BMD_SUBMISSION_SPEC=/bmd-db/lee/flows/TiO2-static-20260629-120000/submission.json" in submit_command
+assert "Missing submission.json at /bmd-db/lee/flows/TiO2-static-20260629-120000/submission.json" in submit_command
+assert "Missing execution module at /bmd-db/lee/flows/TiO2-static-20260629-120000/backend/execution.py" in submit_command
+assert "Missing backend module parser.py at /bmd-db/lee/flows/TiO2-static-20260629-120000/backend/parser.py" in submit_command
+assert "Missing backend module workflows.py at /bmd-db/lee/flows/TiO2-static-20260629-120000/backend/workflows.py" in submit_command
+assert "Missing run_job.py at /bmd-db/lee/flows/TiO2-static-20260629-120000/run_job.py" in submit_command
+assert "sbatch -p leeburton-pool -A power-leeburton-users_v2" in submit_command
+assert "-N 1 -n 48 --mem=128G -t 72:00:00 --parsable" in submit_command
 
 assert runner.remote_writes
 assert runner.remote_writes[0][0] == "/bmd-db/lee/logs/job_123456.json"
@@ -94,6 +115,20 @@ assert "ln -sfn /bmd-db/lee/potcars/PBE_64" in dry_command
 assert "cat > /bmd-db/lee/flows/TiO2-static-20260629-120000.sbatch.sh" in dry_command
 assert "PREP_FAILED_STAGE=$1" in dry_command
 assert "verify_dir 'Working directory created' /bmd-db/lee/flows/TiO2-static-20260629-120000" in dry_command
+assert "cat > /bmd-db/lee/flows/TiO2-static-20260629-120000/submission.json <<'JSON'" in dry_command
+assert "verify_file \"submission.json uploaded\" /bmd-db/lee/flows/TiO2-static-20260629-120000/submission.json" in dry_command
+assert 'prep_ok "submission.json uploaded"' in dry_command
+assert "cat > /bmd-db/lee/flows/TiO2-static-20260629-120000/backend/execution.py <<'PY'" in dry_command
+assert "verify_file 'Execution module uploaded' /bmd-db/lee/flows/TiO2-static-20260629-120000/backend/execution.py" in dry_command
+assert "cat > /bmd-db/lee/flows/TiO2-static-20260629-120000/backend/parser.py <<'PY'" in dry_command
+assert "verify_file 'Execution module uploaded' /bmd-db/lee/flows/TiO2-static-20260629-120000/backend/parser.py" in dry_command
+assert "cat > /bmd-db/lee/flows/TiO2-static-20260629-120000/backend/workflows.py <<'PY'" in dry_command
+assert "verify_file 'Execution module uploaded' /bmd-db/lee/flows/TiO2-static-20260629-120000/backend/workflows.py" in dry_command
+assert 'prep_ok "Execution module uploaded"' in dry_command
+assert "cat > /bmd-db/lee/flows/TiO2-static-20260629-120000/run_job.py <<'PY'" in dry_command
+assert "verify_file \"run_job.py uploaded\" /bmd-db/lee/flows/TiO2-static-20260629-120000/run_job.py" in dry_command
+assert 'prep_ok "run_job.py uploaded"' in dry_command
+assert "__SPEC_JSON__" not in dry_command
 assert "verify_symlink 'POTCAR links prepared' /bmd-db/lee/potcars/PBE_64" in dry_command
 assert "verify_file \"Submission script written\" /bmd-db/lee/flows/TiO2-static-20260629-120000.sbatch.sh" in dry_command
 assert 'prep_ok "Ready for submission"' in dry_command

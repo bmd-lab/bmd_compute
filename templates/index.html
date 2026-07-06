@@ -286,6 +286,12 @@ ul {
     overflow-wrap: anywhere;
 }
 
+.log-output {
+    font-family: Consolas, monospace;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+}
+
 .pill {
     border: 1px solid var(--line-strong);
     border-radius: 999px;
@@ -935,11 +941,22 @@ ul {
                     <button type="submit">Prepare Remote</button>
                 </form>
 
-                <button
-                    type="button"
-                    {% if not remote_preparation or remote_preparation.status != "success" %}disabled{% endif %}>
-                    Submit Workflow
-                </button>
+                <form action="/submit" method="post">
+                    <textarea class="hidden-field" name="structure">{{ structure_text }}</textarea>
+                    <input type="hidden" name="fmt" value="{{ fmt }}">
+                    <input type="hidden" name="workflow" value="{{ selected_workflow }}">
+                    <input type="hidden" name="method" value="{{ selected_method }}">
+                    <input type="hidden" name="created_at" value="{{ submission_spec.created_at }}">
+                    <input
+                        type="hidden"
+                        name="remote_prepared"
+                        value="{% if remote_preparation and remote_preparation.status == "success" %}true{% else %}false{% endif %}">
+                    <button
+                        type="submit"
+                        {% if not remote_preparation or remote_preparation.status != "success" or (submission_result and submission_result.status == "success") %}disabled{% endif %}>
+                        Submit Workflow
+                    </button>
+                </form>
             </div>
 
             {% if remote_preparation %}
@@ -992,6 +1009,75 @@ ul {
                         <tr>
                             <td>Suggestion</td>
                             <td>{{ remote_preparation.suggestion }}</td>
+                        </tr>
+                    </table>
+                </div>
+                {% endif %}
+            {% endif %}
+
+            {% if submission_result %}
+                {% if submission_result.status == "success" %}
+                <div class="prep-panel success">
+                    <div class="prep-title">&#10003; Submitted</div>
+                    <table class="compact-table failure-table">
+                        <tr>
+                            <td>Job ID</td>
+                            <td>{{ submission_result.job_id }}</td>
+                        </tr>
+                        <tr>
+                            <td>Queue Status</td>
+                            <td>{{ submission_result.queue_status }}</td>
+                        </tr>
+                        <tr>
+                            <td>Run Directory</td>
+                            <td class="mono">{{ submission_result.job_record.run_dir }}</td>
+                        </tr>
+                        <tr>
+                            <td>Remote State</td>
+                            <td class="mono">{{ submission_result.job_record.remote_state_path or "Not written" }}</td>
+                        </tr>
+                    </table>
+                </div>
+                {% elif submission_result.status == "failed" %}
+                <div class="prep-panel failed">
+                    <div class="prep-title">Submission Failed</div>
+                    <table class="compact-table failure-table">
+                        <tr>
+                            <td>Stage</td>
+                            <td>{{ submission_result.stage }}</td>
+                        </tr>
+                        <tr>
+                            <td>Reason</td>
+                            <td>{{ submission_result.reason }}</td>
+                        </tr>
+                        {% if submission_result.exit_code is defined %}
+                        <tr>
+                            <td>Exit Code</td>
+                            <td>{{ submission_result.exit_code }}</td>
+                        </tr>
+                        {% endif %}
+                        {% if submission_result.streams_empty %}
+                        <tr>
+                            <td>SLURM Output</td>
+                            <td>No stdout or stderr was returned by sbatch.</td>
+                        </tr>
+                        {% else %}
+                            {% if submission_result.stdout %}
+                            <tr>
+                                <td>stdout</td>
+                                <td class="log-output">{{ submission_result.stdout }}</td>
+                            </tr>
+                            {% endif %}
+                            {% if submission_result.stderr %}
+                            <tr>
+                                <td>stderr</td>
+                                <td class="log-output">{{ submission_result.stderr }}</td>
+                            </tr>
+                            {% endif %}
+                        {% endif %}
+                        <tr>
+                            <td>Suggestion</td>
+                            <td>{{ submission_result.suggestion }}</td>
                         </tr>
                     </table>
                 </div>

@@ -1,4 +1,7 @@
 from backend.submission import (
+    build_backend_module_sources,
+    build_execution_module_source,
+    build_run_job_script,
     create_submission_spec,
     default_resources_for_workflow,
     summarize_potcar_species,
@@ -33,12 +36,12 @@ assert spec["paths"]["log_out"] == "/bmd-db/lee/logs/Si-static-20260629-120000.o
 assert spec["paths"]["log_err"] == "/bmd-db/lee/logs/Si-static-20260629-120000.err"
 assert spec["paths"]["slurm_out"] == "/bmd-db/lee/logs/Si-static-20260629-120000.slurm.out"
 assert spec["paths"]["slurm_err"] == "/bmd-db/lee/logs/Si-static-20260629-120000.slurm.err"
-assert spec["cluster"]["partition"] == "power-leeburton"
-assert spec["cluster"]["account"] == "power-leeburton-users"
+assert spec["cluster"]["partition"] == "leeburton-pool"
+assert spec["cluster"]["account"] == "power-leeburton-users_v2"
 assert spec["resources"] == {
     "nodes": 1,
-    "ntasks": 24,
-    "mem_gb": 120,
+    "ntasks": 48,
+    "mem_gb": 128,
     "walltime": "72:00:00",
 }
 assert spec["environment"]["VASP_CMD"] == "mpirun -n $SLURM_NTASKS vasp_std"
@@ -50,6 +53,10 @@ assert spec["modules"]["load"] == [
     "intel/rocky8-oneAPI-2023",
     "vasp/rocky8-intel-6.4.1",
 ]
+assert spec["runner"]["script_name"] == "run_job.py"
+assert spec["runner"]["submission_spec_name"] == "submission.json"
+assert spec["runner"]["backend_package_dir"] == "backend"
+assert spec["runner"]["execution_module_name"] == "execution.py"
 assert spec["potcar"]["target"] == "/bmd-db/lee/potcars/PBE_64"
 assert spec["potcar"]["symlink_targets"] == [
     "/bmd-db/lee/potcars/POT_GGA_PAW_PBE_64",
@@ -92,5 +99,33 @@ structure_spec = create_submission_spec(
 )
 assert structure_spec["potcar"]["species"] == potcar_summary["species"]
 assert structure_spec["potcar"]["symbols"] == ["Ti_pv", "O"]
+
+run_job_script = build_run_job_script(spec)
+assert "__SPEC_JSON__" not in run_job_script
+assert "json.load(handle)" in run_job_script
+assert "BMD_SUBMISSION_SPEC" in run_job_script
+assert "Si-static-20260629-120000" not in run_job_script
+assert "from backend.execution import run_submission" in run_job_script
+assert "run_submission(spec)" in run_job_script
+assert "RelaxMaker" not in run_job_script
+assert "StaticSetGenerator" not in run_job_script
+
+execution_module_source = build_execution_module_source()
+assert "def run_submission(spec: dict)" in execution_module_source
+assert "structure_from_spec" in execution_module_source
+assert "build_atomate2_flow_from_spec" in execution_module_source
+assert "run_locally" in execution_module_source
+assert "def incar_static" not in execution_module_source
+assert "def incar_relax" not in execution_module_source
+assert "def ksettings" not in execution_module_source
+assert "RelaxMaker" not in execution_module_source
+assert "StaticSetGenerator" not in execution_module_source
+
+backend_module_sources = build_backend_module_sources()
+assert set(backend_module_sources) == {"execution.py", "parser.py", "workflows.py"}
+assert "def structure_from_spec" in backend_module_sources["parser.py"]
+assert "def build_atomate2_flow_from_spec" in backend_module_sources["workflows.py"]
+assert "RelaxMaker" in backend_module_sources["workflows.py"]
+assert "StaticSetGenerator" in backend_module_sources["workflows.py"]
 
 print("submission spec smoke test passed")

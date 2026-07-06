@@ -299,8 +299,43 @@ def build_atomate2_flow(
     )
 
 
+def build_atomate2_flow_from_spec(structure, flow_spec: dict, *, run_name: str):
+    """
+    Build the Atomate2 Flow represented by a SubmissionSpec flow_spec.
+
+    Remote execution preserves the notebook behaviour of naming the Jobflow
+    Flow after the concrete run directory while reusing the same scientific
+    workflow construction used by the browser preview.
+    """
+
+    kwargs = {}
+    if flow_spec.get("potcar_functional") is not None:
+        kwargs["potcar_functional"] = flow_spec.get("potcar_functional")
+
+    flow = build_atomate2_flow(
+        structure=structure,
+        workflow=flow_spec.get("workflow"),
+        label=run_name,
+        incar=flow_spec.get("incar") or flow_spec.get("incar_overrides") or {},
+        kpoints=flow_spec.get("kpoints"),
+        **kwargs,
+    )
+
+    if getattr(flow, "name", None) == run_name:
+        return flow
+
+    try:
+        flow.name = run_name
+        return flow
+    except Exception:
+        from jobflow import Flow
+
+        return Flow(list(getattr(flow, "jobs", []) or []), name=run_name)
+
+
 __all__ = [
     "build_atomate2_flow",
+    "build_atomate2_flow_from_spec",
     "build_relax_flow",
     "build_static_flow",
     "incar_relax",
