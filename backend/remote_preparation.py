@@ -4,8 +4,8 @@ import re
 from typing import Callable
 
 from backend.paramiko_remote import ParamikoRemoteRunner
+from backend.config import NOTEBOOK_DEFAULTS
 from backend.remote import JobRecord, RemoteConnectionProfile, RemoteExecutionError
-from backend.submission import NOTEBOOK_DEFAULTS
 
 
 SUCCESS_STEPS = [

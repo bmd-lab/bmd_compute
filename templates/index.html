@@ -950,10 +950,10 @@ ul {
                     <input
                         type="hidden"
                         name="remote_prepared"
-                        value="{% if remote_preparation and remote_preparation.status == "success" %}true{% else %}false{% endif %}">
+                        value="{% if remote_preparation and remote_preparation.status == 'success' %}true{% else %}false{% endif %}">
                     <button
                         type="submit"
-                        {% if not remote_preparation or remote_preparation.status != "success" or (submission_result and submission_result.status == "success") %}disabled{% endif %}>
+                        {% if not remote_preparation or remote_preparation.status != 'success' or (submission_result and submission_result.status == 'success') %}disabled{% endif %}>
                         Submit Workflow
                     </button>
                 </form>
@@ -1085,6 +1085,130 @@ ul {
             {% endif %}
 
         </section>
+
+        {% if (submission_result and submission_result.status == "success") or monitoring_result %}
+        <section class="stage">
+
+            <div class="stage-header">
+                <div>
+                    <div class="stage-title">
+                        <span class="stage-number">7</span>
+                        <h2>Monitoring</h2>
+                    </div>
+                    <div class="summary-line">
+                        SLURM job {{ submission_result.job_id if submission_result else monitoring_result.job_id }}
+                    </div>
+                </div>
+                <div class="stage-status">
+                    {% if monitoring_result and monitoring_result.status == "success" %}
+                        {% if monitoring_result.summary == "FAILURE" %}
+                        <span class="pill failed">{{ monitoring_result.summary }}</span>
+                        {% else %}
+                        <span class="pill ready">{{ monitoring_result.summary }}</span>
+                        {% endif %}
+                    {% elif monitoring_result and monitoring_result.status == "failed" %}
+                    <span class="pill failed">Failed</span>
+                    {% else %}
+                    <span class="pill">Ready</span>
+                    {% endif %}
+                </div>
+            </div>
+
+            <form action="/monitor" method="post">
+                <textarea class="hidden-field" name="structure">{{ structure_text }}</textarea>
+                <input type="hidden" name="fmt" value="{{ fmt }}">
+                <input type="hidden" name="workflow" value="{{ selected_workflow }}">
+                <input type="hidden" name="method" value="{{ selected_method }}">
+                <input type="hidden" name="created_at" value="{{ submission_spec.created_at }}">
+                <input type="hidden" name="job_id" value="{{ submission_result.job_id if submission_result else monitoring_result.job_id }}">
+                <input type="hidden" name="submitted_at" value="{{ submission_result.job_record.submitted_at if submission_result else '' }}">
+                <button type="submit">Refresh Queue Status</button>
+            </form>
+
+            {% if monitoring_result %}
+                {% if monitoring_result.status == "success" %}
+                <div class="prep-panel success">
+                    <div class="prep-title">Current SLURM State</div>
+                    <div class="details-grid">
+                        <div class="callout">
+                            <div class="callout-title">SLURM State</div>
+                            <div class="callout-value">{{ monitoring_result.slurm_state }}</div>
+                        </div>
+                        <div class="callout">
+                            <div class="callout-title">Summary</div>
+                            <div class="callout-value">{{ monitoring_result.summary }}</div>
+                        </div>
+                        <div class="callout">
+                            <div class="callout-title">Exit Code</div>
+                            <div class="callout-value">{{ monitoring_result.exit_code or "None" }}</div>
+                        </div>
+                        <div class="callout">
+                            <div class="callout-title">Job Name</div>
+                            <div class="callout-value mono">{{ monitoring_result.job_name or "Unknown" }}</div>
+                        </div>
+                    </div>
+                </div>
+
+                <details class="disclosure details-wide">
+                    <summary>Monitoring Diagnostics</summary>
+                    <table class="compact-table">
+                        <tr>
+                            <td>Job ID</td>
+                            <td>{{ monitoring_result.job_id }}</td>
+                        </tr>
+                        <tr>
+                            <td>Stdout</td>
+                            <td class="mono">{{ monitoring_result.stdout_path or "Unknown" }}</td>
+                        </tr>
+                        <tr>
+                            <td>Work Directory</td>
+                            <td class="mono">{{ monitoring_result.workdir or "Unknown" }}</td>
+                        </tr>
+                        <tr>
+                            <td>Scheduler Brief</td>
+                            <td class="log-output">{{ monitoring_result.brief }}</td>
+                        </tr>
+                    </table>
+                </details>
+                {% elif monitoring_result.status == "failed" %}
+                <div class="prep-panel failed">
+                    <div class="prep-title">Monitoring Failed</div>
+                    <table class="compact-table failure-table">
+                        <tr>
+                            <td>Stage</td>
+                            <td>{{ monitoring_result.stage }}</td>
+                        </tr>
+                        <tr>
+                            <td>Reason</td>
+                            <td>{{ monitoring_result.reason }}</td>
+                        </tr>
+                        <tr>
+                            <td>Command</td>
+                            <td class="log-output">{{ monitoring_result.command or "None" }}</td>
+                        </tr>
+                        <tr>
+                            <td>stdout</td>
+                            <td class="log-output">{{ monitoring_result.stdout or "No stdout captured." }}</td>
+                        </tr>
+                        <tr>
+                            <td>stderr</td>
+                            <td class="log-output">{{ monitoring_result.stderr or "No stderr captured." }}</td>
+                        </tr>
+                        <tr>
+                            <td>Exception</td>
+                            <td class="log-output">{{ monitoring_result.exception_text or "No exception text captured." }}</td>
+                        </tr>
+                        <tr>
+                            <td>Suggestion</td>
+                            <td>{{ monitoring_result.suggestion }}</td>
+                        </tr>
+                    </table>
+                </div>
+                {% endif %}
+            {% endif %}
+
+        </section>
+        {% endif %}
         {% endif %}
 
     </div>

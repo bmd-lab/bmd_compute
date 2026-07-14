@@ -1,7 +1,11 @@
+from backend.config import DEFAULT_FLOWS_DIR, DEFAULT_REMOTE_HOST
 from backend.remote import JobRecord, RemoteCommandResult, RemoteExecutionError
 from backend.remote_preparation import prepare_remote_submission
 from backend.submission import create_submission_spec
 
+
+RUN_NAME = "TiO2-static-20260629-120000"
+RUN_DIR = f"{DEFAULT_FLOWS_DIR}/{RUN_NAME}"
 
 flow_spec = {
     "workflow": "static",
@@ -78,7 +82,7 @@ success = prepare_remote_submission(
     runner_factory=lambda: successful_runner,
 )
 
-assert successful_runner.connected_profile.host == "powerslurm-login.tau.ac.il"
+assert successful_runner.connected_profile.host == DEFAULT_REMOTE_HOST
 assert successful_runner.dry_run is True
 assert successful_runner.closed is True
 assert success["status"] == "success"
@@ -139,7 +143,7 @@ assert connection_runner.closed is True
 assert connection_failure["status"] == "failed"
 assert connection_failure["ready_for_submission"] is False
 assert connection_failure["stage"] == "SSH Connection"
-assert connection_failure["reason"] == "Unable to connect to powerslurm-login.tau.ac.il."
+assert connection_failure["reason"] == f"Unable to connect to {DEFAULT_REMOTE_HOST}."
 assert "VPN" in connection_failure["suggestion"]
 assert connection_failure["steps"][0] == {
     "label": "Remote connection established",
@@ -194,7 +198,7 @@ class VerifiedPreparationFailureRunner:
                 "PREP_OK=Remote directories prepared\n"
                 "PREP_FAILED_STAGE=Working directory created\n"
                 "PREP_FAILED_REASON=Expected directory does not exist: "
-                "/bmd-db/lee/flows/TiO2-static-20260629-120000\n"
+                f"{RUN_DIR}\n"
             ),
         )
         raise RemoteExecutionError(result)
@@ -237,7 +241,7 @@ class RunJobUploadFailureRunner:
                 "PREP_OK=Execution module uploaded\n"
                 "PREP_FAILED_STAGE=run_job.py uploaded\n"
                 "PREP_FAILED_REASON=Expected file does not exist: "
-                "/bmd-db/lee/flows/TiO2-static-20260629-120000/run_job.py\n"
+                f"{RUN_DIR}/run_job.py\n"
             ),
         )
         raise RemoteExecutionError(result)
@@ -278,7 +282,7 @@ class SubmissionJsonUploadFailureRunner:
                 "PREP_OK=Working directory created\n"
                 "PREP_FAILED_STAGE=submission.json uploaded\n"
                 "PREP_FAILED_REASON=Expected file does not exist: "
-                "/bmd-db/lee/flows/TiO2-static-20260629-120000/submission.json\n"
+                f"{RUN_DIR}/submission.json\n"
             ),
         )
         raise RemoteExecutionError(result)
@@ -320,7 +324,7 @@ class ExecutionModuleUploadFailureRunner:
                 "PREP_OK=submission.json uploaded\n"
                 "PREP_FAILED_STAGE=Execution module uploaded\n"
                 "PREP_FAILED_REASON=Expected file does not exist: "
-                "/bmd-db/lee/flows/TiO2-static-20260629-120000/backend/execution.py\n"
+                f"{RUN_DIR}/backend/execution.py\n"
             ),
         )
         raise RemoteExecutionError(result)

@@ -1,3 +1,4 @@
+from backend.config import DEFAULT_LOGS_DIR, DEFAULT_REMOTE_HOST
 from backend.remote import JobRecord, RemoteCommandResult, RemoteExecutionError
 from backend.remote_submission import submit_remote_workflow
 from backend.submission import create_submission_spec
@@ -52,7 +53,7 @@ class SuccessfulSubmitRunner:
             raw_output="SBATCH_RAW_OUT=123456\n",
             status="submitted",
             submission_spec=spec,
-            remote_state_path="/bmd-db/lee/logs/job_123456.json",
+            remote_state_path=f"{DEFAULT_LOGS_DIR}/job_123456.json",
         )
 
     def close(self):
@@ -66,7 +67,7 @@ success = submit_remote_workflow(
     runner_factory=lambda: successful_runner,
 )
 
-assert successful_runner.connected_profile.host == "powerslurm-login.tau.ac.il"
+assert successful_runner.connected_profile.host == DEFAULT_REMOTE_HOST
 assert successful_runner.dry_run is False
 assert successful_runner.closed is True
 assert success["status"] == "success"

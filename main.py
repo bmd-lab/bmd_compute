@@ -1,9 +1,10 @@
 from fastapi import FastAPI, Form, Request
 from fastapi.templating import Jinja2Templates
 
+from backend.monitoring import monitor_remote_job
 from backend.parser import parse_structure
 from backend.remote_preparation import prepare_remote_submission, remembered_successful_preparation
-from backend.remote_submission import submit_remote_workflow
+from backend.remote_submission import remembered_successful_submission, submit_remote_workflow
 from backend.submission import create_submission_spec
 from backend.summary import summarize_structure
 from backend.workflow_summary import summarize_workflow
@@ -25,6 +26,7 @@ def page_context(
     submission_spec=None,
     remote_preparation=None,
     submission_result=None,
+    monitoring_result=None,
 ):
     return {
         "structure_text": structure_text,
@@ -36,6 +38,7 @@ def page_context(
         "submission_spec": submission_spec,
         "remote_preparation": remote_preparation,
         "submission_result": submission_result,
+        "monitoring_result": monitoring_result,
     }
 
 
@@ -195,6 +198,12 @@ def submit_workflow(
         if prepared
         else None
     )
+    monitoring_result = None
+    if submission_result.get("status") == "success" and submission_result.get("job_id"):
+        monitoring_result = monitor_remote_job(
+            submission_spec,
+            submission_result["job_id"],
+        )
 
     return templates.TemplateResponse(
         request=request,
@@ -209,5 +218,50 @@ def submit_workflow(
             submission_spec=submission_spec,
             remote_preparation=remote_preparation,
             submission_result=submission_result,
+            monitoring_result=monitoring_result,
+        ),
+    )
+
+
+@app.post("/monitor")
+def monitor_job(
+    request: Request,
+    structure: str = Form(...),
+    fmt: str = Form(...),
+    workflow: str = Form(...),
+    method: str = Form(...),
+    created_at: str = Form(...),
+    job_id: str = Form(...),
+    submitted_at: str = Form(""),
+):
+    summary, workflow_summary, submission_spec = build_submission_state(
+        structure_text=structure,
+        fmt=fmt,
+        workflow=workflow,
+        method=method,
+        timestamp=created_at,
+    )
+    remote_preparation = remembered_successful_preparation(submission_spec)
+    submission_result = remembered_successful_submission(
+        submission_spec,
+        job_id,
+        submitted_at=submitted_at,
+    )
+    monitoring_result = monitor_remote_job(submission_spec, job_id)
+
+    return templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context=page_context(
+            structure_text=structure,
+            fmt=fmt,
+            summary=summary,
+            selected_workflow=workflow,
+            selected_method=method,
+            workflow_summary=workflow_summary,
+            submission_spec=submission_spec,
+            remote_preparation=remote_preparation,
+            submission_result=submission_result,
+            monitoring_result=monitoring_result,
         ),
     )

@@ -1,0 +1,112 @@
+from __future__ import annotations
+
+
+DEFAULT_REMOTE_HOST = "powerslurm-login.tau.ac.il"
+DEFAULT_USERNAME = "leeburton"
+DEFAULT_SSH_PORT = 22
+DEFAULT_KEEPALIVE_S = 30
+
+DEFAULT_OPEN_MONGO_TUNNEL = True
+DEFAULT_MONGO_REMOTE_HOST = "132.66.112.243"
+DEFAULT_MONGO_REMOTE_PORT = 27017
+DEFAULT_MONGO_LOCAL_PORT = 27017
+
+DEFAULT_VASP_CMD = "mpirun -n $SLURM_NTASKS vasp_std"
+DEFAULT_VASP_LAUNCHER = "srun --mpi=pmi2 -n $SLURM_NTASKS vasp_std"
+DEFAULT_JOBFLOW_CONFIG_FILE = "/bmd-db/lee/jobflow_minimal.yaml"
+DEFAULT_POTCAR_DIR = "/bmd-db/lee/potcars"
+DEFAULT_REMOTE_ENV_DIR = "/bmd/lee/envs/atomate2_remote"
+DEFAULT_FLOWS_DIR = "/bmd-db/lee/flows"
+DEFAULT_LOGS_DIR = "/bmd-db/lee/logs"
+
+DEFAULT_PARTITION = "leeburton-pool"
+DEFAULT_ACCOUNT = "power-leeburton-users_v2"
+
+DEFAULT_RESOURCES = {
+    "nodes": 1,
+    "ntasks": 48,
+    "mem_gb": 128,
+    "walltime": "72:00:00",
+}
+
+WORKFLOW_RESOURCE_OVERRIDES = {
+    "gw_static": {
+        "ntasks": 12,
+        "mem_gb": 240,
+    },
+    "gw_static_bands_true": {
+        "ntasks": 12,
+        "mem_gb": 240,
+    },
+    "relax_static_bands": {
+        "mem_gb": 160,
+    },
+}
+
+MODULES = [
+    "intel/rocky8-oneAPI-2023",
+    "vasp/rocky8-intel-6.4.1",
+]
+DEFAULT_MODULES = MODULES
+
+DEFAULT_POTCAR_FUNCTIONAL = "PBE_64"
+POTCAR_LINK_MAP = {
+    "PBE_64": ["POT_GGA_PAW_PBE_64", "POT_PAW_PBE_64"],
+    "PBE_54": ["POT_GGA_PAW_PBE_54"],
+    "PBE_52": ["POT_GGA_PAW_PBE_52", "POT_GGA_PAW_PBE"],
+    "LDA": ["POT_LDA_PAW"],
+}
+
+SUBMISSION_ENV_KEYS = (
+    "VASP_CMD",
+    "JOBFLOW_CONFIG_FILE",
+    "PMG_VASP_PSP_DIR",
+    "CUSTODIAN_NO_GZIP",
+    "ATOMATE2_VASP_ZIP_FILES",
+)
+
+NOTEBOOK_DEFAULTS = {
+    "remote_host": DEFAULT_REMOTE_HOST,
+    "username": DEFAULT_USERNAME,
+    "port": DEFAULT_SSH_PORT,
+    "keepalive_s": DEFAULT_KEEPALIVE_S,
+    "open_mongo_tunnel": DEFAULT_OPEN_MONGO_TUNNEL,
+    "mongo_remote_host": DEFAULT_MONGO_REMOTE_HOST,
+    "mongo_remote_port": DEFAULT_MONGO_REMOTE_PORT,
+    "mongo_local_port": DEFAULT_MONGO_LOCAL_PORT,
+    "VASP_CMD": DEFAULT_VASP_CMD,
+    "JOBFLOW_CONFIG_FILE": DEFAULT_JOBFLOW_CONFIG_FILE,
+    "PMG_VASP_PSP_DIR": DEFAULT_POTCAR_DIR,
+    "remote_env_dir": DEFAULT_REMOTE_ENV_DIR,
+    "flows_dir": DEFAULT_FLOWS_DIR,
+    "logs_dir": DEFAULT_LOGS_DIR,
+}
+
+
+__all__ = [
+    "DEFAULT_ACCOUNT",
+    "DEFAULT_FLOWS_DIR",
+    "DEFAULT_JOBFLOW_CONFIG_FILE",
+    "DEFAULT_KEEPALIVE_S",
+    "DEFAULT_LOGS_DIR",
+    "DEFAULT_MODULES",
+    "DEFAULT_MONGO_LOCAL_PORT",
+    "DEFAULT_MONGO_REMOTE_HOST",
+    "DEFAULT_MONGO_REMOTE_PORT",
+    "DEFAULT_OPEN_MONGO_TUNNEL",
+    "DEFAULT_PARTITION",
+    "DEFAULT_POTCAR_DIR",
+    "DEFAULT_POTCAR_FUNCTIONAL",
+    "DEFAULT_REMOTE_ENV_DIR",
+    "DEFAULT_REMOTE_HOST",
+    "DEFAULT_RESOURCES",
+    "DEFAULT_SSH_PORT",
+    "DEFAULT_USERNAME",
+    "DEFAULT_VASP_CMD",
+    "DEFAULT_VASP_LAUNCHER",
+    "MODULES",
+    "NOTEBOOK_DEFAULTS",
+    "POTCAR_LINK_MAP",
+    "SUBMISSION_ENV_KEYS",
+    "WORKFLOW_RESOURCE_OVERRIDES",
+]

@@ -1,3 +1,15 @@
+from backend.config import (
+    DEFAULT_ACCOUNT,
+    DEFAULT_FLOWS_DIR,
+    DEFAULT_JOBFLOW_CONFIG_FILE,
+    DEFAULT_LOGS_DIR,
+    DEFAULT_PARTITION,
+    DEFAULT_POTCAR_DIR,
+    DEFAULT_RESOURCES,
+    DEFAULT_VASP_CMD,
+    MODULES,
+    POTCAR_LINK_MAP,
+)
 from backend.submission import (
     build_backend_module_sources,
     build_execution_module_source,
@@ -31,36 +43,28 @@ spec = create_submission_spec(
 assert spec["status"] == "pending"
 assert spec["label"] == "Si-static"
 assert spec["run_name"] == "Si-static-20260629-120000"
-assert spec["paths"]["run_dir"] == "/bmd-db/lee/flows/Si-static-20260629-120000"
-assert spec["paths"]["log_out"] == "/bmd-db/lee/logs/Si-static-20260629-120000.out"
-assert spec["paths"]["log_err"] == "/bmd-db/lee/logs/Si-static-20260629-120000.err"
-assert spec["paths"]["slurm_out"] == "/bmd-db/lee/logs/Si-static-20260629-120000.slurm.out"
-assert spec["paths"]["slurm_err"] == "/bmd-db/lee/logs/Si-static-20260629-120000.slurm.err"
-assert spec["cluster"]["partition"] == "leeburton-pool"
-assert spec["cluster"]["account"] == "power-leeburton-users_v2"
-assert spec["resources"] == {
-    "nodes": 1,
-    "ntasks": 48,
-    "mem_gb": 128,
-    "walltime": "72:00:00",
-}
-assert spec["environment"]["VASP_CMD"] == "mpirun -n $SLURM_NTASKS vasp_std"
-assert spec["environment"]["JOBFLOW_CONFIG_FILE"] == "/bmd-db/lee/jobflow_minimal.yaml"
-assert spec["environment"]["PMG_VASP_PSP_DIR"] == "/bmd-db/lee/potcars"
+assert spec["paths"]["run_dir"] == f"{DEFAULT_FLOWS_DIR}/Si-static-20260629-120000"
+assert spec["paths"]["log_out"] == f"{DEFAULT_LOGS_DIR}/Si-static-20260629-120000.out"
+assert spec["paths"]["log_err"] == f"{DEFAULT_LOGS_DIR}/Si-static-20260629-120000.err"
+assert spec["paths"]["slurm_out"] == f"{DEFAULT_LOGS_DIR}/Si-static-20260629-120000.slurm.out"
+assert spec["paths"]["slurm_err"] == f"{DEFAULT_LOGS_DIR}/Si-static-20260629-120000.slurm.err"
+assert spec["cluster"]["partition"] == DEFAULT_PARTITION
+assert spec["cluster"]["account"] == DEFAULT_ACCOUNT
+assert spec["resources"] == DEFAULT_RESOURCES
+assert spec["environment"]["VASP_CMD"] == DEFAULT_VASP_CMD
+assert spec["environment"]["JOBFLOW_CONFIG_FILE"] == DEFAULT_JOBFLOW_CONFIG_FILE
+assert spec["environment"]["PMG_VASP_PSP_DIR"] == DEFAULT_POTCAR_DIR
 assert spec["environment"]["CUSTODIAN_NO_GZIP"] == "1"
 assert spec["environment"]["ATOMATE2_VASP_ZIP_FILES"] == "False"
-assert spec["modules"]["load"] == [
-    "intel/rocky8-oneAPI-2023",
-    "vasp/rocky8-intel-6.4.1",
-]
+assert spec["modules"]["load"] == MODULES
 assert spec["runner"]["script_name"] == "run_job.py"
 assert spec["runner"]["submission_spec_name"] == "submission.json"
 assert spec["runner"]["backend_package_dir"] == "backend"
 assert spec["runner"]["execution_module_name"] == "execution.py"
-assert spec["potcar"]["target"] == "/bmd-db/lee/potcars/PBE_64"
+assert spec["potcar"]["target"] == f"{DEFAULT_POTCAR_DIR}/PBE_64"
 assert spec["potcar"]["symlink_targets"] == [
-    "/bmd-db/lee/potcars/POT_GGA_PAW_PBE_64",
-    "/bmd-db/lee/potcars/POT_PAW_PBE_64",
+    f"{DEFAULT_POTCAR_DIR}/{link_name}"
+    for link_name in POTCAR_LINK_MAP["PBE_64"]
 ]
 assert spec["potcar"]["species"] == []
 assert spec["preflight"]["requires_remote_structure_check"] is False

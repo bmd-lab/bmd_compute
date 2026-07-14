@@ -8,35 +8,20 @@ import time
 from copy import deepcopy
 from pathlib import Path
 
+from backend.config import (
+    DEFAULT_ACCOUNT,
+    DEFAULT_PARTITION,
+    DEFAULT_POTCAR_FUNCTIONAL,
+    DEFAULT_RESOURCES,
+    DEFAULT_VASP_LAUNCHER,
+    MODULES,
+    NOTEBOOK_DEFAULTS,
+    POTCAR_LINK_MAP,
+    SUBMISSION_ENV_KEYS,
+    WORKFLOW_RESOURCE_OVERRIDES,
+)
 
-NOTEBOOK_DEFAULTS = {
-    "remote_host": "powerslurm-login.tau.ac.il",
-    "username": "leeburton",
-    "port": 22,
-    "keepalive_s": 30,
-    "open_mongo_tunnel": True,
-    "mongo_remote_host": "132.66.112.243",
-    "mongo_remote_port": 27017,
-    "mongo_local_port": 27017,
-    "VASP_CMD": "mpirun -n $SLURM_NTASKS vasp_std",
-    "JOBFLOW_CONFIG_FILE": "/bmd-db/lee/jobflow_minimal.yaml",
-    "PMG_VASP_PSP_DIR": "/bmd-db/lee/potcars",
-    "remote_env_dir": "/bmd/lee/envs/atomate2_remote",
-    "flows_dir": "/bmd-db/lee/flows",
-    "logs_dir": "/bmd-db/lee/logs",
-}
 
-DEFAULT_RESOURCES = {
-    "nodes": 1,
-    "ntasks": 48,
-    "mem_gb": 128,
-    "walltime": "72:00:00",
-}
-
-DEFAULT_PARTITION = "leeburton-pool"
-DEFAULT_ACCOUNT = "power-leeburton-users_v2"
-DEFAULT_POTCAR_FUNCTIONAL = "PBE_64"
-DEFAULT_VASP_LAUNCHER = "srun --mpi=pmi2 -n $SLURM_NTASKS vasp_std"
 SUBMISSION_SPEC_FILENAME = "submission.json"
 REMOTE_BACKEND_PACKAGE_DIR = "backend"
 REMOTE_EXECUTION_MODULE_FILENAME = "execution.py"
@@ -45,26 +30,6 @@ REMOTE_BACKEND_MODULE_FILENAMES = (
     REMOTE_EXECUTION_MODULE_FILENAME,
     "parser.py",
     "workflows.py",
-)
-
-MODULES = [
-    "intel/rocky8-oneAPI-2023",
-    "vasp/rocky8-intel-6.4.1",
-]
-
-POTCAR_LINK_MAP = {
-    "PBE_64": ["POT_GGA_PAW_PBE_64", "POT_PAW_PBE_64"],
-    "PBE_54": ["POT_GGA_PAW_PBE_54"],
-    "PBE_52": ["POT_GGA_PAW_PBE_52", "POT_GGA_PAW_PBE"],
-    "LDA": ["POT_LDA_PAW"],
-}
-
-SUBMISSION_ENV_KEYS = (
-    "VASP_CMD",
-    "JOBFLOW_CONFIG_FILE",
-    "PMG_VASP_PSP_DIR",
-    "CUSTODIAN_NO_GZIP",
-    "ATOMATE2_VASP_ZIP_FILES",
 )
 
 MP_RECOMMENDED_POTCAR_SYMBOLS = {
@@ -153,12 +118,7 @@ def _first_nonempty(*values):
 def default_resources_for_workflow(workflow: str | None = None) -> dict:
     resources = dict(DEFAULT_RESOURCES)
     workflow_name = (workflow or "").lower()
-
-    if workflow_name in ("gw_static", "gw_static_bands_true"):
-        resources["ntasks"] = 12
-        resources["mem_gb"] = 240
-    elif workflow_name == "relax_static_bands":
-        resources["mem_gb"] = 160
+    resources.update(WORKFLOW_RESOURCE_OVERRIDES.get(workflow_name, {}))
 
     return resources
 

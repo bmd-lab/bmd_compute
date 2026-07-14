@@ -53,6 +53,39 @@ def _success_result(record: JobRecord) -> dict:
     }
 
 
+def remembered_successful_submission(
+    submission_spec: dict,
+    job_id: str,
+    *,
+    submitted_at: str = "",
+) -> dict:
+    paths = submission_spec["paths"]
+    record = JobRecord(
+        job_id=job_id,
+        run_name=submission_spec["run_name"],
+        run_dir=paths["run_dir"],
+        remote_script=paths["remote_script"],
+        log_paths={
+            "stdout": paths["log_out"],
+            "stderr": paths["log_err"],
+            "slurm_out": paths["slurm_out"],
+            "slurm_err": paths["slurm_err"],
+        },
+        cluster=dict(submission_spec["cluster"]),
+        resources=dict(submission_spec["resources"]),
+        submitted_at=submitted_at,
+        raw_output="",
+        status="submitted",
+        submission_spec=dict(submission_spec),
+        remote_state_path=(
+            f"{paths['logs_dir'].rstrip('/')}/job_{job_id}.json"
+            if job_id
+            else None
+        ),
+    )
+    return _success_result(record)
+
+
 def _blocked_result() -> dict:
     return {
         "status": "failed",
@@ -226,5 +259,6 @@ def _looks_like_connection_failure(message: str) -> bool:
 
 
 __all__ = [
+    "remembered_successful_submission",
     "submit_remote_workflow",
 ]

@@ -7,6 +7,12 @@ import shlex
 import time
 from typing import Any, Mapping
 
+from backend.config import MODULES
+from backend.monitoring import (
+    MonitoringStageError,
+    remote_job_status_from_slurm_outputs,
+    strip_job_id,
+)
 from backend.remote import (
     BatchSubmissionRequest,
     BatchSubmissionResult,
@@ -92,12 +98,10 @@ class ParamikoRemoteRunner(RemoteRunner):
                     parts.append(f"export {key}={shlex.quote(value)}")
 
         if modules:
+            parts.append("module purge >/dev/null 2>&1 || true")
             parts.extend(
-                [
-                    "module purge >/dev/null 2>&1 || true",
-                    "module load intel/rocky8-oneAPI-2023 >/dev/null 2>&1 || true",
-                    "module load vasp/rocky8-intel-6.4.1 >/dev/null 2>&1 || true",
-                ]
+                f"module load {shlex.quote(module_name)} >/dev/null 2>&1 || true"
+                for module_name in MODULES
             )
 
         parts.append(command)
@@ -361,7 +365,106 @@ class ParamikoRemoteRunner(RemoteRunner):
         return record
 
     def query_job(self, job_id: str) -> RemoteJobStatus:
-        raise NotImplementedError("Monitoring is outside the submission milestone.")
+        self.ensure_available()
+        stripped_job_id = strip_job_id(job_id)
+        if not stripped_job_id:
+            raise ValueError("SLURM job ID is empty.")
+
+        scontrol_command = f"/usr/bin/scontrol show job {shlex.quote(stripped_job_id)}"
+        squeue_command = f"/usr/bin/squeue -j {shlex.quote(stripped_job_id)} -h -o %T"
+        scontrol_result = self._run_monitor_command("scontrol", scontrol_command)
+        squeue_result = self._run_monitor_command("squeue", squeue_command)
+        initial_commands = _monitoring_command_summary(
+            scontrol_command,
+            squeue_command,
+        )
+
+        status = remote_job_status_from_slurm_outputs(
+            stripped_job_id,
+            squeue_output=squeue_result.stdout,
+            scontrol_output=scontrol_result.stdout,
+            squeue_stderr=squeue_result.stderr,
+            scontrol_stderr=scontrol_result.stderr,
+            command=initial_commands,
+        )
+        summary = status.raw.get("summary") or "UNKNOWN"
+
+        sacct_output = ""
+        sacct_brief_output = ""
+        sacct_stderr = ""
+        sacct_brief_stderr = ""
+        final_commands = initial_commands
+        if not (squeue_result.stdout or "").strip() or summary in {"SUCCESS", "FAILURE"}:
+            sacct_command = (
+                "/usr/bin/sacct -X -P -n "
+                f"-j {shlex.quote(stripped_job_id)} "
+                "--format JobIDRaw,State,ExitCode,JobName,StdOut,WorkDir"
+            )
+            sacct_brief_command = (
+                "/usr/bin/sacct -X -n -P "
+                f"-j {shlex.quote(stripped_job_id)} "
+                "--format JobID,JobName%30,State,Elapsed,Start,End,Partition%20"
+            )
+            sacct_result = self._run_monitor_command("sacct", sacct_command)
+            sacct_brief_result = self._run_monitor_command("sacct", sacct_brief_command)
+            sacct_output = sacct_result.stdout
+            sacct_brief_output = sacct_brief_result.stdout
+            sacct_stderr = sacct_result.stderr
+            sacct_brief_stderr = sacct_brief_result.stderr
+            final_commands = _monitoring_command_summary(
+                scontrol_command,
+                squeue_command,
+                sacct_command,
+                sacct_brief_command,
+            )
+
+        return remote_job_status_from_slurm_outputs(
+            stripped_job_id,
+            squeue_output=squeue_result.stdout,
+            scontrol_output=scontrol_result.stdout,
+            sacct_output=sacct_output,
+            sacct_brief_output=sacct_brief_output,
+            squeue_stderr=squeue_result.stderr,
+            scontrol_stderr=scontrol_result.stderr,
+            sacct_stderr=sacct_stderr,
+            sacct_brief_stderr=sacct_brief_stderr,
+            command=final_commands,
+        )
+
+    def _run_monitor_command(self, stage: str, command: str) -> RemoteCommandResult:
+        try:
+            result = self.run(
+                command,
+                check=False,
+                modules=False,
+                export_env=False,
+                timeout_s=None,
+            )
+        except Exception as exc:
+            stdout = ""
+            stderr = ""
+            if isinstance(exc, RemoteExecutionError):
+                stdout = exc.result.stdout
+                stderr = exc.result.stderr
+            raise MonitoringStageError(
+                stage,
+                f"{stage} command failed before returning a result.",
+                command=command,
+                stdout=stdout,
+                stderr=stderr,
+                exception=exc,
+            ) from exc
+
+        if not result.ok:
+            raise MonitoringStageError(
+                stage,
+                f"{stage} command exited with code {result.returncode}.",
+                command=result.command,
+                stdout=result.stdout,
+                stderr=result.stderr,
+            )
+
+        return result
 
     def cancel_job(self, job_id: str) -> RemoteCommandResult:
         raise NotImplementedError("Job cancellation is outside the submission milestone.")
@@ -440,6 +543,10 @@ def _now_str() -> str:
 
 def _looks_numeric(value: str) -> bool:
     return bool(re.match(r"^-?\d+(\.\d+)?$", str(value or "")))
+
+
+def _monitoring_command_summary(*commands: str) -> str:
+    return "\n".join(command for command in commands if command)
 
 
 __all__ = [
