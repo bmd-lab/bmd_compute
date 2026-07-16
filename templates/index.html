@@ -452,6 +452,23 @@ ul {
     margin-bottom: 4px;
 }
 
+.structure-viewer {
+    background: #f7f7f7;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    height: 460px;
+    margin-top: 18px;
+    overflow: hidden;
+    position: relative;
+    width: 100%;
+}
+
+.viewer-message {
+    color: #333333;
+    font-size: 14px;
+    padding: 18px;
+}
+
 @media (max-width: 760px) {
     .container {
         margin-top: 22px;
@@ -479,6 +496,10 @@ ul {
     .submission-grid,
     .button-row {
         grid-template-columns: 1fr;
+    }
+
+    .structure-viewer {
+        height: 360px;
     }
 
     .metric,
@@ -1295,9 +1316,206 @@ ul {
         </section>
         {% endif %}
 
+        {% if results_summary %}
+        <section class="stage">
+
+            <div class="stage-header">
+                <div>
+                    <div class="stage-title">
+                        <span class="stage-number">8</span>
+                        <h2>Results</h2>
+                    </div>
+                    <div class="summary-line">
+                        {% if results_summary.status == "success" %}
+                        Final calculation summary from completed VASP outputs.
+                        {% else %}
+                        Completed job detected, but results could not be parsed.
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="stage-status">
+                    {% if results_summary.status == "success" %}
+                    <span class="pill ready">Ready</span>
+                    {% else %}
+                    <span class="pill failed">Failed</span>
+                    {% endif %}
+                </div>
+            </div>
+
+            {% if results_summary.status == "success" %}
+            <div class="prep-panel success">
+                <div class="prep-title">Results Summary</div>
+                <div class="details-grid">
+                    <div class="callout">
+                        <div class="callout-title">Completion</div>
+                        <div class="callout-value">{{ results_summary.completion_status }}</div>
+                    </div>
+                    <div class="callout">
+                        <div class="callout-title">Final Formula</div>
+                        <div class="callout-value">{{ results_summary.final_formula }}</div>
+                    </div>
+                    <div class="callout">
+                        <div class="callout-title">Final Energy</div>
+                        <div class="callout-value">
+                            {% if results_summary.final_energy_ev is not none %}{{ results_summary.final_energy_ev }} eV{% else %}Unknown{% endif %}
+                        </div>
+                    </div>
+                    <div class="callout">
+                        <div class="callout-title">Energy per Atom</div>
+                        <div class="callout-value">
+                            {% if results_summary.energy_per_atom_ev is not none %}{{ results_summary.energy_per_atom_ev }} eV/atom{% else %}Unknown{% endif %}
+                        </div>
+                    </div>
+                    <div class="callout">
+                        <div class="callout-title">Ionic Steps</div>
+                        <div class="callout-value">{{ results_summary.ionic_steps }}</div>
+                    </div>
+                    <div class="callout">
+                        <div class="callout-title">Electronic Convergence</div>
+                        <div class="callout-value">
+                            {% if results_summary.electronic_convergence is none %}
+                            Unknown
+                            {% elif results_summary.electronic_convergence %}
+                            Converged
+                            {% else %}
+                            Not converged
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {% if results_summary.viewer and results_summary.viewer.cif %}
+            <div class="prep-panel">
+                <div class="prep-title">Final Structure</div>
+                <div
+                    id="final-structure-viewer"
+                    class="structure-viewer"
+                    data-crystal-viewer
+                    data-cif-target="final-structure-cif">
+                    <div class="viewer-message">Loading crystal viewer...</div>
+                </div>
+            </div>
+            {% endif %}
+
+            <details class="disclosure details-wide">
+                <summary>Results Diagnostics</summary>
+                <table class="compact-table">
+                    <tr>
+                        <td>Job ID</td>
+                        <td>{{ results_summary.job_id }}</td>
+                    </tr>
+                    <tr>
+                        <td>Run Directory</td>
+                        <td class="mono">{{ results_summary.workdir }}</td>
+                    </tr>
+                    <tr>
+                        <td>CONTCAR</td>
+                        <td class="mono">{{ results_summary.files.contcar }}</td>
+                    </tr>
+                    <tr>
+                        <td>OUTCAR</td>
+                        <td class="mono">{{ results_summary.files.outcar }}</td>
+                    </tr>
+                    <tr>
+                        <td>vasprun.xml</td>
+                        <td class="mono">{{ results_summary.files.vasprun }}</td>
+                    </tr>
+                    <tr>
+                        <td>Parser</td>
+                        <td>{{ results_summary.diagnostics.parser }}</td>
+                    </tr>
+                    <tr>
+                        <td>OUTCAR parsed</td>
+                        <td>{{ "Yes" if results_summary.diagnostics.outcar_parsed else "No" }}</td>
+                    </tr>
+                    {% if results_summary.diagnostics.outcar_error %}
+                    <tr>
+                        <td>OUTCAR parser note</td>
+                        <td class="log-output">{{ results_summary.diagnostics.outcar_error }}</td>
+                    </tr>
+                    {% endif %}
+                </table>
+            </details>
+            {% else %}
+            <div class="prep-panel failed">
+                <div class="prep-title">Results Summary Failed</div>
+                <table class="compact-table failure-table">
+                    <tr>
+                        <td>Stage</td>
+                        <td>{{ results_summary.stage }}</td>
+                    </tr>
+                    <tr>
+                        <td>Reason</td>
+                        <td>{{ results_summary.reason }}</td>
+                    </tr>
+                    <tr>
+                        <td>Suggestion</td>
+                        <td>{{ results_summary.suggestion }}</td>
+                    </tr>
+                    {% if results_summary.files %}
+                    <tr>
+                        <td>Files</td>
+                        <td class="log-output">{{ results_summary.files }}</td>
+                    </tr>
+                    {% endif %}
+                    {% if results_summary.exception_text %}
+                    <tr>
+                        <td>Exception</td>
+                        <td class="log-output">{{ results_summary.exception_text }}</td>
+                    </tr>
+                    {% endif %}
+                    {% if results_summary.traceback %}
+                    <tr>
+                        <td>Traceback</td>
+                        <td class="log-output">{{ results_summary.traceback }}</td>
+                    </tr>
+                    {% endif %}
+                </table>
+            </div>
+            {% endif %}
+
+        </section>
+        {% endif %}
+
     </div>
 
 </div>
+
+{% if results_summary and results_summary.status == "success" and results_summary.viewer and results_summary.viewer.cif %}
+<script src="https://3Dmol.org/build/3Dmol-min.js"></script>
+<script type="application/json" id="final-structure-cif">{{ results_summary.viewer.cif | tojson }}</script>
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    var target = document.querySelector("[data-crystal-viewer]");
+    var cifElement = document.getElementById("final-structure-cif");
+    if (!target || !cifElement) {
+        return;
+    }
+    if (!window.$3Dmol) {
+        target.innerHTML = '<div class="viewer-message">Crystal viewer could not be loaded.</div>';
+        return;
+    }
+    try {
+        var cifText = JSON.parse(cifElement.textContent);
+        target.innerHTML = "";
+        var viewer = window.$3Dmol.createViewer(target, { backgroundColor: "white" });
+        viewer.addModel(cifText, "cif");
+        if (viewer.addUnitCell) {
+            viewer.addUnitCell();
+        }
+        viewer.setStyle({}, {
+            stick: { radius: 0.14 },
+            sphere: { scale: 0.28 }
+        });
+        viewer.zoomTo();
+        viewer.render();
+    } catch (err) {
+        target.innerHTML = '<div class="viewer-message">Crystal viewer failed: ' + String(err) + '</div>';
+    }
+});
+</script>
+{% endif %}
 
 </body>
 

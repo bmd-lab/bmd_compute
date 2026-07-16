@@ -5,6 +5,7 @@ from backend.monitoring import monitor_job
 from backend.parser import parse_structure
 from backend.remote_preparation import prepare_remote_submission, remembered_successful_preparation
 from backend.remote_submission import remembered_successful_submission, submit_remote_workflow
+from backend.results import load_results_for_completed_job
 from backend.submission import create_submission_spec
 from backend.summary import summarize_structure
 from backend.workflow_summary import summarize_workflow
@@ -27,6 +28,7 @@ def page_context(
     remote_preparation=None,
     submission_result=None,
     monitoring_result=None,
+    results_summary=None,
     resume_job_id: str = "",
 ):
     return {
@@ -40,6 +42,7 @@ def page_context(
         "remote_preparation": remote_preparation,
         "submission_result": submission_result,
         "monitoring_result": monitoring_result,
+        "results_summary": results_summary,
         "resume_job_id": resume_job_id,
     }
 
@@ -114,13 +117,22 @@ def resume_existing_calculation(
     request: Request,
     job_id: str = Form(...),
 ):
+    print("ENTER /resume")
+    print("after parsing the form")
+    print("before calling monitor_job()")
     monitoring_result = monitor_job(job_id)
+    print("immediately after monitor_job() returns")
+    print("before calling the results layer")
+    results_summary = load_results_for_completed_job(monitoring_result)
+    print("immediately after the results layer returns")
+    print("immediately before returning the template response")
 
     return templates.TemplateResponse(
         request=request,
         name="index.html",
         context=page_context(
             monitoring_result=monitoring_result,
+            results_summary=results_summary,
             resume_job_id=job_id,
         ),
     )
@@ -223,6 +235,10 @@ def submit_workflow(
             submission_result["job_id"],
             submission_spec=submission_spec,
         )
+    results_summary = load_results_for_completed_job(
+        monitoring_result,
+        submission_spec=submission_spec,
+    )
 
     return templates.TemplateResponse(
         request=request,
@@ -238,6 +254,7 @@ def submit_workflow(
             remote_preparation=remote_preparation,
             submission_result=submission_result,
             monitoring_result=monitoring_result,
+            results_summary=results_summary,
         ),
     )
 
@@ -267,6 +284,10 @@ def refresh_monitoring(
         submitted_at=submitted_at,
     )
     monitoring_result = monitor_job(job_id, submission_spec=submission_spec)
+    results_summary = load_results_for_completed_job(
+        monitoring_result,
+        submission_spec=submission_spec,
+    )
 
     return templates.TemplateResponse(
         request=request,
@@ -282,5 +303,6 @@ def refresh_monitoring(
             remote_preparation=remote_preparation,
             submission_result=submission_result,
             monitoring_result=monitoring_result,
+            results_summary=results_summary,
         ),
     )
