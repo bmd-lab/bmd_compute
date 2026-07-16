@@ -188,16 +188,26 @@ class QueryRunner(ParamikoRemoteRunner):
         self.commands.append(command)
         self.timeout_values.append(timeout_s)
         if "/usr/bin/scontrol" in command:
+            key = "scontrol"
             stdout = self.outputs.get("scontrol", "")
         elif "/usr/bin/squeue" in command:
+            key = "squeue"
             stdout = self.outputs.get("squeue", "")
         elif "JobIDRaw,State,ExitCode,JobName,StdOut,WorkDir" in command:
+            key = "sacct"
             stdout = self.outputs.get("sacct", "")
         elif "JobID,JobName%30,State,Elapsed,Start,End,Partition%20" in command:
+            key = "sacct_brief"
             stdout = self.outputs.get("sacct_brief", "")
         else:
+            key = ""
             stdout = ""
-        return RemoteCommandResult(command=command, returncode=0, stdout=stdout)
+        return RemoteCommandResult(
+            command=command,
+            returncode=self.outputs.get("returncodes", {}).get(key, 0),
+            stdout=stdout,
+            stderr=self.outputs.get("stderr", {}).get(key, ""),
+        )
 
 
 running_query_runner = QueryRunner(
@@ -239,6 +249,22 @@ assert len(completed_query_runner.commands) == 4
 assert any("/usr/bin/sacct" in command for command in completed_query_runner.commands)
 assert all("timeout 2s" not in command for command in completed_query_runner.commands)
 assert completed_query_runner.timeout_values == [None, None, None, None]
+
+completed_after_scontrol_miss_runner = QueryRunner(
+    {
+        "scontrol": "",
+        "squeue": "",
+        "sacct": "123456|COMPLETED|0:0|TiO2-static|/logs/final.out|/flows/run\n",
+        "sacct_brief": "123456|TiO2-static|COMPLETED|00:02:10|2026-07-14T10:00|2026-07-14T10:02|leeburton-pool\n",
+        "returncodes": {"scontrol": 1},
+        "stderr": {"scontrol": "slurm_load_jobs error: Invalid job id specified\n"},
+    }
+)
+completed_after_scontrol_miss = completed_after_scontrol_miss_runner.query_job("123456")
+
+assert completed_after_scontrol_miss.state == "COMPLETED"
+assert completed_after_scontrol_miss.raw["summary"] == "SUCCESS"
+assert completed_after_scontrol_miss.raw["scontrol_stderr"] == "slurm_load_jobs error: Invalid job id specified"
 
 
 class FailingSqueueRunner(QueryRunner):

@@ -3,16 +3,15 @@ from __future__ import annotations
 import re
 from typing import Callable
 
-from backend.paramiko_remote import ParamikoRemoteRunner
-from backend.remote import JobRecord, RemoteExecutionError
-from backend.remote_preparation import connection_profile_from_submission_spec
+from backend.remote import JobRecord, RemoteExecutionError, RemoteRunner
+from backend.remote_runtime import connected_remote_runner, connection_profile_from_submission_spec
 
 
 def submit_remote_workflow(
     submission_spec: dict,
     *,
     remote_prepared: bool,
-    runner_factory: Callable[[], ParamikoRemoteRunner] | None = None,
+    runner_factory: Callable[[], RemoteRunner] | None = None,
 ) -> dict:
     """
     Submit an already prepared workflow through the existing RemoteRunner path.
@@ -24,19 +23,16 @@ def submit_remote_workflow(
     if not remote_prepared:
         return _blocked_result()
 
-    runner = (runner_factory or ParamikoRemoteRunner)()
     profile = connection_profile_from_submission_spec(submission_spec)
 
     try:
-        runner.connect(profile)
-        record = runner.submit(submission_spec, dry_run=False)
+        with connected_remote_runner(
+            profile=profile,
+            runner_factory=runner_factory,
+        ) as runner:
+            record = runner.submit(submission_spec, dry_run=False)
     except Exception as exc:
         return _failure_result(exc)
-    finally:
-        try:
-            runner.close()
-        except Exception:
-            pass
 
     return _success_result(record)
 

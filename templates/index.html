@@ -427,6 +427,31 @@ ul {
     margin-top: 10px;
 }
 
+.entry-divider {
+    align-items: center;
+    color: var(--muted);
+    display: flex;
+    font-size: 12px;
+    font-weight: 700;
+    gap: 14px;
+    padding: 0 30px;
+}
+
+.entry-divider::before,
+.entry-divider::after {
+    background: var(--line);
+    content: "";
+    flex: 1;
+    height: 1px;
+}
+
+.entry-label {
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 700;
+    margin-bottom: 4px;
+}
+
 @media (max-width: 760px) {
     .container {
         margin-top: 22px;
@@ -492,6 +517,36 @@ ul {
     <div class="panel">
 
         <section class="stage">
+
+            <div class="stage-header">
+                <div>
+                    <h2>Resume Existing Calculation</h2>
+                    <div class="summary-line">Monitor an existing PowerSLURM job by SLURM job ID.</div>
+                </div>
+                <div class="stage-status">
+                    {% if resume_job_id %}<span class="pill ready">Resume</span>{% else %}<span class="pill">Optional</span>{% endif %}
+                </div>
+            </div>
+
+            <form action="/resume" method="post">
+                <div class="form-row">
+                    <label>SLURM Job ID</label>
+                    <input
+                        name="job_id"
+                        placeholder="123456"
+                        value="{{ resume_job_id }}">
+                </div>
+
+                <button type="submit">Resume</button>
+            </form>
+
+        </section>
+
+        <div class="entry-divider">OR</div>
+
+        <section class="stage">
+
+            <div class="entry-label">Start New Calculation</div>
 
             <div class="stage-header">
                 <div>
@@ -1085,6 +1140,7 @@ ul {
             {% endif %}
 
         </section>
+        {% endif %}
 
         {% if (submission_result and submission_result.status == "success") or monitoring_result %}
         <section class="stage">
@@ -1096,7 +1152,7 @@ ul {
                         <h2>Monitoring</h2>
                     </div>
                     <div class="summary-line">
-                        SLURM job {{ submission_result.job_id if submission_result else monitoring_result.job_id }}
+                        SLURM job {{ submission_result.job_id if submission_result else (resume_job_id or monitoring_result.job_id) }}
                     </div>
                 </div>
                 <div class="stage-status">
@@ -1114,6 +1170,7 @@ ul {
                 </div>
             </div>
 
+            {% if submission_spec %}
             <form action="/monitor" method="post">
                 <textarea class="hidden-field" name="structure">{{ structure_text }}</textarea>
                 <input type="hidden" name="fmt" value="{{ fmt }}">
@@ -1124,6 +1181,12 @@ ul {
                 <input type="hidden" name="submitted_at" value="{{ submission_result.job_record.submitted_at if submission_result else '' }}">
                 <button type="submit">Refresh Queue Status</button>
             </form>
+            {% else %}
+            <form action="/resume" method="post">
+                <input type="hidden" name="job_id" value="{{ resume_job_id or monitoring_result.job_id }}">
+                <button type="submit">Refresh Queue Status</button>
+            </form>
+            {% endif %}
 
             {% if monitoring_result %}
                 {% if monitoring_result.status == "success" %}
@@ -1198,6 +1261,28 @@ ul {
                             <td>Exception</td>
                             <td class="log-output">{{ monitoring_result.exception_text or "No exception text captured." }}</td>
                         </tr>
+                        {% if monitoring_result.exception_debug %}
+                        <tr>
+                            <td>Exception Type</td>
+                            <td class="log-output">{{ monitoring_result.exception_debug["type"] }}</td>
+                        </tr>
+                        <tr>
+                            <td>Exception Module</td>
+                            <td class="log-output">{{ monitoring_result.exception_debug["module"] }}</td>
+                        </tr>
+                        <tr>
+                            <td>Exception Class</td>
+                            <td class="log-output">{{ monitoring_result.exception_debug["class_name"] }}</td>
+                        </tr>
+                        <tr>
+                            <td>Exception repr</td>
+                            <td class="log-output">{{ monitoring_result.exception_debug["repr"] }}</td>
+                        </tr>
+                        <tr>
+                            <td>Traceback</td>
+                            <td class="log-output">{{ monitoring_result.exception_debug["traceback"] }}</td>
+                        </tr>
+                        {% endif %}
                         <tr>
                             <td>Suggestion</td>
                             <td>{{ monitoring_result.suggestion }}</td>
@@ -1208,7 +1293,6 @@ ul {
             {% endif %}
 
         </section>
-        {% endif %}
         {% endif %}
 
     </div>

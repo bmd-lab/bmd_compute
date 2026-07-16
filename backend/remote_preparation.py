@@ -3,9 +3,13 @@ from __future__ import annotations
 import re
 from typing import Callable
 
-from backend.paramiko_remote import ParamikoRemoteRunner
-from backend.config import NOTEBOOK_DEFAULTS
-from backend.remote import JobRecord, RemoteConnectionProfile, RemoteExecutionError
+from backend.remote import JobRecord, RemoteExecutionError, RemoteRunner
+from backend.remote_runtime import (
+    connected_remote_runner,
+    connection_profile_from_cluster,
+    connection_profile_from_submission_spec,
+    default_connection_profile,
+)
 
 
 SUCCESS_STEPS = [
@@ -36,7 +40,7 @@ REMOTE_STATE_STEPS = [
 def prepare_remote_submission(
     submission_spec: dict,
     *,
-    runner_factory: Callable[[], ParamikoRemoteRunner] | None = None,
+    runner_factory: Callable[[], RemoteRunner] | None = None,
 ) -> dict:
     """
     Execute the existing remote dry-run path and return template-ready status.
@@ -46,21 +50,18 @@ def prepare_remote_submission(
     Python tracebacks to the browser.
     """
 
-    runner = (runner_factory or ParamikoRemoteRunner)()
     profile = connection_profile_from_submission_spec(submission_spec)
     stage = "SSH Connection"
 
     try:
-        runner.connect(profile)
-        stage = "Remote Preparation"
-        record = runner.submit(submission_spec, dry_run=True)
+        with connected_remote_runner(
+            profile=profile,
+            runner_factory=runner_factory,
+        ) as runner:
+            stage = "Remote Preparation"
+            record = runner.submit(submission_spec, dry_run=True)
     except Exception as exc:
         return _failure_result(exc, stage, submission_spec)
-    finally:
-        try:
-            runner.close()
-        except Exception:
-            pass
 
     return _success_result(record, submission_spec)
 
@@ -90,16 +91,6 @@ def remembered_successful_preparation(submission_spec: dict) -> dict:
         status="dry_run",
     )
     return _success_result(record, submission_spec)
-
-
-def connection_profile_from_submission_spec(submission_spec: dict) -> RemoteConnectionProfile:
-    cluster = submission_spec["cluster"]
-    return RemoteConnectionProfile(
-        host=cluster["remote_host"],
-        username=cluster["username"],
-        port=int(cluster.get("port", NOTEBOOK_DEFAULTS["port"])),
-        keepalive_s=NOTEBOOK_DEFAULTS["keepalive_s"],
-    )
 
 
 def _success_result(record: JobRecord, submission_spec: dict) -> dict:
@@ -361,7 +352,9 @@ def _clean_message(exc: Exception) -> str:
 __all__ = [
     "REMOTE_STATE_STEPS",
     "SUCCESS_STEPS",
+    "connection_profile_from_cluster",
     "connection_profile_from_submission_spec",
+    "default_connection_profile",
     "remembered_successful_preparation",
     "prepare_remote_submission",
 ]

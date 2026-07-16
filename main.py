@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Form, Request
 from fastapi.templating import Jinja2Templates
 
-from backend.monitoring import monitor_remote_job
+from backend.monitoring import monitor_job
 from backend.parser import parse_structure
 from backend.remote_preparation import prepare_remote_submission, remembered_successful_preparation
 from backend.remote_submission import remembered_successful_submission, submit_remote_workflow
@@ -27,6 +27,7 @@ def page_context(
     remote_preparation=None,
     submission_result=None,
     monitoring_result=None,
+    resume_job_id: str = "",
 ):
     return {
         "structure_text": structure_text,
@@ -39,6 +40,7 @@ def page_context(
         "remote_preparation": remote_preparation,
         "submission_result": submission_result,
         "monitoring_result": monitoring_result,
+        "resume_job_id": resume_job_id,
     }
 
 
@@ -103,6 +105,23 @@ def analyze(
             structure_text=structure,
             fmt=fmt,
             summary=summary,
+        ),
+    )
+
+
+@app.post("/resume")
+def resume_existing_calculation(
+    request: Request,
+    job_id: str = Form(...),
+):
+    monitoring_result = monitor_job(job_id)
+
+    return templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context=page_context(
+            monitoring_result=monitoring_result,
+            resume_job_id=job_id,
         ),
     )
 
@@ -200,9 +219,9 @@ def submit_workflow(
     )
     monitoring_result = None
     if submission_result.get("status") == "success" and submission_result.get("job_id"):
-        monitoring_result = monitor_remote_job(
-            submission_spec,
+        monitoring_result = monitor_job(
             submission_result["job_id"],
+            submission_spec=submission_spec,
         )
 
     return templates.TemplateResponse(
@@ -224,7 +243,7 @@ def submit_workflow(
 
 
 @app.post("/monitor")
-def monitor_job(
+def refresh_monitoring(
     request: Request,
     structure: str = Form(...),
     fmt: str = Form(...),
@@ -247,7 +266,7 @@ def monitor_job(
         job_id,
         submitted_at=submitted_at,
     )
-    monitoring_result = monitor_remote_job(submission_spec, job_id)
+    monitoring_result = monitor_job(job_id, submission_spec=submission_spec)
 
     return templates.TemplateResponse(
         request=request,

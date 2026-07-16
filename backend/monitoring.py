@@ -2,9 +2,15 @@ from __future__ import annotations
 
 import re
 import time
+import traceback
 from typing import Callable
 
-from backend.remote import RemoteExecutionError, RemoteJobStatus
+from backend.remote import RemoteExecutionError, RemoteJobStatus, RemoteRunner
+from backend.remote_runtime import (
+    connected_remote_runner,
+    connection_profile_from_submission_spec,
+    default_connection_profile,
+)
 
 
 class MonitoringStageError(RuntimeError):
@@ -51,6 +57,11 @@ FAILURE_PREFIXES = (
 
 def strip_job_id(job_id: str | None) -> str:
     return re.sub(r"\.(batch|extern)$", "", str(job_id or "").strip())
+
+
+def is_valid_slurm_job_id(job_id: str | None) -> bool:
+    stripped_job_id = strip_job_id(job_id)
+    return bool(re.fullmatch(r"\d+(?:_\d+)?", stripped_job_id))
 
 
 def classify_slurm_state(state: str | None, exit_code: str | None = None) -> str:
@@ -186,6 +197,8 @@ def remote_job_status_from_slurm_outputs(
             "squeue": (squeue_output or "").strip(),
             "scontrol": (scontrol_output or "").strip(),
             "sacct": (sacct_output or "").strip(),
+            "sacct_brief": (sacct_brief_output or "").strip(),
+            "command": command,
             "squeue_stderr": (squeue_stderr or "").strip(),
             "scontrol_stderr": (scontrol_stderr or "").strip(),
             "sacct_stderr": (sacct_stderr or "").strip(),
@@ -195,11 +208,11 @@ def remote_job_status_from_slurm_outputs(
     )
 
 
-def monitor_remote_job(
-    submission_spec: dict,
+def monitor_job(
     job_id: str,
     *,
-    runner_factory: Callable | None = None,
+    submission_spec: dict | None = None,
+    runner_factory: Callable[[], RemoteRunner] | None = None,
 ) -> dict:
     stripped_job_id = strip_job_id(job_id)
     if not stripped_job_id:
@@ -209,26 +222,35 @@ def monitor_remote_job(
             "Submit the workflow successfully before checking queue status.",
         )
 
-    from backend.paramiko_remote import ParamikoRemoteRunner
-    from backend.remote_preparation import connection_profile_from_submission_spec
+    is_resume = submission_spec is None
+    if is_resume and not is_valid_slurm_job_id(stripped_job_id):
+        return _failure_result(
+            "Job ID",
+            "Malformed SLURM job ID.",
+            "Enter the numeric SLURM job ID returned by sbatch.",
+            exception_text=str(job_id or ""),
+        )
 
-    runner = (runner_factory or ParamikoRemoteRunner)()
-    profile = connection_profile_from_submission_spec(submission_spec)
+    profile = (
+        connection_profile_from_submission_spec(submission_spec)
+        if submission_spec is not None
+        else default_connection_profile()
+    )
 
     try:
-        runner.connect(profile)
+        with connected_remote_runner(
+            profile=profile,
+            runner_factory=runner_factory,
+        ) as runner:
+            status = runner.query_job(stripped_job_id)
     except Exception as exc:
-        return _exception_result(exc, default_stage="SSH Connection")
+        stage = "SSH Connection" if _looks_like_connection_failure(exc) else "Monitoring"
+        result = _exception_result(exc, default_stage=stage)
+        result["exception_debug"] = _exception_debug(exc)
+        return result
 
-    try:
-        status = runner.query_job(stripped_job_id)
-    except Exception as exc:
-        return _exception_result(exc, default_stage="Monitoring")
-    finally:
-        try:
-            runner.close()
-        except Exception:
-            pass
+    if is_resume and _is_unknown_job(status):
+        return _unknown_job_result(status)
 
     return _success_result(status)
 
@@ -338,6 +360,45 @@ def _failure_result(
     }
 
 
+def _exception_debug(exc: Exception) -> dict:
+    return {
+        "type": str(type(exc)),
+        "module": exc.__class__.__module__,
+        "class_name": exc.__class__.__name__,
+        "repr": repr(exc),
+        "traceback": "".join(
+            traceback.format_exception(type(exc), exc, exc.__traceback__)
+        ),
+    }
+
+
+def _is_unknown_job(status: RemoteJobStatus) -> bool:
+    summary = str(status.raw.get("summary") or "").upper()
+    state = str(status.state or "").upper()
+    return summary == "UNKNOWN" or state == "UNKNOWN"
+
+
+def _unknown_job_result(status: RemoteJobStatus) -> dict:
+    return _failure_result(
+        "Job lookup",
+        f"No SLURM record was found for job ID {status.job_id}.",
+        "Check the job ID and try again. Completed jobs may disappear from accounting after the cluster retention window.",
+        command=status.raw.get("command", ""),
+        stdout=_combined_output(
+            squeue=status.raw.get("squeue", ""),
+            scontrol=status.raw.get("scontrol", ""),
+            sacct=status.raw.get("sacct", ""),
+            sacct_brief=status.raw.get("sacct_brief", ""),
+        ),
+        stderr=_combined_output(
+            squeue=status.raw.get("squeue_stderr", ""),
+            scontrol=status.raw.get("scontrol_stderr", ""),
+            sacct=status.raw.get("sacct_stderr", ""),
+            sacct_brief=status.raw.get("sacct_brief_stderr", ""),
+        ),
+    )
+
+
 def _first_line(output: str) -> str:
     for line in (output or "").splitlines():
         text = line.strip()
@@ -399,7 +460,8 @@ def _looks_like_connection_failure(exc: Exception) -> bool:
 
 __all__ = [
     "classify_slurm_state",
-    "monitor_remote_job",
+    "is_valid_slurm_job_id",
+    "monitor_job",
     "MonitoringStageError",
     "parse_sacct_row",
     "parse_scontrol_output",

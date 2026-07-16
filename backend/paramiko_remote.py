@@ -455,15 +455,6 @@ class ParamikoRemoteRunner(RemoteRunner):
                 exception=exc,
             ) from exc
 
-        if not result.ok:
-            raise MonitoringStageError(
-                stage,
-                f"{stage} command exited with code {result.returncode}.",
-                command=result.command,
-                stdout=result.stdout,
-                stderr=result.stderr,
-            )
-
         return result
 
     def cancel_job(self, job_id: str) -> RemoteCommandResult:
