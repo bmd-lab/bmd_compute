@@ -80,13 +80,14 @@ class RemoteExecutionError(RuntimeError):
 
 @dataclass(frozen=True)
 class RemoteConnectionProfile:
-    """Connection settings from the notebook profile, without secrets."""
+    """Connection settings for the cluster, without embedding SSH secrets."""
 
     host: str
-    username: str
+    username: str | None = None
     port: int = 22
     keepalive_s: int | None = None
     key_file: str | None = None
+    ssh_config_host: str | None = None
 
 
 @dataclass(frozen=True)

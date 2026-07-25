@@ -87,7 +87,10 @@ def remembered_successful_preparation(submission_spec: dict) -> dict:
         cluster=dict(submission_spec["cluster"]),
         resources=dict(submission_spec["resources"]),
         submitted_at="",
-        raw_output="\n".join(f"PREP_OK={step}" for step in REMOTE_STATE_STEPS) + "\n",
+        raw_output="\n".join(
+            f"PREP_OK={step}"
+            for step in _required_remote_state_steps(submission_spec)
+        ) + "\n",
         status="dry_run",
     )
     return _success_result(record, submission_spec)
@@ -95,6 +98,7 @@ def remembered_successful_preparation(submission_spec: dict) -> dict:
 
 def _success_result(record: JobRecord, submission_spec: dict) -> dict:
     verified = _verified_steps(record.raw_output)
+    success_steps = _success_steps(submission_spec)
     missing = [
         step
         for step in _required_remote_state_steps(submission_spec)
@@ -108,7 +112,7 @@ def _success_result(record: JobRecord, submission_spec: dict) -> dict:
             "stage": missing[0],
             "reason": f"Remote dry run completed without verifying: {missing[0]}.",
             "suggestion": "Check the remote preparation output and verify the configured paths.",
-            "steps": _failure_steps(missing[0]),
+            "steps": _failure_steps(missing[0], submission_spec),
             "ready_for_submission": False,
         }
 
@@ -120,7 +124,7 @@ def _success_result(record: JobRecord, submission_spec: dict) -> dict:
                 "label": label,
                 "state": "complete",
             }
-            for label in SUCCESS_STEPS
+            for label in success_steps
         ],
         "job_record": record.to_dict(),
         "ready_for_submission": True,
@@ -135,7 +139,7 @@ def _failure_result(exc: Exception, stage: str, submission_spec: dict) -> dict:
         "stage": resolved_stage,
         "reason": reason,
         "suggestion": suggestion,
-        "steps": _failure_steps(resolved_stage),
+        "steps": _failure_steps(resolved_stage, submission_spec),
         "ready_for_submission": False,
     }
 
@@ -159,6 +163,17 @@ def _required_remote_state_steps(submission_spec: dict) -> list[str]:
     return steps
 
 
+def _success_steps(submission_spec: dict) -> list[str]:
+    if submission_spec.get("potcar", {}).get("symlink_targets"):
+        return list(SUCCESS_STEPS)
+
+    return [
+        step
+        for step in SUCCESS_STEPS
+        if step != "POTCAR links prepared"
+    ]
+
+
 def _verified_steps(output: str) -> set[str]:
     verified = set()
     for line in (output or "").splitlines():
@@ -167,12 +182,12 @@ def _verified_steps(output: str) -> set[str]:
     return verified
 
 
-def _failure_steps(failed_stage: str) -> list[dict]:
+def _failure_steps(failed_stage: str, submission_spec: dict) -> list[dict]:
     steps = []
     failed_step = _display_step_for_stage(failed_stage)
     failed_seen = False
 
-    for label in SUCCESS_STEPS:
+    for label in _success_steps(submission_spec):
         if label == failed_step:
             steps.append({"label": label, "state": "failed"})
             failed_seen = True

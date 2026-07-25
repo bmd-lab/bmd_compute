@@ -139,8 +139,10 @@ def test_monitor_job_uses_runner_and_closes_connection():
     runner = FakeRunner(status)
     submission_spec = {
         "cluster": {
-            "remote_host": "powerslurm-login.tau.ac.il",
-            "username": "leeburton",
+            "ssh_config_host": NOTEBOOK_DEFAULTS["ssh_config_host"],
+            "remote_host": NOTEBOOK_DEFAULTS["remote_host"],
+            "username": NOTEBOOK_DEFAULTS["username"],
+            "port": NOTEBOOK_DEFAULTS["port"],
         }
     }
 
@@ -284,8 +286,10 @@ def test_monitor_job_preserves_query_failure_stage_and_streams():
     runner = FailingQueryRunner()
     submission_spec = {
         "cluster": {
-            "remote_host": "powerslurm-login.tau.ac.il",
-            "username": "leeburton",
+            "ssh_config_host": NOTEBOOK_DEFAULTS["ssh_config_host"],
+            "remote_host": NOTEBOOK_DEFAULTS["remote_host"],
+            "username": NOTEBOOK_DEFAULTS["username"],
+            "port": NOTEBOOK_DEFAULTS["port"],
         }
     }
 
@@ -316,8 +320,10 @@ def test_monitor_job_reports_connection_failures_only_during_connect():
         "12345",
         submission_spec={
             "cluster": {
-                "remote_host": "powerslurm-login.tau.ac.il",
-                "username": "leeburton",
+                "ssh_config_host": NOTEBOOK_DEFAULTS["ssh_config_host"],
+                "remote_host": NOTEBOOK_DEFAULTS["remote_host"],
+                "username": NOTEBOOK_DEFAULTS["username"],
+                "port": NOTEBOOK_DEFAULTS["port"],
             }
         },
         runner_factory=FailingConnectRunner,
@@ -332,6 +338,7 @@ def test_resume_uses_canonical_connection_profile_defaults():
     profile = default_connection_profile()
     submitted_profile = connection_profile_from_submission_spec({
         "cluster": {
+            "ssh_config_host": NOTEBOOK_DEFAULTS["ssh_config_host"],
             "remote_host": NOTEBOOK_DEFAULTS["remote_host"],
             "username": NOTEBOOK_DEFAULTS["username"],
             "port": NOTEBOOK_DEFAULTS["port"],

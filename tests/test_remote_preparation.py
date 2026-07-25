@@ -34,7 +34,6 @@ verified_output = "\n".join(
         "PREP_OK=submission.json uploaded",
         "PREP_OK=Execution module uploaded",
         "PREP_OK=run_job.py uploaded",
-        "PREP_OK=POTCAR links prepared",
         "PREP_OK=Submission script written",
         "PREP_OK=Ready for submission",
         "DRY RUN",
@@ -90,6 +89,7 @@ assert success["ready_for_submission"] is True
 assert success["job_record"]["job_id"] is None
 assert success["job_record"]["status"] == "dry_run"
 assert [step["label"] for step in success["steps"]][-1] == "Ready for submission"
+assert "POTCAR links prepared" not in [step["label"] for step in success["steps"]]
 assert all(step["state"] == "complete" for step in success["steps"])
 
 

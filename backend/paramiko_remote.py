@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 import posixpath
 import re
 import shlex
+import subprocess
 import time
+from pathlib import Path
 from typing import Any, Mapping
 
 from backend.config import MODULES
@@ -30,6 +33,211 @@ from backend.remote import (
 from backend.submission import build_submission_command, parse_sbatch_job_id
 
 
+def _paramiko_connect_kwargs(profile: RemoteConnectionProfile, paramiko_module) -> dict:
+    kwargs, _diagnostics = _paramiko_connect_details(profile, paramiko_module)
+    return kwargs
+
+
+def _paramiko_connect_details(profile: RemoteConnectionProfile, paramiko_module) -> tuple[dict, dict]:
+    ssh_config_host = profile.ssh_config_host or profile.host
+    ssh_options, lookup_diagnostics = _resolve_ssh_config(ssh_config_host, paramiko_module)
+
+    hostname = ssh_options.get("hostname") or profile.host
+    port = int(ssh_options.get("port") or profile.port)
+    username = ssh_options.get("user") or profile.username
+    key_filename = _identity_files_from_ssh_config(ssh_options) or profile.key_file
+    proxy_command = ssh_options.get("proxycommand")
+
+    kwargs = {
+        "hostname": hostname,
+        "port": port,
+        "username": username,
+        "key_filename": key_filename,
+        "allow_agent": True,
+        "look_for_keys": True,
+        "timeout": 20,
+    }
+
+    if proxy_command and str(proxy_command).lower() != "none":
+        kwargs["sock"] = paramiko_module.ProxyCommand(proxy_command)
+
+    diagnostics = {
+        "ssh_config_host": ssh_config_host,
+        "hostname": hostname,
+        "username": username,
+        "port": port,
+        "key_filename": key_filename,
+        "key_file_exists": _key_file_exists(key_filename),
+        "proxy_command": proxy_command if proxy_command and str(proxy_command).lower() != "none" else None,
+        "ssh_config_lookup": lookup_diagnostics,
+    }
+
+    return kwargs, diagnostics
+
+
+def _resolve_ssh_config(host: str, paramiko_module) -> tuple[dict, dict]:
+    diagnostics = {
+        "loaded_config_files": _existing_ssh_config_paths(),
+        "host_entry_found": _host_entry_found_in_loaded_configs(host),
+        "source": None,
+        "ssh_g_returncode": None,
+        "ssh_g_stderr": "",
+    }
+
+    ssh_g_options, ssh_g_metadata = _lookup_ssh_config_with_openssh(host)
+    diagnostics.update(ssh_g_metadata)
+    if ssh_g_options:
+        diagnostics["source"] = "openssh ssh -G"
+        return ssh_g_options, diagnostics
+
+    paramiko_options = _lookup_ssh_config_with_paramiko(host, paramiko_module)
+    diagnostics["source"] = "paramiko SSHConfig" if paramiko_options else "fallback profile"
+    return paramiko_options, diagnostics
+
+
+def _lookup_ssh_config_with_openssh(host: str) -> tuple[dict, dict]:
+    try:
+        result = subprocess.run(
+            ["ssh", "-G", host],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except Exception as exc:
+        return {}, {
+            "ssh_g_returncode": None,
+            "ssh_g_stderr": str(exc),
+        }
+
+    metadata = {
+        "ssh_g_returncode": result.returncode,
+        "ssh_g_stderr": (result.stderr or "").strip(),
+    }
+    if result.returncode != 0:
+        return {}, metadata
+
+    return _parse_openssh_config_output(result.stdout), metadata
+
+
+def _parse_openssh_config_output(output: str) -> dict:
+    options: dict[str, Any] = {}
+    identity_files = []
+
+    for raw_line in (output or "").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        key, separator, value = line.partition(" ")
+        if not separator:
+            continue
+
+        key = key.lower()
+        value = value.strip()
+        if key == "identityfile":
+            if value and value.lower() != "none":
+                identity_files.append(value)
+        elif key in {"hostname", "user", "port", "proxycommand"}:
+            options[key] = value
+
+    if identity_files:
+        options["identityfile"] = identity_files
+
+    return options
+
+
+def _lookup_ssh_config_with_paramiko(host: str, paramiko_module) -> dict:
+    ssh_config = paramiko_module.SSHConfig()
+    parsed = False
+    for config_path in _ssh_config_paths():
+        if not config_path.exists():
+            continue
+        with config_path.open("r", encoding="utf-8") as handle:
+            ssh_config.parse(handle)
+        parsed = True
+
+    if not parsed:
+        return {}
+
+    return dict(ssh_config.lookup(host))
+
+
+def _existing_ssh_config_paths() -> list[str]:
+    return [
+        str(path)
+        for path in _ssh_config_paths()
+        if path.exists()
+    ]
+
+
+def _host_entry_found_in_loaded_configs(host: str) -> bool:
+    host_pattern = re.compile(r"^\s*Host\s+(.+?)\s*$", re.IGNORECASE)
+    for config_path in _ssh_config_paths():
+        if not config_path.exists():
+            continue
+
+        try:
+            lines = config_path.read_text(encoding="utf-8").splitlines()
+        except Exception:
+            continue
+
+        for line in lines:
+            match = host_pattern.match(line)
+            if not match:
+                continue
+            patterns = match.group(1).split()
+            if any(pattern == host for pattern in patterns):
+                return True
+
+    return False
+
+
+def _ssh_config_paths() -> tuple[Path, ...]:
+    return (
+        Path.home() / ".ssh" / "config",
+        Path("/etc/ssh/ssh_config"),
+    )
+
+
+def _identity_files_from_ssh_config(ssh_options: Mapping[str, Any]) -> str | list[str] | None:
+    identity_file = ssh_options.get("identityfile")
+    if not identity_file:
+        return None
+
+    if isinstance(identity_file, str):
+        identity_files = [identity_file]
+    else:
+        identity_files = list(identity_file)
+
+    expanded = [
+        os.path.abspath(os.path.expanduser(str(path)))
+        for path in identity_files
+        if str(path).strip() and str(path).strip().lower() != "none"
+    ]
+    if not expanded:
+        return None
+    if len(expanded) == 1:
+        return expanded[0]
+    return expanded
+
+
+def _key_file_exists(key_filename) -> bool | list[dict[str, bool]]:
+    if not key_filename:
+        return False
+
+    if isinstance(key_filename, str):
+        return os.path.exists(os.path.expanduser(key_filename))
+
+    return [
+        {
+            "path": str(path),
+            "exists": os.path.exists(os.path.expanduser(str(path))),
+        }
+        for path in key_filename
+    ]
+
+
 class ParamikoRemoteRunner(RemoteRunner):
     """
     Paramiko-backed implementation of the notebook's remote submission path.
@@ -46,15 +254,9 @@ class ParamikoRemoteRunner(RemoteRunner):
 
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        client.connect(
-            hostname=profile.host,
-            port=profile.port,
-            username=profile.username,
-            key_filename=profile.key_file,
-            allow_agent=True,
-            look_for_keys=True,
-            timeout=20,
-        )
+        connect_kwargs, diagnostics = _paramiko_connect_details(profile, paramiko)
+        print("PARAMIKO CONNECT DIAGNOSTICS", json.dumps(diagnostics, indent=2), flush=True)
+        client.connect(**connect_kwargs)
 
         transport = client.get_transport()
         if not transport or not transport.is_active():
@@ -341,9 +543,16 @@ class ParamikoRemoteRunner(RemoteRunner):
         )
         result = self.run(command, check=False)
         if not result.ok:
+            _print_sbatch_result(result.stdout or "", result.stderr or "", None)
             raise RemoteExecutionError(result)
 
-        job_id = parse_sbatch_job_id(result.stdout)
+        try:
+            job_id = parse_sbatch_job_id(result.stdout)
+        except Exception:
+            _print_sbatch_result(result.stdout or "", result.stderr or "", None)
+            raise
+
+        _print_sbatch_result(result.stdout or "", result.stderr or "", job_id)
         return BatchSubmissionResult(job_id=job_id, raw_output=result.stdout, command=command)
 
     def submit(self, submission_spec: dict, dry_run: bool = False) -> JobRecord:
@@ -353,13 +562,21 @@ class ParamikoRemoteRunner(RemoteRunner):
         command = build_submission_command(submission_spec, dry_run=dry_run)
         result = self.run(command, check=False, modules=False, export_env=False)
         if not result.ok:
+            if not dry_run:
+                _print_sbatch_result(result.stdout or "", result.stderr or "", None)
             raise RemoteExecutionError(result)
 
         output = result.stdout or ""
         if dry_run:
             return self._job_record(submission_spec, None, output, status="dry_run")
 
-        job_id = parse_sbatch_job_id(output)
+        try:
+            job_id = parse_sbatch_job_id(output)
+        except Exception:
+            _print_sbatch_result(output, result.stderr or "", None)
+            raise
+
+        _print_sbatch_result(output, result.stderr or "", job_id)
         record = self._job_record(submission_spec, job_id, output)
         self._write_remote_job_record(record)
         return record
@@ -526,6 +743,12 @@ class ParamikoRemoteRunner(RemoteRunner):
         except Exception:
             # The notebook treated remote state persistence as best-effort.
             return
+
+
+def _print_sbatch_result(stdout: str, stderr: str, job_id: str | None) -> None:
+    print("SBATCH STDOUT:", stdout, flush=True)
+    print("SBATCH STDERR:", stderr, flush=True)
+    print("JOB ID:", job_id, flush=True)
 
 
 def _now_str() -> str:

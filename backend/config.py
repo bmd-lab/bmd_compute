@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 
-DEFAULT_REMOTE_HOST = "powerslurm-login.tau.ac.il"
-DEFAULT_USERNAME = "leeburton"
+DEFAULT_SSH_CONFIG_HOST = "powerslurm-bmdguest"
+DEFAULT_REMOTE_HOST = DEFAULT_SSH_CONFIG_HOST
+DEFAULT_USERNAME = "bmdguest"
+DEFAULT_SSH_KEY_FILE = None
 DEFAULT_SSH_PORT = 22
 DEFAULT_KEEPALIVE_S = 30
 
@@ -13,11 +15,14 @@ DEFAULT_MONGO_LOCAL_PORT = 27017
 
 DEFAULT_VASP_CMD = "mpirun -n $SLURM_NTASKS vasp_std"
 DEFAULT_VASP_LAUNCHER = "srun --mpi=pmi2 -n $SLURM_NTASKS vasp_std"
-DEFAULT_JOBFLOW_CONFIG_FILE = "/bmd-db/lee/jobflow_minimal.yaml"
-DEFAULT_POTCAR_DIR = "/bmd-db/lee/potcars"
-DEFAULT_REMOTE_ENV_DIR = "/bmd/lee/envs/atomate2_remote"
-DEFAULT_FLOWS_DIR = "/bmd-db/lee/flows"
-DEFAULT_LOGS_DIR = "/bmd-db/lee/logs"
+DEFAULT_REMOTE_WORKSPACE_ROOT = "/bmd-db/guest"
+DEFAULT_JOBFLOW_CONFIG_FILE = f"{DEFAULT_REMOTE_WORKSPACE_ROOT}/jobflow_minimal.yaml"
+DEFAULT_SHARED_POTCAR_ROOT = "/bmd-db/potcars"
+DEFAULT_POTCAR_DIR = DEFAULT_SHARED_POTCAR_ROOT
+DEFAULT_REMOTE_PYTHON = "/bmd/bmdguest/envs/atomate2_remote/bin/python"
+DEFAULT_REMOTE_ENV_DIR = DEFAULT_REMOTE_PYTHON.removesuffix("/bin/python")
+DEFAULT_FLOWS_DIR = f"{DEFAULT_REMOTE_WORKSPACE_ROOT}/flows"
+DEFAULT_LOGS_DIR = f"{DEFAULT_REMOTE_WORKSPACE_ROOT}/logs"
 
 DEFAULT_PARTITION = "leeburton-pool"
 DEFAULT_ACCOUNT = "power-leeburton-users_v2"
@@ -66,17 +71,21 @@ SUBMISSION_ENV_KEYS = (
 )
 
 NOTEBOOK_DEFAULTS = {
+    "ssh_config_host": DEFAULT_SSH_CONFIG_HOST,
     "remote_host": DEFAULT_REMOTE_HOST,
     "username": DEFAULT_USERNAME,
+    "key_file": DEFAULT_SSH_KEY_FILE,
     "port": DEFAULT_SSH_PORT,
     "keepalive_s": DEFAULT_KEEPALIVE_S,
     "open_mongo_tunnel": DEFAULT_OPEN_MONGO_TUNNEL,
     "mongo_remote_host": DEFAULT_MONGO_REMOTE_HOST,
     "mongo_remote_port": DEFAULT_MONGO_REMOTE_PORT,
     "mongo_local_port": DEFAULT_MONGO_LOCAL_PORT,
+    "remote_workspace_root": DEFAULT_REMOTE_WORKSPACE_ROOT,
     "VASP_CMD": DEFAULT_VASP_CMD,
     "JOBFLOW_CONFIG_FILE": DEFAULT_JOBFLOW_CONFIG_FILE,
     "PMG_VASP_PSP_DIR": DEFAULT_POTCAR_DIR,
+    "remote_python": DEFAULT_REMOTE_PYTHON,
     "remote_env_dir": DEFAULT_REMOTE_ENV_DIR,
     "flows_dir": DEFAULT_FLOWS_DIR,
     "logs_dir": DEFAULT_LOGS_DIR,
@@ -99,7 +108,12 @@ __all__ = [
     "DEFAULT_POTCAR_FUNCTIONAL",
     "DEFAULT_REMOTE_ENV_DIR",
     "DEFAULT_REMOTE_HOST",
+    "DEFAULT_REMOTE_PYTHON",
+    "DEFAULT_REMOTE_WORKSPACE_ROOT",
     "DEFAULT_RESOURCES",
+    "DEFAULT_SHARED_POTCAR_ROOT",
+    "DEFAULT_SSH_CONFIG_HOST",
+    "DEFAULT_SSH_KEY_FILE",
     "DEFAULT_SSH_PORT",
     "DEFAULT_USERNAME",
     "DEFAULT_VASP_CMD",

@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import json
 
-from backend.config import DEFAULT_LOGS_DIR, DEFAULT_REMOTE_HOST, DEFAULT_USERNAME
+from backend.config import (
+    DEFAULT_FLOWS_DIR,
+    DEFAULT_LOGS_DIR,
+    DEFAULT_REMOTE_HOST,
+    DEFAULT_USERNAME,
+)
 from backend.results import (
     load_results_for_completed_job,
     monitoring_indicates_success,
@@ -16,13 +21,14 @@ monitoring_success = {
     "slurm_state": "COMPLETED",
     "summary": "SUCCESS",
     "exit_code": "0:0",
-    "workdir": "/home/leeburton",
+    "workdir": "/home/bmdguest",
 }
 
-RUN_DIR = "/bmd-db/lee/flows/TiO2-static-20260629-120000"
+RUN_DIR = f"{DEFAULT_FLOWS_DIR}/TiO2-static-20260629-120000"
 
 submission_spec = {
     "cluster": {
+        "ssh_config_host": DEFAULT_REMOTE_HOST,
         "remote_host": DEFAULT_REMOTE_HOST,
         "username": DEFAULT_USERNAME,
         "port": 22,

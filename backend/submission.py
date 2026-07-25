@@ -12,7 +12,9 @@ from backend.config import (
     DEFAULT_ACCOUNT,
     DEFAULT_PARTITION,
     DEFAULT_POTCAR_FUNCTIONAL,
+    DEFAULT_REMOTE_PYTHON,
     DEFAULT_RESOURCES,
+    DEFAULT_SHARED_POTCAR_ROOT,
     DEFAULT_VASP_LAUNCHER,
     MODULES,
     NOTEBOOK_DEFAULTS,
@@ -113,6 +115,16 @@ def _first_nonempty(*values):
         elif value is not None:
             return value
     return None
+
+
+def _remote_path_equal(left: str | None, right: str | None) -> bool:
+    return posixpath.normpath(str(left or "").rstrip("/")) == posixpath.normpath(
+        str(right or "").rstrip("/")
+    )
+
+
+def _uses_shared_potcar_repository(potcars_dir: str | None) -> bool:
+    return _remote_path_equal(potcars_dir, DEFAULT_SHARED_POTCAR_ROOT)
 
 
 def default_resources_for_workflow(workflow: str | None = None) -> dict:
@@ -221,10 +233,10 @@ def _module_lines(submission_spec: dict) -> list[str]:
     lines = []
 
     if modules.get("purge_first"):
-        lines.append("module purge >/dev/null 2>&1 || true")
+        lines.append("module purge")
 
     for module_name in modules.get("load", []):
-        lines.append(f"module load {shlex.quote(str(module_name))} >/dev/null 2>&1 || true")
+        lines.append(f"module load {shlex.quote(str(module_name))}")
 
     return lines
 
@@ -386,7 +398,7 @@ echo "[sbatch] VASP_CMD=$VASP_CMD"
 echo "[sbatch] SLURM_NTASKS=${{SLURM_NTASKS:-<unset>}}"
 which srun 2>/dev/null || true; srun --version 2>/dev/null | head -n1 || true
 which {shlex.quote(runner["python"])} || true
-python --version || true
+{shlex.quote(runner["python"])} --version
 test -f {shlex.quote(run_job_path)} || {{ echo "[sbatch] Missing run_job.py at {run_job_path}"; exit 1; }}
 test -f {shlex.quote(submission_json_path)} || {{ echo "[sbatch] Missing submission.json at {submission_json_path}"; exit 1; }}
 {backend_module_checks}
@@ -413,8 +425,15 @@ def build_sbatch_script(submission_spec: dict) -> str:
 {header}
 set -e -o pipefail
 
-# -- quiet module loads (compute node) --
+# -- module loads (compute node, verbose diagnostics enabled) --
+if ! type module >/dev/null 2>&1; then
+    source /etc/bashrc
+fi
 {os.linesep.join(module_lines)}
+echo "[sbatch debug] PATH=$PATH"
+module list
+which vasp_std
+which mpirun
 
 # -- reasonable stack size for VASP --
 ulimit -s 81920 || true
@@ -501,6 +520,8 @@ test -f {shlex.quote(run_job_path)}
 cat > {shlex.quote(paths['remote_script'])} <<'SBATCH'
 {sbatch_script}
 SBATCH
+test -f {shlex.quote(paths['remote_script'])}
+echo "SBATCH_SCRIPT_PATH={paths['remote_script']}"
 """
 
     return command + f"""\
@@ -537,7 +558,12 @@ def _build_verified_dry_run_command(
     link_commands = "\n".join(
         _verified_symlink_command(potcar["target"], link, "POTCAR links prepared")
         for link in potcar.get("symlink_targets", [])
-    ) or "true"
+    )
+    potcar_prep_block = (
+        f"{link_commands}\nprep_ok \"POTCAR links prepared\""
+        if link_commands
+        else ""
+    )
 
     return f"""set -e -o pipefail
 prep_fail() {{
@@ -585,8 +611,7 @@ PY
 }} || prep_fail "run_job.py uploaded" "Unable to write run_job.py: {run_job_path}"
 verify_file "run_job.py uploaded" {shlex.quote(run_job_path)}
 prep_ok "run_job.py uploaded"
-{link_commands}
-prep_ok "POTCAR links prepared"
+{potcar_prep_block}
 {{
 cat > {shlex.quote(paths['remote_script'])} <<'SBATCH'
 {sbatch_script}
@@ -687,6 +712,7 @@ def create_submission_spec(
     logs_dir: str | None = None,
     potcars_dir: str | None = None,
     remote_env_dir: str | None = None,
+    remote_python: str | None = None,
     partition: str | None = None,
     account: str | None = None,
     vasp_cmd: str | None = None,
@@ -716,6 +742,9 @@ def create_submission_spec(
     resolved_logs_dir = logs_dir or NOTEBOOK_DEFAULTS["logs_dir"]
     resolved_potcars_dir = potcars_dir or NOTEBOOK_DEFAULTS["PMG_VASP_PSP_DIR"]
     resolved_remote_env_dir = remote_env_dir or NOTEBOOK_DEFAULTS["remote_env_dir"]
+    resolved_remote_python = remote_python or NOTEBOOK_DEFAULTS.get("remote_python") or DEFAULT_REMOTE_PYTHON
+    if remote_env_dir is not None and remote_python is None:
+        resolved_remote_python = posixpath.join(_env_bin(resolved_remote_env_dir), "python")
 
     resolved_nodes = _coerce_int(nodes, resource_defaults["nodes"])
     resolved_ntasks = _coerce_int(ntasks, resource_defaults["ntasks"])
@@ -749,10 +778,25 @@ def create_submission_spec(
     potcar_functional = flow_spec_copy.get("potcar_functional", DEFAULT_POTCAR_FUNCTIONAL)
     potcar_species = summarize_potcar_species(structure, potcar_functional)
     potcar_target = posixpath.join(resolved_potcars_dir, potcar_functional)
-    potcar_links = [
-        posixpath.join(resolved_potcars_dir, link_name)
-        for link_name in POTCAR_LINK_MAP.get(potcar_functional, [])
+    use_shared_potcars = _uses_shared_potcar_repository(resolved_potcars_dir)
+    if use_shared_potcars:
+        potcar_links = []
+    else:
+        potcar_links = [
+            posixpath.join(resolved_potcars_dir, link_name)
+            for link_name in POTCAR_LINK_MAP.get(potcar_functional, [])
+        ]
+    directories_to_prepare = [
+        resolved_flows_dir,
+        resolved_logs_dir,
     ]
+    if potcar_links:
+        directories_to_prepare.extend(
+            [
+                resolved_potcars_dir,
+                potcar_target,
+            ]
+        )
 
     run_dir = posixpath.join(resolved_flows_dir, run_name)
     log_out = posixpath.join(resolved_logs_dir, f"{run_name}.out")
@@ -777,16 +821,13 @@ def create_submission_spec(
             "log_err": log_err,
             "slurm_out": slurm_out,
             "slurm_err": slurm_err,
-            "directories_to_prepare": [
-                resolved_flows_dir,
-                resolved_logs_dir,
-                resolved_potcars_dir,
-                potcar_target,
-            ],
+            "directories_to_prepare": directories_to_prepare,
         },
         "cluster": {
+            "ssh_config_host": NOTEBOOK_DEFAULTS["ssh_config_host"],
             "remote_host": NOTEBOOK_DEFAULTS["remote_host"],
             "username": resolved_username,
+            "key_file": NOTEBOOK_DEFAULTS["key_file"],
             "port": NOTEBOOK_DEFAULTS["port"],
             "partition": resolved_partition,
             "account": resolved_account,
@@ -811,7 +852,7 @@ def create_submission_spec(
         },
         "runner": {
             "working_directory": run_dir,
-            "python": posixpath.join(_env_bin(resolved_remote_env_dir), "python"),
+            "python": resolved_remote_python,
             "script_name": "run_job.py",
             "submission_spec_name": SUBMISSION_SPEC_FILENAME,
             "backend_package_dir": REMOTE_BACKEND_PACKAGE_DIR,
@@ -825,6 +866,7 @@ def create_submission_spec(
             "species": potcar_species["species"],
             "symbols": potcar_species["symbols"],
             "symbol_source": potcar_species["source"],
+            "repository": "shared" if use_shared_potcars else "private",
             "target": potcar_target,
             "symlink_targets": potcar_links,
         },

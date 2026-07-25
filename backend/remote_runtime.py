@@ -23,20 +23,20 @@ def connection_profile_from_submission_spec(submission_spec: dict) -> RemoteConn
 
 
 def default_connection_profile() -> RemoteConnectionProfile:
-    return connection_profile_from_cluster({
-        "remote_host": NOTEBOOK_DEFAULTS["remote_host"],
-        "username": NOTEBOOK_DEFAULTS["username"],
-        "port": NOTEBOOK_DEFAULTS["port"],
-    })
+    return connection_profile_from_cluster(NOTEBOOK_DEFAULTS)
 
 
 def connection_profile_from_cluster(cluster: dict) -> RemoteConnectionProfile:
+    ssh_config_host = cluster.get("ssh_config_host") or NOTEBOOK_DEFAULTS["ssh_config_host"]
+    host = cluster.get("remote_host") or ssh_config_host
+
     return RemoteConnectionProfile(
-        host=cluster["remote_host"],
-        username=cluster["username"],
+        host=host,
+        username=cluster.get("username"),
         port=int(cluster.get("port", NOTEBOOK_DEFAULTS["port"])),
-        keepalive_s=NOTEBOOK_DEFAULTS["keepalive_s"],
+        keepalive_s=cluster.get("keepalive_s", NOTEBOOK_DEFAULTS["keepalive_s"]),
         key_file=cluster.get("key_file"),
+        ssh_config_host=ssh_config_host,
     )
 
 

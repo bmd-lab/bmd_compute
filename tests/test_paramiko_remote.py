@@ -5,9 +5,15 @@ from backend.config import (
     DEFAULT_PARTITION,
     DEFAULT_POTCAR_DIR,
     DEFAULT_RESOURCES,
+    POTCAR_LINK_MAP,
 )
 from backend.monitoring import MonitoringStageError
-from backend.paramiko_remote import JobRecord, ParamikoRemoteRunner
+from backend.paramiko_remote import (
+    JobRecord,
+    ParamikoRemoteRunner,
+    _identity_files_from_ssh_config,
+    _parse_openssh_config_output,
+)
 from backend.remote import RemoteCommandResult
 from backend.submission import create_submission_spec, parse_sbatch_job_id
 
@@ -21,6 +27,23 @@ POTCAR_TARGET = f"{DEFAULT_POTCAR_DIR}/PBE_64"
 SUBMISSION_JSON = f"{RUN_DIR}/submission.json"
 BACKEND_DIR = f"{RUN_DIR}/backend"
 RUN_JOB = f"{RUN_DIR}/run_job.py"
+
+
+ssh_g_options = _parse_openssh_config_output(
+    """
+hostname powerslurm-login.tau.ac.il
+user bmdguest
+port 22
+identityfile ~/.ssh/bmd_guest_ed25519
+proxycommand none
+"""
+)
+assert ssh_g_options["hostname"] == "powerslurm-login.tau.ac.il"
+assert ssh_g_options["user"] == "bmdguest"
+assert ssh_g_options["port"] == "22"
+assert _identity_files_from_ssh_config(ssh_g_options).endswith(
+    "/.ssh/bmd_guest_ed25519"
+)
 
 
 class RecordingRunner(ParamikoRemoteRunner):
@@ -87,7 +110,7 @@ assert record.remote_state_path == f"{DEFAULT_LOGS_DIR}/job_123456.json"
 assert runner.commands[0] == "test -f /remote/POSCAR || test -d /remote/POSCAR"
 submit_command = runner.commands[1]
 assert "mkdir -p" in submit_command
-assert f"ln -sfn {POTCAR_TARGET}" in submit_command
+assert f"ln -sfn {POTCAR_TARGET}" not in submit_command
 assert f"cat > {SUBMISSION_JSON} <<'JSON'" in submit_command
 assert f"test -f {SUBMISSION_JSON}" in submit_command
 assert f"mkdir -p {BACKEND_DIR}" in submit_command
@@ -100,6 +123,9 @@ assert f"test -f {BACKEND_DIR}/workflows.py" in submit_command
 assert f"cat > {RUN_JOB} <<'PY'" in submit_command
 assert f"test -f {RUN_JOB}" in submit_command
 assert f"cat > {REMOTE_SCRIPT}" in submit_command
+assert f"test -f {REMOTE_SCRIPT}" in submit_command
+assert f"SBATCH_SCRIPT_PATH={REMOTE_SCRIPT}" in submit_command
+assert f"rm -f {REMOTE_SCRIPT}" not in submit_command
 assert "cat > run_job.py <<'PY'" not in submit_command
 assert "__SPEC_JSON__" not in submit_command
 assert "json.load(handle)" in submit_command
@@ -136,7 +162,7 @@ assert dry_record.raw_output == "DRY RUN\n"
 assert dry_runner.commands[0] == "test -f /remote/POSCAR || test -d /remote/POSCAR"
 dry_command = dry_runner.commands[1]
 assert "mkdir -p" in dry_command
-assert f"ln -sfn {POTCAR_TARGET}" in dry_command
+assert f"ln -sfn {POTCAR_TARGET}" not in dry_command
 assert f"cat > {REMOTE_SCRIPT}" in dry_command
 assert "PREP_FAILED_STAGE=$1" in dry_command
 assert f"verify_dir 'Working directory created' {RUN_DIR}" in dry_command
@@ -154,13 +180,39 @@ assert f"cat > {RUN_JOB} <<'PY'" in dry_command
 assert f"verify_file \"run_job.py uploaded\" {RUN_JOB}" in dry_command
 assert 'prep_ok "run_job.py uploaded"' in dry_command
 assert "__SPEC_JSON__" not in dry_command
-assert f"verify_symlink 'POTCAR links prepared' {POTCAR_TARGET}" in dry_command
+assert f"verify_symlink 'POTCAR links prepared' {POTCAR_TARGET}" not in dry_command
+assert 'prep_ok "POTCAR links prepared"' not in dry_command
 assert f"verify_file \"Submission script written\" {REMOTE_SCRIPT}" in dry_command
 assert 'prep_ok "Ready for submission"' in dry_command
 assert "echo DRY RUN" in dry_command
 assert "Submitting with: sbatch" not in dry_command
 assert "out=$(sbatch" not in dry_command
 assert not dry_runner.remote_writes
+
+private_potcars_dir = "/private/bmd-potcars"
+private_target = f"{private_potcars_dir}/PBE_64"
+private_link = f"{private_potcars_dir}/{POTCAR_LINK_MAP['PBE_64'][0]}"
+private_submission_spec = create_submission_spec(
+    flow_spec,
+    label="TiO2 static",
+    timestamp="20260629-120000",
+    env={},
+    potcars_dir=private_potcars_dir,
+)
+
+private_runner = RecordingRunner()
+private_runner.submit(private_submission_spec)
+private_submit_command = private_runner.commands[1]
+assert f"ln -sfn {private_target}" in private_submit_command
+assert private_link in private_submit_command
+
+private_dry_runner = RecordingRunner()
+private_dry_runner.submit(private_submission_spec, dry_run=True)
+private_dry_command = private_dry_runner.commands[1]
+assert f"ln -sfn {private_target}" in private_dry_command
+assert f"verify_symlink 'POTCAR links prepared' {private_target}" in private_dry_command
+assert private_link in private_dry_command
+assert 'prep_ok "POTCAR links prepared"' in private_dry_command
 
 assert parse_sbatch_job_id("Submitted batch job 42") == "42"
 assert parse_sbatch_job_id("SBATCH_RAW_OUT=77") == "77"
