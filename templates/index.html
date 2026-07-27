@@ -314,30 +314,60 @@ ul {
 }
 
 .calculation-layout {
-    display: grid;
+    align-items: stretch;
+    display: flex;
+    flex-direction: column;
     gap: 18px;
-    grid-template-columns: 1fr 1fr;
 }
 
 .calculation-actions {
-    align-self: end;
+    align-self: flex-start;
+}
+
+.calculation-actions button {
+    margin-top: 0;
+    min-width: 180px;
+    width: auto;
+}
+
+.settings-panel {
+    align-self: flex-start;
+    max-width: 100%;
+    min-width: min(360px, 100%);
 }
 
 .option-list {
-    display: grid;
-    gap: 10px;
-    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 14px;
 }
 
-.option-list label {
+.modifier-option {
     align-items: center;
     color: var(--soft);
     display: flex;
-    gap: 9px;
+    font-size: 14px;
+    gap: 10px;
+    justify-content: flex-start;
+    line-height: 1.3;
+    margin: 0;
 }
 
-.option-list input:disabled + span {
+.modifier-option.unavailable {
     color: var(--muted);
+    cursor: not-allowed;
+}
+
+.option-list input[type="checkbox"] {
+    flex: 0 0 auto;
+    margin: 0;
+    padding: 0;
+    width: auto;
+}
+
+.option-list input[type="checkbox"]:disabled {
+    cursor: not-allowed;
 }
 
 .callout {
@@ -798,11 +828,13 @@ ul {
                         </div>
                     </div>
 
-                    <details class="disclosure">
+                    <details class="disclosure settings-panel">
                         <summary>Advanced Options</summary>
                         <div class="option-list">
                             {% for option in calculation_options.modifiers %}
-                            <label>
+                            <label
+                                class="modifier-option {% if not option.enabled %}unavailable{% endif %}"
+                                {% if option.tooltip %}title="{{ option.tooltip }}"{% endif %}>
                                 <input
                                     type="checkbox"
                                     name="modifiers"

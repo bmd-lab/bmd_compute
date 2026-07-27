@@ -71,6 +71,7 @@ assert [option["label"] for option in form_options["modifiers"]] == [
     "Gamma-only",
 ]
 assert all(not option["enabled"] for option in form_options["modifiers"])
+assert all(option["tooltip"] == "Coming soon" for option in form_options["modifiers"])
 
 try:
     validate_calculation_spec(CalculationSpec(Purpose.DOS, Theory.PBE))

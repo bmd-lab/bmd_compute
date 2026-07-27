@@ -59,6 +59,8 @@ _MODIFIER_DISPLAY_NAMES = {
     Modifier.IONS_ONLY: "Ions only",
 }
 
+_UNIMPLEMENTED_TOOLTIP = "Coming soon"
+
 _UI_HIDDEN_MODIFIERS = {
     Modifier.IONS_ONLY,
 }
@@ -219,6 +221,11 @@ def calculation_form_options() -> dict:
                 "value": modifier.value,
                 "label": modifier_display_name(modifier),
                 "enabled": modifier in supported_modifiers,
+                "tooltip": (
+                    ""
+                    if modifier in supported_modifiers
+                    else _UNIMPLEMENTED_TOOLTIP
+                ),
             }
             for modifier in _UI_MODIFIER_ORDER
             if modifier not in _UI_HIDDEN_MODIFIERS
