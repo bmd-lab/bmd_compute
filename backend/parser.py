@@ -7,6 +7,30 @@ if TYPE_CHECKING:
     from pymatgen.core import Structure
 
 
+POSCAR_ELEMENT_ERROR = (
+    "Could not determine the chemical elements from the POSCAR."
+)
+POSCAR_ELEMENT_SUGGESTION = (
+    "Please ensure the POSCAR contains a valid element-symbol line "
+    "(e.g. Mg O) immediately before the atom counts."
+)
+INVALID_POSCAR_ERROR = (
+    "The uploaded POSCAR is not valid. Please check that it follows the "
+    "standard VASP POSCAR format."
+)
+
+
+class StructureValidationError(ValueError):
+    """
+    User-correctable structure input error.
+    """
+
+    def __init__(self, message: str, *, suggestion: str | None = None):
+        super().__init__(message)
+        self.message = message
+        self.suggestion = suggestion
+
+
 def parse_structure(text: str, fmt: str = "poscar") -> "Structure":
     """
     Parse a structure from text.
@@ -28,7 +52,103 @@ def parse_structure(text: str, fmt: str = "poscar") -> "Structure":
 
     from pymatgen.core import Structure
 
+    if fmt.lower() == "poscar":
+        try:
+            validate_poscar_element_symbols(text)
+            return Structure.from_str(text, fmt=fmt)
+        except StructureValidationError:
+            raise
+        except Exception as exc:
+            raise StructureValidationError(INVALID_POSCAR_ERROR) from exc
+
     return Structure.from_str(text, fmt=fmt)
+
+
+def validate_poscar_element_symbols(text: str) -> None:
+    """
+    Ensure a POSCAR explicitly contains valid element symbols before counts.
+
+    pymatgen supports VASP 4-style POSCARs without an element line by falling
+    back to inferred placeholder species such as H, He and Li. BMD Compute
+    rejects those inputs because they can silently launch the wrong chemistry.
+    """
+
+    from pymatgen.core.periodic_table import Element
+
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if len(lines) < 7:
+        raise StructureValidationError(
+            POSCAR_ELEMENT_ERROR,
+            suggestion=POSCAR_ELEMENT_SUGGESTION,
+        )
+
+    symbol_lines = []
+    counts_start = None
+
+    for offset, line in enumerate(lines[5:15], start=5):
+        tokens = line.split()
+        if _all_ints(tokens):
+            counts_start = offset
+            break
+
+        symbol_lines.append(tokens)
+
+    if not symbol_lines or counts_start is None:
+        raise StructureValidationError(
+            POSCAR_ELEMENT_ERROR,
+            suggestion=POSCAR_ELEMENT_SUGGESTION,
+        )
+
+    count_lines = lines[counts_start : counts_start + len(symbol_lines)]
+    if len(count_lines) != len(symbol_lines):
+        raise StructureValidationError(
+            POSCAR_ELEMENT_ERROR,
+            suggestion=POSCAR_ELEMENT_SUGGESTION,
+        )
+
+    counts = []
+    for line in count_lines:
+        tokens = line.split()
+        if not _all_ints(tokens):
+            raise StructureValidationError(
+                POSCAR_ELEMENT_ERROR,
+                suggestion=POSCAR_ELEMENT_SUGGESTION,
+            )
+        counts.extend(tokens)
+
+    symbols = [
+        _poscar_symbol_token_to_element(token)
+        for line in symbol_lines
+        for token in line
+    ]
+
+    if len(symbols) != len(counts):
+        raise StructureValidationError(
+            POSCAR_ELEMENT_ERROR,
+            suggestion=POSCAR_ELEMENT_SUGGESTION,
+        )
+
+    if not all(Element.is_valid_symbol(symbol) for symbol in symbols):
+        raise StructureValidationError(
+            POSCAR_ELEMENT_ERROR,
+            suggestion=POSCAR_ELEMENT_SUGGESTION,
+        )
+
+
+def _all_ints(tokens: list[str]) -> bool:
+    if not tokens:
+        return False
+
+    try:
+        for token in tokens:
+            int(token)
+        return True
+    except ValueError:
+        return False
+
+
+def _poscar_symbol_token_to_element(token: str) -> str:
+    return token.split("/")[0].split("_")[0]
 
 
 def structure_from_spec(structure_spec: dict) -> "Structure":
@@ -95,6 +215,11 @@ def structure_from_spec(structure_spec: dict) -> "Structure":
 
 
 __all__ = [
+    "INVALID_POSCAR_ERROR",
+    "POSCAR_ELEMENT_ERROR",
+    "POSCAR_ELEMENT_SUGGESTION",
     "parse_structure",
     "structure_from_spec",
+    "StructureValidationError",
+    "validate_poscar_element_symbols",
 ]

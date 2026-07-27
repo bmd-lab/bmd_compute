@@ -88,7 +88,7 @@ def _blocked_result() -> dict:
         "title": "Submission Blocked",
         "stage": "Submission",
         "reason": "Remote preparation has not completed successfully.",
-        "suggestion": "Run Prepare Remote successfully before submitting the workflow.",
+        "suggestion": "Run Prepare Remote successfully before submitting the calculation.",
         "queue_status": "Not submitted",
     }
 

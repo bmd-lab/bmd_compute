@@ -219,7 +219,7 @@ def monitor_job(
         return _failure_result(
             "Job ID",
             "No SLURM job ID is available for monitoring.",
-            "Submit the workflow successfully before checking queue status.",
+            "Submit the calculation successfully before checking queue status.",
         )
 
     is_resume = submission_spec is None

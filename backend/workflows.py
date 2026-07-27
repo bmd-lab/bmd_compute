@@ -2,6 +2,13 @@ ENCUT_STATIC_PREP_DEFAULT = 520
 ENCUT_RELAX_DEFAULT = 580
 ENCUT_STATIC_FINAL_DEFAULT = 620
 
+from backend.calculations.models import CalculationSpec, Modifier, Purpose
+from backend.calculations.registry import (
+    calculation_spec_from_flow_spec,
+    calculation_spec_from_legacy,
+    validate_calculation_spec,
+)
+
 
 def _is_hse_incar(settings):
     if not isinstance(settings, dict):
@@ -251,19 +258,19 @@ def build_static_flow(
     return Flow([maker.make(structure)], name=label + ("_hse_static" if hse else "_static"))
 
 
-def build_atomate2_flow(
+def build_atomate2_flow_for_spec(
     structure,
-    workflow,
+    spec: CalculationSpec,
     *,
     label="vasp_run",
     incar=None,
     kpoints=None,
     potcar_functional="PBE_64",
 ):
-    workflow_name = (workflow or "static").lower()
+    calculation_spec = validate_calculation_spec(spec)
     user_incar = dict(incar or {})
 
-    if workflow_name == "static":
+    if calculation_spec.purpose is Purpose.STATIC:
         return build_static_flow(
             structure,
             label=label,
@@ -274,20 +281,11 @@ def build_atomate2_flow(
             potcar_functional=potcar_functional,
         )
 
-    if workflow_name == "relax":
+    if calculation_spec.purpose is Purpose.RELAX:
         return build_relax_flow(
             structure,
             label=label,
-            incar=user_incar,
-            kpoints=kpoints,
-            potcar_functional=potcar_functional,
-        )
-
-    if workflow_name == "relax_ions":
-        return build_relax_flow(
-            structure,
-            label=label,
-            isif=2,
+            isif=2 if Modifier.IONS_ONLY in calculation_spec.modifiers else None,
             incar=user_incar,
             kpoints=kpoints,
             potcar_functional=potcar_functional,
@@ -295,7 +293,29 @@ def build_atomate2_flow(
 
     raise ValueError(
         "Only single-step Atomate2 flow construction is migrated. "
-        f"Workflow '{workflow_name}' requires execution or non-Atomate2 logic."
+        f"Purpose '{calculation_spec.purpose.value}' requires execution or non-Atomate2 logic."
+    )
+
+
+def build_atomate2_flow(
+    structure,
+    workflow,
+    *,
+    label="vasp_run",
+    incar=None,
+    kpoints=None,
+    potcar_functional="PBE_64",
+):
+    calculation_spec = calculation_spec_from_legacy(workflow, potcar_functional)
+    from backend.calculations.builder import build_calculation_flow
+
+    return build_calculation_flow(
+        structure=structure,
+        spec=calculation_spec,
+        label=label,
+        incar=incar,
+        kpoints=kpoints,
+        potcar_functional=potcar_functional,
     )
 
 
@@ -308,17 +328,17 @@ def build_atomate2_flow_from_spec(structure, flow_spec: dict, *, run_name: str):
     workflow construction used by the browser preview.
     """
 
-    kwargs = {}
-    if flow_spec.get("potcar_functional") is not None:
-        kwargs["potcar_functional"] = flow_spec.get("potcar_functional")
+    calculation_spec = calculation_spec_from_flow_spec(flow_spec)
+    potcar_functional = flow_spec.get("potcar_functional") or "PBE_64"
+    from backend.calculations.builder import build_calculation_flow
 
-    flow = build_atomate2_flow(
+    flow = build_calculation_flow(
         structure=structure,
-        workflow=flow_spec.get("workflow"),
+        spec=calculation_spec,
         label=run_name,
         incar=flow_spec.get("incar") or flow_spec.get("incar_overrides") or {},
         kpoints=flow_spec.get("kpoints"),
-        **kwargs,
+        potcar_functional=potcar_functional,
     )
 
     if getattr(flow, "name", None) == run_name:
@@ -336,6 +356,7 @@ def build_atomate2_flow_from_spec(structure, flow_spec: dict, *, run_name: str):
 __all__ = [
     "build_atomate2_flow",
     "build_atomate2_flow_from_spec",
+    "build_atomate2_flow_for_spec",
     "build_relax_flow",
     "build_static_flow",
     "incar_relax",

@@ -1,0 +1,55 @@
+# UI and registry metadata for the CalculationSpec architecture.
+# The compatibility builder currently enables only the calculations already
+# migrated from the reference notebook.
+
+purposes:
+  relax:
+    display_name: Geometry Optimisation
+    enabled: true
+    description: Relax atomic positions and, by default, the cell.
+  static:
+    display_name: Static Energy
+    enabled: true
+    description: Single-point total-energy calculation.
+  dos:
+    display_name: DOS
+    enabled: false
+    description: Density of states calculation.
+  band_structure:
+    display_name: Band Structure
+    enabled: false
+    description: Electronic band structure calculation.
+  dielectric:
+    display_name: Dielectric
+    enabled: false
+    description: Dielectric response calculation.
+
+theories:
+  pbe:
+    display_name: PBE
+    enabled: true
+    default_potcar_functional: PBE_64
+  r2scan:
+    display_name: r2SCAN
+    enabled: false
+  hse06:
+    display_name: HSE06
+    enabled: false
+
+modifiers:
+  soc:
+    display_name: SOC
+    enabled: false
+  dft_u:
+    display_name: DFT+U
+    enabled: false
+  spin_polarized:
+    display_name: Spin Polarised
+    enabled: false
+  gamma_only:
+    display_name: Gamma-only
+    enabled: false
+  ions_only:
+    display_name: Ions only
+    enabled: true
+    compatibility_only: true

@@ -29,7 +29,7 @@ DEFAULT_ACCOUNT = "power-leeburton-users_v2"
 
 DEFAULT_RESOURCES = {
     "nodes": 1,
-    "ntasks": 48,
+    "ntasks": 24,
     "mem_gb": 128,
     "walltime": "72:00:00",
 }

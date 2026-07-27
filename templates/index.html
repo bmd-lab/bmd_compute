@@ -313,14 +313,31 @@ ul {
     color: var(--bad);
 }
 
-.workflow-layout {
+.calculation-layout {
     display: grid;
     gap: 18px;
     grid-template-columns: 1fr 1fr;
 }
 
-.workflow-actions {
+.calculation-actions {
     align-self: end;
+}
+
+.option-list {
+    display: grid;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.option-list label {
+    align-items: center;
+    color: var(--soft);
+    display: flex;
+    gap: 9px;
+}
+
+.option-list input:disabled + span {
+    color: var(--muted);
 }
 
 .callout {
@@ -492,7 +509,7 @@ ul {
     .metric-strip,
     .details-grid,
     .form-grid,
-    .workflow-layout,
+    .calculation-layout,
     .submission-grid,
     .button-row {
         grid-template-columns: 1fr;
@@ -530,7 +547,7 @@ ul {
         <h1>BMD Compute</h1>
 
         <div class="subtitle">
-            Atomate2 / VASP workflow submission interface
+            Browser-based VASP calculation interface
         </div>
 
     </div>
@@ -578,7 +595,7 @@ ul {
                     <div class="summary-line">Input format: {{ fmt | upper }}</div>
                 </div>
                 <div class="stage-status">
-                    {% if summary %}<span class="pill ready">Analyzed</span>{% else %}<span class="pill">Pending</span>{% endif %}
+                    {% if structure_error %}<span class="pill failed">Failed</span>{% elif summary %}<span class="pill ready">Analyzed</span>{% else %}<span class="pill">Pending</span>{% endif %}
                 </div>
             </div>
 
@@ -605,6 +622,24 @@ ul {
                 </button>
 
             </form>
+
+            {% if structure_error %}
+            <div class="prep-panel failed">
+                <div class="prep-title">Structure Validation Failed</div>
+                <table class="compact-table failure-table">
+                    <tr>
+                        <td>Reason</td>
+                        <td>{{ structure_error.message }}</td>
+                    </tr>
+                    {% if structure_error.suggestion %}
+                    <tr>
+                        <td>Suggestion</td>
+                        <td>{{ structure_error.suggestion }}</td>
+                    </tr>
+                    {% endif %}
+                </table>
+            </div>
+            {% endif %}
 
         </section>
 
@@ -716,43 +751,72 @@ ul {
                 <div>
                     <div class="stage-title">
                         <span class="stage-number">3</span>
-                        <h2>Workflow</h2>
+                        <h2>Calculation</h2>
                     </div>
                     <div class="summary-line">
-                        {{ selected_workflow | replace("_", " ") | title }} · PBE
+                        {{ selected_calculation.purpose_label }} · {{ selected_calculation.theory_label }}
                     </div>
                 </div>
                 <div class="stage-status">
-                    {% if workflow %}<span class="pill ready">Built</span>{% else %}<span class="pill">Ready to build</span>{% endif %}
+                    {% if calculation %}<span class="pill ready">Built</span>{% else %}<span class="pill">Ready to build</span>{% endif %}
                 </div>
             </div>
 
-            <form action="/build-workflow" method="post">
+            <form action="/build-calculation" method="post">
 
                 <textarea class="hidden-field" name="structure">{{ structure_text }}</textarea>
                 <input type="hidden" name="fmt" value="{{ fmt }}">
 
-                <div class="workflow-layout">
+                <div class="calculation-layout">
                     <div class="form-grid">
                         <div>
-                            <label>Workflow</label>
-                            <select name="workflow">
-                                <option value="static" {% if selected_workflow == "static" %}selected{% endif %}>Static</option>
-                                <option value="relax" {% if selected_workflow == "relax" %}selected{% endif %}>Relaxation</option>
-                                <option value="relax_ions" {% if selected_workflow == "relax_ions" %}selected{% endif %}>Relax Ions</option>
+                            <label>Calculation Type</label>
+                            <select name="purpose">
+                                {% for option in calculation_options.purposes %}
+                                <option
+                                    value="{{ option.value }}"
+                                    {% if selected_calculation.purpose == option.value %}selected{% endif %}
+                                    {% if not option.enabled %}disabled{% endif %}>
+                                    {{ option.label }}
+                                </option>
+                                {% endfor %}
                             </select>
                         </div>
 
                         <div>
-                            <label>Method</label>
-                            <select name="method">
-                                <option value="PBE_64" {% if selected_method == "PBE_64" %}selected{% endif %}>PBE</option>
+                            <label>Level of Theory</label>
+                            <select name="theory">
+                                {% for option in calculation_options.theories %}
+                                <option
+                                    value="{{ option.value }}"
+                                    {% if selected_calculation.theory == option.value %}selected{% endif %}
+                                    {% if not option.enabled %}disabled{% endif %}>
+                                    {{ option.label }}
+                                </option>
+                                {% endfor %}
                             </select>
                         </div>
                     </div>
 
-                    <div class="workflow-actions">
-                        <button type="submit">Build Workflow</button>
+                    <details class="disclosure">
+                        <summary>Advanced Options</summary>
+                        <div class="option-list">
+                            {% for option in calculation_options.modifiers %}
+                            <label>
+                                <input
+                                    type="checkbox"
+                                    name="modifiers"
+                                    value="{{ option.value }}"
+                                    {% if option.value in selected_calculation.modifiers %}checked{% endif %}
+                                    {% if not option.enabled %}disabled{% endif %}>
+                                <span>{{ option.label }}</span>
+                            </label>
+                            {% endfor %}
+                        </div>
+                    </details>
+
+                    <div class="calculation-actions">
+                        <button type="submit">Build Calculation</button>
                     </div>
                 </div>
 
@@ -761,40 +825,40 @@ ul {
         </section>
         {% endif %}
 
-        {% if workflow %}
+        {% if calculation %}
         <section class="stage">
 
             <div class="stage-header">
                 <div>
                     <div class="stage-title">
                         <span class="stage-number">4</span>
-                        <h2>Workflow Summary</h2>
+                        <h2>Calculation Summary</h2>
                     </div>
                     <div class="summary-line">
-                        {{ workflow.flow_name }} · {{ workflow.number_of_jobs }} job{% if workflow.number_of_jobs != 1 %}s{% endif %}
+                        {{ calculation.flow_name }} · {{ calculation.number_of_jobs }} job{% if calculation.number_of_jobs != 1 %}s{% endif %}
                     </div>
                 </div>
                 <div class="stage-status">
-                    {% if workflow.ready_for_submission %}<span class="pill ready">Ready for submission</span>{% else %}<span class="pill">Not ready</span>{% endif %}
+                    {% if calculation.ready_for_submission %}<span class="pill ready">Ready for submission</span>{% else %}<span class="pill">Not ready</span>{% endif %}
                 </div>
             </div>
 
             <div class="details-grid">
                 <div class="callout">
-                    <div class="callout-title">Workflow Type</div>
-                    <div class="callout-value">{{ workflow.workflow_type }}</div>
+                    <div class="callout-title">Calculation Type</div>
+                    <div class="callout-value">{{ calculation.calculation_type }}</div>
                 </div>
                 <div class="callout">
-                    <div class="callout-title">Flow Name</div>
-                    <div class="callout-value mono">{{ workflow.flow_name }}</div>
+                    <div class="callout-title">Calculation Name</div>
+                    <div class="callout-value mono">{{ calculation.flow_name }}</div>
                 </div>
                 <div class="callout">
                     <div class="callout-title">Number of Jobs</div>
-                    <div class="callout-value">{{ workflow.number_of_jobs }}</div>
+                    <div class="callout-value">{{ calculation.number_of_jobs }}</div>
                 </div>
                 <div class="callout">
                     <div class="callout-title">Status</div>
-                    <div class="callout-value">{% if workflow.ready_for_submission %}Ready for submission{% else %}Not ready{% endif %}</div>
+                    <div class="callout-value">{% if calculation.ready_for_submission %}Ready for submission{% else %}Not ready{% endif %}</div>
                 </div>
             </div>
 
@@ -805,7 +869,7 @@ ul {
                         <td>Job Names</td>
                         <td>
                             <ul>
-                                {% for job_name in workflow.job_names %}
+                                {% for job_name in calculation.job_names %}
                                 <li>{{ job_name }}</li>
                                 {% endfor %}
                             </ul>
@@ -1011,8 +1075,11 @@ ul {
                 <form action="/prepare-remote" method="post">
                     <textarea class="hidden-field" name="structure">{{ structure_text }}</textarea>
                     <input type="hidden" name="fmt" value="{{ fmt }}">
-                    <input type="hidden" name="workflow" value="{{ selected_workflow }}">
-                    <input type="hidden" name="method" value="{{ selected_method }}">
+                    <input type="hidden" name="purpose" value="{{ selected_calculation.purpose }}">
+                    <input type="hidden" name="theory" value="{{ selected_calculation.theory }}">
+                    {% for modifier in selected_calculation.modifiers %}
+                    <input type="hidden" name="modifiers" value="{{ modifier }}">
+                    {% endfor %}
                     <input type="hidden" name="created_at" value="{{ submission_spec.created_at }}">
                     <button type="submit">Prepare Remote</button>
                 </form>
@@ -1020,8 +1087,11 @@ ul {
                 <form action="/submit" method="post">
                     <textarea class="hidden-field" name="structure">{{ structure_text }}</textarea>
                     <input type="hidden" name="fmt" value="{{ fmt }}">
-                    <input type="hidden" name="workflow" value="{{ selected_workflow }}">
-                    <input type="hidden" name="method" value="{{ selected_method }}">
+                    <input type="hidden" name="purpose" value="{{ selected_calculation.purpose }}">
+                    <input type="hidden" name="theory" value="{{ selected_calculation.theory }}">
+                    {% for modifier in selected_calculation.modifiers %}
+                    <input type="hidden" name="modifiers" value="{{ modifier }}">
+                    {% endfor %}
                     <input type="hidden" name="created_at" value="{{ submission_spec.created_at }}">
                     <input
                         type="hidden"
@@ -1030,7 +1100,7 @@ ul {
                     <button
                         type="submit"
                         {% if not remote_preparation or remote_preparation.status != 'success' or (submission_result and submission_result.status == 'success') %}disabled{% endif %}>
-                        Submit Workflow
+                        Submit Calculation
                     </button>
                 </form>
             </div>
@@ -1195,8 +1265,11 @@ ul {
             <form action="/monitor" method="post">
                 <textarea class="hidden-field" name="structure">{{ structure_text }}</textarea>
                 <input type="hidden" name="fmt" value="{{ fmt }}">
-                <input type="hidden" name="workflow" value="{{ selected_workflow }}">
-                <input type="hidden" name="method" value="{{ selected_method }}">
+                <input type="hidden" name="purpose" value="{{ selected_calculation.purpose }}">
+                <input type="hidden" name="theory" value="{{ selected_calculation.theory }}">
+                {% for modifier in selected_calculation.modifiers %}
+                <input type="hidden" name="modifiers" value="{{ modifier }}">
+                {% endfor %}
                 <input type="hidden" name="created_at" value="{{ submission_spec.created_at }}">
                 <input type="hidden" name="job_id" value="{{ submission_result.job_id if submission_result else monitoring_result.job_id }}">
                 <input type="hidden" name="submitted_at" value="{{ submission_result.job_record.submitted_at if submission_result else '' }}">

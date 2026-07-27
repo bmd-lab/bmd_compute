@@ -77,6 +77,12 @@ assert spec["potcar"]["repository"] == "shared"
 assert spec["potcar"]["target"] == f"{DEFAULT_POTCAR_DIR}/PBE_64"
 assert spec["potcar"]["symlink_targets"] == []
 assert spec["potcar"]["species"] == []
+assert spec["flow_spec"]["calculation_spec"] == {
+    "purpose": "static",
+    "theory": "pbe",
+    "modifiers": [],
+    "label": None,
+}
 assert spec["preflight"]["requires_remote_structure_check"] is False
 assert spec["submission"]["ready"] is True
 assert spec["submission"]["submitted"] is False
@@ -178,7 +184,17 @@ assert "RelaxMaker" not in execution_module_source
 assert "StaticSetGenerator" not in execution_module_source
 
 backend_module_sources = build_backend_module_sources()
-assert set(backend_module_sources) == {"execution.py", "parser.py", "workflows.py"}
+assert set(backend_module_sources) == {
+    "calculations/__init__.py",
+    "calculations/builder.py",
+    "calculations/models.py",
+    "calculations/registry.py",
+    "execution.py",
+    "parser.py",
+    "workflows.py",
+}
+assert "class CalculationSpec" in backend_module_sources["calculations/models.py"]
+assert "def calculation_spec_from_flow_spec" in backend_module_sources["calculations/registry.py"]
 assert "def structure_from_spec" in backend_module_sources["parser.py"]
 assert "def build_atomate2_flow_from_spec" in backend_module_sources["workflows.py"]
 assert "RelaxMaker" in backend_module_sources["workflows.py"]

@@ -8,6 +8,11 @@ import time
 from copy import deepcopy
 from pathlib import Path
 
+from backend.calculations.models import CalculationSpec
+from backend.calculations.registry import (
+    calculation_spec_from_flow_spec,
+    validate_calculation_spec,
+)
 from backend.config import (
     DEFAULT_ACCOUNT,
     DEFAULT_PARTITION,
@@ -30,6 +35,10 @@ REMOTE_EXECUTION_MODULE_FILENAME = "execution.py"
 REMOTE_BACKEND_INIT_FILENAME = "__init__.py"
 REMOTE_BACKEND_MODULE_FILENAMES = (
     REMOTE_EXECUTION_MODULE_FILENAME,
+    "calculations/__init__.py",
+    "calculations/builder.py",
+    "calculations/models.py",
+    "calculations/registry.py",
     "parser.py",
     "workflows.py",
 )
@@ -133,6 +142,13 @@ def default_resources_for_workflow(workflow: str | None = None) -> dict:
     resources.update(WORKFLOW_RESOURCE_OVERRIDES.get(workflow_name, {}))
 
     return resources
+
+
+def default_resources_for_calculation_spec(spec: CalculationSpec | None = None) -> dict:
+    if spec is not None:
+        validate_calculation_spec(spec)
+
+    return dict(DEFAULT_RESOURCES)
 
 
 def _species_name(species) -> str:
@@ -635,6 +651,9 @@ def _backend_module_write_commands(
     for filename in REMOTE_BACKEND_MODULE_FILENAMES:
         path = module_paths[filename]
         source = module_sources[filename]
+        parent = posixpath.dirname(path)
+        if parent:
+            lines.append(f"mkdir -p {shlex.quote(parent)}")
         lines.append(
             f"cat > {shlex.quote(path)} <<'PY'\n"
             f"{source}\n"
@@ -730,8 +749,9 @@ def create_submission_spec(
 
     env_values = env if env is not None else os.environ
     flow_spec_copy = deepcopy(flow_spec)
-    workflow_name = (flow_spec_copy.get("workflow") or "static").lower()
-    resource_defaults = default_resources_for_workflow(workflow_name)
+    calculation_spec = calculation_spec_from_flow_spec(flow_spec_copy)
+    flow_spec_copy["calculation_spec"] = calculation_spec.to_dict()
+    resource_defaults = default_resources_for_calculation_spec(calculation_spec)
 
     sanitized_label = sanitize_label(label)
     run_timestamp = timestamp or time.strftime("%Y%m%d-%H%M%S")
@@ -901,6 +921,7 @@ __all__ = [
     "build_run_job_script",
     "build_submission_command",
     "create_submission_spec",
+    "default_resources_for_calculation_spec",
     "default_resources_for_workflow",
     "parse_sbatch_job_id",
     "sanitize_label",
