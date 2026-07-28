@@ -292,6 +292,64 @@ ul {
     white-space: pre-wrap;
 }
 
+.input-tabs {
+    background: #1b1b1b;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.input-tabs > input[type="radio"] {
+    opacity: 0;
+    position: absolute;
+    width: auto;
+}
+
+.tab-labels {
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    gap: 0;
+}
+
+.tab-labels label {
+    border-right: 1px solid var(--line);
+    color: var(--soft);
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 700;
+    margin: 0;
+    padding: 12px 16px;
+}
+
+.tab-panel {
+    display: none;
+}
+
+#input-tab-incar:checked ~ .tab-labels label[for="input-tab-incar"],
+#input-tab-kpoints:checked ~ .tab-labels label[for="input-tab-kpoints"],
+#input-tab-poscar:checked ~ .tab-labels label[for="input-tab-poscar"] {
+    background: #242424;
+    color: var(--accent-2);
+}
+
+#input-tab-incar:checked ~ .tab-panel-incar,
+#input-tab-kpoints:checked ~ .tab-panel-kpoints,
+#input-tab-poscar:checked ~ .tab-panel-poscar {
+    display: block;
+}
+
+.input-preview {
+    background: #121212;
+    color: var(--text);
+    font-family: Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.45;
+    margin: 0;
+    overflow-x: auto;
+    padding: 16px;
+    white-space: pre;
+}
+
 .pill {
     border: 1px solid var(--line-strong);
     border-radius: 999px;
@@ -328,6 +386,10 @@ ul {
     margin-top: 0;
     min-width: 180px;
     width: auto;
+}
+
+.calculation-layout.is-updating {
+    opacity: 0.72;
 }
 
 .settings-panel {
@@ -393,7 +455,7 @@ ul {
 .submission-grid {
     display: grid;
     gap: 12px;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
     margin: 14px 0 18px;
 }
 
@@ -781,10 +843,14 @@ ul {
                 <div>
                     <div class="stage-title">
                         <span class="stage-number">3</span>
-                        <h2>Calculation</h2>
+                        <h2>{% if calculation %}Scientific Summary{% else %}Calculation{% endif %}</h2>
                     </div>
                     <div class="summary-line">
+                        {% if calculation %}
+                        Review or update the selected calculation.
+                        {% else %}
                         {{ selected_calculation.purpose_label }} · {{ selected_calculation.theory_label }}
+                        {% endif %}
                     </div>
                 </div>
                 <div class="stage-status">
@@ -792,7 +858,11 @@ ul {
                 </div>
             </div>
 
-            <form action="/build-calculation" method="post">
+            <form
+                id="calculation-review-form"
+                action="/build-calculation"
+                method="post"
+                data-auto-rebuild="{% if calculation %}true{% else %}false{% endif %}">
 
                 <textarea class="hidden-field" name="structure">{{ structure_text }}</textarea>
                 <input type="hidden" name="fmt" value="{{ fmt }}">
@@ -848,7 +918,9 @@ ul {
                     </details>
 
                     <div class="calculation-actions">
-                        <button type="submit">Build Calculation</button>
+                        <button type="submit" data-build-calculation-button>
+                            {% if calculation %}Update Calculation{% else %}Build Calculation{% endif %}
+                        </button>
                     </div>
                 </div>
 
@@ -857,58 +929,47 @@ ul {
         </section>
         {% endif %}
 
-        {% if calculation %}
+        {% if generated_inputs %}
         <section class="stage">
 
             <div class="stage-header">
                 <div>
                     <div class="stage-title">
                         <span class="stage-number">4</span>
-                        <h2>Calculation Summary</h2>
+                        <h2>Generated Inputs</h2>
                     </div>
                     <div class="summary-line">
-                        {{ calculation.flow_name }} · {{ calculation.number_of_jobs }} job{% if calculation.number_of_jobs != 1 %}s{% endif %}
+                        Local preview generated from the selected calculation.
                     </div>
                 </div>
                 <div class="stage-status">
-                    {% if calculation.ready_for_submission %}<span class="pill ready">Ready for submission</span>{% else %}<span class="pill">Not ready</span>{% endif %}
+                    <span class="pill ready">Generated</span>
                 </div>
             </div>
 
-            <div class="details-grid">
-                <div class="callout">
-                    <div class="callout-title">Calculation Type</div>
-                    <div class="callout-value">{{ calculation.calculation_type }}</div>
+            <div class="input-tabs">
+                <input type="radio" id="input-tab-incar" name="generated-input-tab" checked>
+                <input type="radio" id="input-tab-kpoints" name="generated-input-tab">
+                <input type="radio" id="input-tab-poscar" name="generated-input-tab">
+
+                <div class="tab-labels">
+                    <label for="input-tab-incar">INCAR</label>
+                    <label for="input-tab-kpoints">KPOINTS</label>
+                    <label for="input-tab-poscar">POSCAR</label>
                 </div>
-                <div class="callout">
-                    <div class="callout-title">Calculation Name</div>
-                    <div class="callout-value mono">{{ calculation.flow_name }}</div>
+
+                <div class="tab-panel tab-panel-incar">
+                    <pre class="input-preview">{{ generated_inputs.incar }}</pre>
                 </div>
-                <div class="callout">
-                    <div class="callout-title">Number of Jobs</div>
-                    <div class="callout-value">{{ calculation.number_of_jobs }}</div>
+
+                <div class="tab-panel tab-panel-kpoints">
+                    <pre class="input-preview">{{ generated_inputs.kpoints }}</pre>
                 </div>
-                <div class="callout">
-                    <div class="callout-title">Status</div>
-                    <div class="callout-value">{% if calculation.ready_for_submission %}Ready for submission{% else %}Not ready{% endif %}</div>
+
+                <div class="tab-panel tab-panel-poscar">
+                    <pre class="input-preview">{{ generated_inputs.poscar }}</pre>
                 </div>
             </div>
-
-            <details class="disclosure" open>
-                <summary>Job Names</summary>
-                <table class="compact-table">
-                    <tr>
-                        <td>Job Names</td>
-                        <td>
-                            <ul>
-                                {% for job_name in calculation.job_names %}
-                                <li>{{ job_name }}</li>
-                                {% endfor %}
-                            </ul>
-                        </td>
-                    </tr>
-                </table>
-            </details>
 
         </section>
         {% endif %}
@@ -920,7 +981,7 @@ ul {
                 <div>
                     <div class="stage-title">
                         <span class="stage-number">5</span>
-                        <h2>Submission Preview</h2>
+                        <h2>Computational Resources</h2>
                     </div>
                     <div class="summary-line">
                         {{ submission_spec.run_name }} · {{ submission_spec.resources.ntasks }} tasks · {{ submission_spec.resources.walltime }}
@@ -944,6 +1005,16 @@ ul {
                     <div class="callout-title">Resources</div>
                     <div class="callout-value">
                         {{ submission_spec.resources.nodes }} node · {{ submission_spec.resources.ntasks }} tasks · {{ submission_spec.resources.mem_gb }}G
+                    </div>
+                </div>
+                <div class="callout">
+                    <div class="callout-title">Modifiers</div>
+                    <div class="callout-value">
+                        {% if selected_calculation.modifier_labels %}
+                        {{ selected_calculation.modifier_labels | join(", ") }}
+                        {% else %}
+                        None
+                        {% endif %}
                     </div>
                 </div>
                 <div class="callout">
@@ -1086,7 +1157,7 @@ ul {
                 <div>
                     <div class="stage-title">
                         <span class="stage-number">6</span>
-                        <h2>Remote Preparation</h2>
+                        <h2>Ready for Submission</h2>
                     </div>
                     <div class="summary-line">
                         {{ submission_spec.cluster.remote_host }} · {{ submission_spec.paths.run_dir }}
@@ -1113,7 +1184,7 @@ ul {
                     <input type="hidden" name="modifiers" value="{{ modifier }}">
                     {% endfor %}
                     <input type="hidden" name="created_at" value="{{ submission_spec.created_at }}">
-                    <button type="submit">Prepare Remote</button>
+                    <button type="submit" data-current-calculation-action>Prepare Remote</button>
                 </form>
 
                 <form action="/submit" method="post">
@@ -1131,6 +1202,7 @@ ul {
                         value="{% if remote_preparation and remote_preparation.status == 'success' %}true{% else %}false{% endif %}">
                     <button
                         type="submit"
+                        data-current-calculation-action
                         {% if not remote_preparation or remote_preparation.status != 'success' or (submission_result and submission_result.status == 'success') %}disabled{% endif %}>
                         Submit Calculation
                     </button>
@@ -1305,7 +1377,7 @@ ul {
                 <input type="hidden" name="created_at" value="{{ submission_spec.created_at }}">
                 <input type="hidden" name="job_id" value="{{ submission_result.job_id if submission_result else monitoring_result.job_id }}">
                 <input type="hidden" name="submitted_at" value="{{ submission_result.job_record.submitted_at if submission_result else '' }}">
-                <button type="submit">Refresh Queue Status</button>
+                <button type="submit" data-current-calculation-action>Refresh Queue Status</button>
             </form>
             {% else %}
             <form action="/resume" method="post">
@@ -1586,6 +1658,62 @@ ul {
     </div>
 
 </div>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    var form = document.getElementById("calculation-review-form");
+    if (!form || form.dataset.autoRebuild !== "true") {
+        return;
+    }
+
+    var timer = null;
+    var submitting = false;
+    var buildButton = form.querySelector("[data-build-calculation-button]");
+    var layout = form.querySelector(".calculation-layout");
+    var controls = form.querySelectorAll(
+        "select[name='purpose'], select[name='theory'], input[type='checkbox'][name='modifiers']"
+    );
+
+    function disableCurrentCalculationActions() {
+        document
+            .querySelectorAll("[data-current-calculation-action]")
+            .forEach(function (button) {
+                button.disabled = true;
+            });
+    }
+
+    function submitLocalReview() {
+        if (submitting) {
+            return;
+        }
+        submitting = true;
+        if (layout) {
+            layout.classList.add("is-updating");
+        }
+        if (buildButton) {
+            buildButton.disabled = true;
+            buildButton.textContent = "Updating";
+        }
+        disableCurrentCalculationActions();
+
+        if (form.requestSubmit) {
+            form.requestSubmit();
+        } else {
+            form.submit();
+        }
+    }
+
+    controls.forEach(function (control) {
+        if (control.disabled) {
+            return;
+        }
+        control.addEventListener("change", function () {
+            window.clearTimeout(timer);
+            timer = window.setTimeout(submitLocalReview, 80);
+        });
+    });
+});
+</script>
 
 {% if results_summary and results_summary.status == "success" and results_summary.viewer and results_summary.viewer.cif %}
 <script src="https://3Dmol.org/build/3Dmol-min.js"></script>

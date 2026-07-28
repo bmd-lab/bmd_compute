@@ -9,8 +9,10 @@ from backend.calculations.registry import (
     calculation_spec_from_legacy,
     legacy_potcar_functional_from_spec,
     legacy_workflow_from_spec,
+    modifier_display_name,
     theory_display_name,
 )
+from backend.generated_inputs import preview_generated_inputs
 from backend.monitoring import monitor_job
 from backend.parser import StructureValidationError, parse_structure
 from backend.remote_preparation import prepare_remote_submission, remembered_successful_preparation
@@ -32,6 +34,7 @@ def page_context(
     summary=None,
     selected_spec: CalculationSpec | None = None,
     calculation_summary=None,
+    generated_inputs=None,
     submission_spec=None,
     remote_preparation=None,
     submission_result=None,
@@ -49,6 +52,7 @@ def page_context(
         "calculation_options": calculation_form_options(),
         "calculation": calculation_summary,
         "workflow": calculation_summary,
+        "generated_inputs": generated_inputs,
         "submission_spec": submission_spec,
         "remote_preparation": remote_preparation,
         "submission_result": submission_result,
@@ -92,10 +96,12 @@ def default_calculation_spec() -> CalculationSpec:
 
 
 def selected_calculation_context(spec: CalculationSpec) -> dict:
+    modifiers = sorted(spec.modifiers, key=lambda modifier: modifier.value)
     return {
         "purpose": spec.purpose.value,
         "theory": spec.theory.value,
-        "modifiers": sorted(modifier.value for modifier in spec.modifiers),
+        "modifiers": [modifier.value for modifier in modifiers],
+        "modifier_labels": [modifier_display_name(modifier) for modifier in modifiers],
         "purpose_label": calculation_display_name(spec),
         "theory_label": theory_display_name(spec.theory),
     }
@@ -135,6 +141,11 @@ def build_submission_state(
         spec=calculation_spec,
         potcar_functional=potcar_functional,
     )
+    generated_inputs = preview_generated_inputs(
+        structure_obj,
+        calculation_spec,
+        potcar_functional=potcar_functional,
+    )
     calculation_summary = summarize_workflow(flow, calculation_spec)
     flow_spec = {
         "calculation_spec": calculation_spec.to_dict(),
@@ -154,7 +165,7 @@ def build_submission_state(
         label=calculation_summary["flow_name"],
         timestamp=timestamp,
     )
-    return summary, calculation_summary, submission_spec
+    return summary, calculation_summary, generated_inputs, submission_spec
 
 
 @app.get("/")
@@ -241,7 +252,7 @@ def build_workflow(
         method=method,
     )
     try:
-        summary, calculation_summary, submission_spec = build_submission_state(
+        summary, calculation_summary, generated_inputs, submission_spec = build_submission_state(
             structure_text=structure,
             fmt=fmt,
             calculation_spec=calculation_spec,
@@ -264,6 +275,7 @@ def build_workflow(
             summary=summary,
             selected_spec=calculation_spec,
             calculation_summary=calculation_summary,
+            generated_inputs=generated_inputs,
             submission_spec=submission_spec,
         ),
     )
@@ -289,7 +301,7 @@ def prepare_remote(
         method=method,
     )
     try:
-        summary, calculation_summary, submission_spec = build_submission_state(
+        summary, calculation_summary, generated_inputs, submission_spec = build_submission_state(
             structure_text=structure,
             fmt=fmt,
             calculation_spec=calculation_spec,
@@ -314,6 +326,7 @@ def prepare_remote(
             summary=summary,
             selected_spec=calculation_spec,
             calculation_summary=calculation_summary,
+            generated_inputs=generated_inputs,
             submission_spec=submission_spec,
             remote_preparation=remote_preparation,
         ),
@@ -341,7 +354,7 @@ def submit_workflow(
         method=method,
     )
     try:
-        summary, calculation_summary, submission_spec = build_submission_state(
+        summary, calculation_summary, generated_inputs, submission_spec = build_submission_state(
             structure_text=structure,
             fmt=fmt,
             calculation_spec=calculation_spec,
@@ -385,6 +398,7 @@ def submit_workflow(
             summary=summary,
             selected_spec=calculation_spec,
             calculation_summary=calculation_summary,
+            generated_inputs=generated_inputs,
             submission_spec=submission_spec,
             remote_preparation=remote_preparation,
             submission_result=submission_result,
@@ -416,7 +430,7 @@ def refresh_monitoring(
         method=method,
     )
     try:
-        summary, calculation_summary, submission_spec = build_submission_state(
+        summary, calculation_summary, generated_inputs, submission_spec = build_submission_state(
             structure_text=structure,
             fmt=fmt,
             calculation_spec=calculation_spec,
@@ -451,6 +465,7 @@ def refresh_monitoring(
             summary=summary,
             selected_spec=calculation_spec,
             calculation_summary=calculation_summary,
+            generated_inputs=generated_inputs,
             submission_spec=submission_spec,
             remote_preparation=remote_preparation,
             submission_result=submission_result,

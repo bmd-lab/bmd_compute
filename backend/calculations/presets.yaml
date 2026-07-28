@@ -45,7 +45,7 @@ modifiers:
     enabled: false
   spin_polarized:
     display_name: Spin Polarised
-    enabled: false
+    enabled: true
   gamma_only:
     display_name: Gamma-only
     enabled: false

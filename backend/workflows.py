@@ -153,33 +153,65 @@ def ksettings(structure, kpoints_config):
     return {mode: float(value)}
 
 
-def build_relax_flow(
+def apply_spin_settings(user_incar, *, spin_polarized: bool):
+    settings = dict(user_incar or {})
+    if spin_polarized:
+        settings["ISPIN"] = 2
+    else:
+        settings["ISPIN"] = 1
+        settings["MAGMOM"] = None
+
+    return settings
+
+
+def build_relax_input_set_generator(
     structure,
     *,
-    label="vasp_run",
-    name=".",
     isif=None,
+    spin_polarized=False,
     incar=None,
     kpoints=None,
     potcar_functional="PBE_64",
 ):
-    from atomate2.vasp.jobs.core import RelaxMaker
     from atomate2.vasp.sets.core import RelaxSetGenerator
-    from jobflow import Flow
 
     user_incar = dict(incar or {})
+    user_incar = apply_spin_settings(user_incar, spin_polarized=spin_polarized)
     user_incar.setdefault("ENCUT", ENCUT_RELAX_DEFAULT)
-    user_incar.setdefault("ISPIN", 2)
     user_incar.setdefault("EDIFF", 1e-6)
     user_incar.setdefault("ADDGRID", True)
     user_incar.setdefault("EDIFFG", -0.01)
     if isif is not None:
         user_incar["ISIF"] = isif
 
-    generator = RelaxSetGenerator(
+    return RelaxSetGenerator(
         user_potcar_functional=potcar_functional,
         user_kpoints_settings=ksettings(structure, kpoints),
         user_incar_settings=incar_relax(user_incar, user=incar),
+    )
+
+
+def build_relax_flow(
+    structure,
+    *,
+    label="vasp_run",
+    name=".",
+    isif=None,
+    spin_polarized=False,
+    incar=None,
+    kpoints=None,
+    potcar_functional="PBE_64",
+):
+    from atomate2.vasp.jobs.core import RelaxMaker
+    from jobflow import Flow
+
+    generator = build_relax_input_set_generator(
+        structure,
+        isif=isif,
+        spin_polarized=spin_polarized,
+        incar=incar,
+        kpoints=kpoints,
+        potcar_functional=potcar_functional,
     )
     maker = RelaxMaker(
         input_set_generator=generator,
@@ -192,22 +224,21 @@ def build_relax_flow(
     return Flow([maker.make(structure)], name=flow_name)
 
 
-def build_static_flow(
+def build_static_input_set_generator(
     structure,
     *,
-    label="vasp_run",
     hse=False,
     prep_for_gw=False,
     intent="final",
+    spin_polarized=False,
     incar=None,
     kpoints=None,
     potcar_functional="PBE_64",
 ):
-    from atomate2.vasp.jobs.core import StaticMaker
     from atomate2.vasp.sets.core import StaticSetGenerator
-    from jobflow import Flow
 
     user_incar = dict(incar or {})
+    user_incar = apply_spin_settings(user_incar, spin_polarized=spin_polarized)
 
     if hse:
         for key, value in {"LHFCALC": True, "AEXX": 0.25, "HFSCREEN": 0.2, "ALGO": "Damped"}.items():
@@ -245,10 +276,37 @@ def build_static_flow(
         user_incar["LWAVE"] = True
         user_incar["LCHARG"] = True
 
-    generator = StaticSetGenerator(
+    return StaticSetGenerator(
         user_potcar_functional=potcar_functional,
         user_kpoints_settings=ksettings(structure, kpoints),
         user_incar_settings=incar_static(user_incar, allow_ncore=not (hse or prep_for_gw)),
+    )
+
+
+def build_static_flow(
+    structure,
+    *,
+    label="vasp_run",
+    hse=False,
+    prep_for_gw=False,
+    intent="final",
+    spin_polarized=False,
+    incar=None,
+    kpoints=None,
+    potcar_functional="PBE_64",
+):
+    from atomate2.vasp.jobs.core import StaticMaker
+    from jobflow import Flow
+
+    generator = build_static_input_set_generator(
+        structure,
+        hse=hse,
+        prep_for_gw=prep_for_gw,
+        intent=intent,
+        spin_polarized=spin_polarized,
+        incar=incar,
+        kpoints=kpoints,
+        potcar_functional=potcar_functional,
     )
     maker = StaticMaker(
         input_set_generator=generator,
@@ -256,6 +314,63 @@ def build_static_flow(
     )
 
     return Flow([maker.make(structure)], name=label + ("_hse_static" if hse else "_static"))
+
+
+def build_vasp_input_set_generator_for_spec(
+    structure,
+    spec: CalculationSpec,
+    *,
+    incar=None,
+    kpoints=None,
+    potcar_functional="PBE_64",
+):
+    calculation_spec = validate_calculation_spec(spec)
+    user_incar = dict(incar or {})
+    spin_polarized = Modifier.SPIN_POLARIZED in calculation_spec.modifiers
+
+    if calculation_spec.purpose is Purpose.STATIC:
+        return build_static_input_set_generator(
+            structure,
+            hse=_is_hse_incar(user_incar),
+            intent="final",
+            spin_polarized=spin_polarized,
+            incar=user_incar,
+            kpoints=kpoints,
+            potcar_functional=potcar_functional,
+        )
+
+    if calculation_spec.purpose is Purpose.RELAX:
+        return build_relax_input_set_generator(
+            structure,
+            isif=2 if Modifier.IONS_ONLY in calculation_spec.modifiers else None,
+            spin_polarized=spin_polarized,
+            incar=user_incar,
+            kpoints=kpoints,
+            potcar_functional=potcar_functional,
+        )
+
+    raise ValueError(
+        "Only single-step VASP input generation is migrated. "
+        f"Purpose '{calculation_spec.purpose.value}' requires execution or non-Atomate2 logic."
+    )
+
+
+def build_vasp_input_set_for_spec(
+    structure,
+    spec: CalculationSpec,
+    *,
+    incar=None,
+    kpoints=None,
+    potcar_functional="PBE_64",
+):
+    generator = build_vasp_input_set_generator_for_spec(
+        structure,
+        spec,
+        incar=incar,
+        kpoints=kpoints,
+        potcar_functional=potcar_functional,
+    )
+    return generator.get_input_set(structure, potcar_spec=True)
 
 
 def build_atomate2_flow_for_spec(
@@ -269,6 +384,7 @@ def build_atomate2_flow_for_spec(
 ):
     calculation_spec = validate_calculation_spec(spec)
     user_incar = dict(incar or {})
+    spin_polarized = Modifier.SPIN_POLARIZED in calculation_spec.modifiers
 
     if calculation_spec.purpose is Purpose.STATIC:
         return build_static_flow(
@@ -276,6 +392,7 @@ def build_atomate2_flow_for_spec(
             label=label,
             hse=_is_hse_incar(user_incar),
             intent="final",
+            spin_polarized=spin_polarized,
             incar=user_incar,
             kpoints=kpoints,
             potcar_functional=potcar_functional,
@@ -286,6 +403,7 @@ def build_atomate2_flow_for_spec(
             structure,
             label=label,
             isif=2 if Modifier.IONS_ONLY in calculation_spec.modifiers else None,
+            spin_polarized=spin_polarized,
             incar=user_incar,
             kpoints=kpoints,
             potcar_functional=potcar_functional,
@@ -358,7 +476,12 @@ __all__ = [
     "build_atomate2_flow_from_spec",
     "build_atomate2_flow_for_spec",
     "build_relax_flow",
+    "build_relax_input_set_generator",
     "build_static_flow",
+    "build_static_input_set_generator",
+    "build_vasp_input_set_for_spec",
+    "build_vasp_input_set_generator_for_spec",
+    "apply_spin_settings",
     "incar_relax",
     "incar_static",
     "ksettings",

@@ -8,8 +8,15 @@ _SUPPORTED_COMPATIBILITY_WORKFLOWS: dict[
     str,
 ] = {
     (Purpose.STATIC, Theory.PBE, frozenset()): "static",
+    (Purpose.STATIC, Theory.PBE, frozenset({Modifier.SPIN_POLARIZED})): "static",
     (Purpose.RELAX, Theory.PBE, frozenset()): "relax",
+    (Purpose.RELAX, Theory.PBE, frozenset({Modifier.SPIN_POLARIZED})): "relax",
     (Purpose.RELAX, Theory.PBE, frozenset({Modifier.IONS_ONLY})): "relax_ions",
+    (
+        Purpose.RELAX,
+        Theory.PBE,
+        frozenset({Modifier.IONS_ONLY, Modifier.SPIN_POLARIZED}),
+    ): "relax_ions",
 }
 
 _LEGACY_WORKFLOW_SPECS = {

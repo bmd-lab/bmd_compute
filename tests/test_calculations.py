@@ -70,8 +70,19 @@ assert [option["label"] for option in form_options["modifiers"]] == [
     "DFT+U",
     "Gamma-only",
 ]
-assert all(not option["enabled"] for option in form_options["modifiers"])
-assert all(option["tooltip"] == "Coming soon" for option in form_options["modifiers"])
+modifier_options = {option["value"]: option for option in form_options["modifiers"]}
+assert modifier_options["spin_polarized"]["enabled"] is True
+assert modifier_options["spin_polarized"]["tooltip"] == ""
+for modifier in ("soc", "dft_u", "gamma_only"):
+    assert modifier_options[modifier]["enabled"] is False
+    assert modifier_options[modifier]["tooltip"] == "Coming soon"
+
+spin_static_spec = CalculationSpec(Purpose.STATIC, Theory.PBE, {Modifier.SPIN_POLARIZED})
+spin_relax_spec = CalculationSpec(Purpose.RELAX, Theory.PBE, {Modifier.SPIN_POLARIZED})
+assert validate_calculation_spec(spin_static_spec) == spin_static_spec
+assert validate_calculation_spec(spin_relax_spec) == spin_relax_spec
+assert legacy_workflow_from_spec(spin_static_spec) == "static"
+assert legacy_workflow_from_spec(spin_relax_spec) == "relax"
 
 try:
     validate_calculation_spec(CalculationSpec(Purpose.DOS, Theory.PBE))

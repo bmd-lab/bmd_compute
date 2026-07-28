@@ -87,6 +87,27 @@ assert spec["preflight"]["requires_remote_structure_check"] is False
 assert spec["submission"]["ready"] is True
 assert spec["submission"]["submitted"] is False
 
+spin_flow_spec = {
+    **flow_spec,
+    "calculation_spec": {
+        "purpose": "static",
+        "theory": "pbe",
+        "modifiers": ["spin_polarized"],
+    },
+}
+spin_spec = create_submission_spec(
+    spin_flow_spec,
+    label="Si spin static!",
+    timestamp="20260629-120000",
+    env={},
+)
+assert spin_spec["flow_spec"]["calculation_spec"] == {
+    "purpose": "static",
+    "theory": "pbe",
+    "modifiers": ["spin_polarized"],
+    "label": None,
+}
+
 private_potcars_dir = "/private/bmd-potcars"
 private_potcars_spec = create_submission_spec(
     flow_spec,
