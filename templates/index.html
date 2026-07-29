@@ -854,15 +854,14 @@ ul {
                     </div>
                 </div>
                 <div class="stage-status">
-                    {% if calculation %}<span class="pill ready">Built</span>{% else %}<span class="pill">Ready to build</span>{% endif %}
+                    {% if calculation_error %}<span class="pill failed">Failed</span>{% elif calculation %}<span class="pill ready">Built</span>{% else %}<span class="pill">Ready to build</span>{% endif %}
                 </div>
             </div>
 
             <form
                 id="calculation-review-form"
                 action="/build-calculation"
-                method="post"
-                data-auto-rebuild="{% if calculation %}true{% else %}false{% endif %}">
+                method="post">
 
                 <textarea class="hidden-field" name="structure">{{ structure_text }}</textarea>
                 <input type="hidden" name="fmt" value="{{ fmt }}">
@@ -925,6 +924,24 @@ ul {
                 </div>
 
             </form>
+
+            {% if calculation_error %}
+            <div class="prep-panel failed">
+                <div class="prep-title">Calculation Validation Failed</div>
+                <table class="compact-table failure-table">
+                    <tr>
+                        <td>Reason</td>
+                        <td>{{ calculation_error.message }}</td>
+                    </tr>
+                    {% if calculation_error.suggestion %}
+                    <tr>
+                        <td>Suggestion</td>
+                        <td>{{ calculation_error.suggestion }}</td>
+                    </tr>
+                    {% endif %}
+                </table>
+            </div>
+            {% endif %}
 
         </section>
         {% endif %}
@@ -1658,62 +1675,6 @@ ul {
     </div>
 
 </div>
-
-<script>
-document.addEventListener("DOMContentLoaded", function () {
-    var form = document.getElementById("calculation-review-form");
-    if (!form || form.dataset.autoRebuild !== "true") {
-        return;
-    }
-
-    var timer = null;
-    var submitting = false;
-    var buildButton = form.querySelector("[data-build-calculation-button]");
-    var layout = form.querySelector(".calculation-layout");
-    var controls = form.querySelectorAll(
-        "select[name='purpose'], select[name='theory'], input[type='checkbox'][name='modifiers']"
-    );
-
-    function disableCurrentCalculationActions() {
-        document
-            .querySelectorAll("[data-current-calculation-action]")
-            .forEach(function (button) {
-                button.disabled = true;
-            });
-    }
-
-    function submitLocalReview() {
-        if (submitting) {
-            return;
-        }
-        submitting = true;
-        if (layout) {
-            layout.classList.add("is-updating");
-        }
-        if (buildButton) {
-            buildButton.disabled = true;
-            buildButton.textContent = "Updating";
-        }
-        disableCurrentCalculationActions();
-
-        if (form.requestSubmit) {
-            form.requestSubmit();
-        } else {
-            form.submit();
-        }
-    }
-
-    controls.forEach(function (control) {
-        if (control.disabled) {
-            return;
-        }
-        control.addEventListener("change", function () {
-            window.clearTimeout(timer);
-            timer = window.setTimeout(submitLocalReview, 80);
-        });
-    });
-});
-</script>
 
 {% if results_summary and results_summary.status == "success" and results_summary.viewer and results_summary.viewer.cif %}
 <script src="https://3Dmol.org/build/3Dmol-min.js"></script>

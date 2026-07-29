@@ -41,9 +41,8 @@ proxycommand none
 assert ssh_g_options["hostname"] == "powerslurm-login.tau.ac.il"
 assert ssh_g_options["user"] == "bmdguest"
 assert ssh_g_options["port"] == "22"
-assert _identity_files_from_ssh_config(ssh_g_options).endswith(
-    "/.ssh/bmd_guest_ed25519"
-)
+identity_file = _identity_files_from_ssh_config(ssh_g_options)
+assert identity_file.replace("\\", "/").endswith("/.ssh/bmd_guest_ed25519")
 
 
 class RecordingRunner(ParamikoRemoteRunner):

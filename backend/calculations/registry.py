@@ -1,23 +1,56 @@
 from __future__ import annotations
 
+from itertools import combinations
+
 from backend.calculations.models import CalculationSpec, Modifier, Purpose, Theory
 
 
-_SUPPORTED_COMPATIBILITY_WORKFLOWS: dict[
+class CalculationValidationError(ValueError):
+    def __init__(self, message: str, *, suggestion: str | None = None):
+        super().__init__(message)
+        self.message = message
+        self.suggestion = suggestion
+
+
+_ACTIVE_UI_MODIFIERS = (
+    Modifier.SPIN_POLARIZED,
+    Modifier.SOC,
+    Modifier.DFT_U,
+    Modifier.GAMMA_ONLY,
+)
+
+
+def _modifier_subsets(
+    modifiers: tuple[Modifier, ...],
+) -> tuple[frozenset[Modifier], ...]:
+    return tuple(
+        frozenset(subset)
+        for size in range(len(modifiers) + 1)
+        for subset in combinations(modifiers, size)
+    )
+
+
+def _build_supported_compatibility_workflows() -> dict[
     tuple[Purpose, Theory, frozenset[Modifier]],
     str,
-] = {
-    (Purpose.STATIC, Theory.PBE, frozenset()): "static",
-    (Purpose.STATIC, Theory.PBE, frozenset({Modifier.SPIN_POLARIZED})): "static",
-    (Purpose.RELAX, Theory.PBE, frozenset()): "relax",
-    (Purpose.RELAX, Theory.PBE, frozenset({Modifier.SPIN_POLARIZED})): "relax",
-    (Purpose.RELAX, Theory.PBE, frozenset({Modifier.IONS_ONLY})): "relax_ions",
-    (
-        Purpose.RELAX,
-        Theory.PBE,
-        frozenset({Modifier.IONS_ONLY, Modifier.SPIN_POLARIZED}),
-    ): "relax_ions",
-}
+]:
+    supported: dict[tuple[Purpose, Theory, frozenset[Modifier]], str] = {}
+
+    for modifiers in _modifier_subsets(_ACTIVE_UI_MODIFIERS):
+        supported[(Purpose.STATIC, Theory.PBE, modifiers)] = "static"
+        supported[(Purpose.RELAX, Theory.PBE, modifiers)] = "relax"
+        supported[
+            (
+                Purpose.RELAX,
+                Theory.PBE,
+                frozenset({*modifiers, Modifier.IONS_ONLY}),
+            )
+        ] = "relax_ions"
+
+    return supported
+
+
+_SUPPORTED_COMPATIBILITY_WORKFLOWS = _build_supported_compatibility_workflows()
 
 _LEGACY_WORKFLOW_SPECS = {
     "static": CalculationSpec(Purpose.STATIC, Theory.PBE),
@@ -94,7 +127,7 @@ def validate_calculation_spec(spec: CalculationSpec) -> CalculationSpec:
             _format_combination(*combination)
             for combination in _SUPPORTED_COMPATIBILITY_WORKFLOWS
         )
-        raise ValueError(
+        raise CalculationValidationError(
             "Calculation combination is not implemented in the compatibility "
             f"builder: {_format_combination(*key)}. Supported combinations: {supported}."
         )
@@ -110,7 +143,7 @@ def calculation_spec_from_legacy(
     try:
         spec = _LEGACY_WORKFLOW_SPECS[workflow_name]
     except KeyError as exc:
-        raise ValueError(f"Unsupported legacy workflow: {workflow!r}") from exc
+        raise CalculationValidationError(f"Unsupported legacy workflow: {workflow!r}") from exc
 
     theory = _theory_from_legacy_potcar(potcar_functional)
     return validate_calculation_spec(
@@ -146,7 +179,9 @@ def legacy_potcar_functional_from_spec(spec: CalculationSpec) -> str:
     try:
         return _THEORY_DEFAULT_POTCAR_FUNCTIONAL[normalized.theory]
     except KeyError as exc:
-        raise ValueError(f"No legacy POTCAR functional for theory: {normalized.theory.value}") from exc
+        raise CalculationValidationError(
+            f"No legacy POTCAR functional for theory: {normalized.theory.value}"
+        ) from exc
 
 
 def supported_combinations() -> tuple[CalculationSpec, ...]:
@@ -248,7 +283,9 @@ def _theory_from_legacy_potcar(potcar_functional: str | None) -> Theory:
     try:
         return _LEGACY_POTCAR_THEORIES[key]
     except KeyError as exc:
-        raise ValueError(f"Unsupported legacy POTCAR functional: {potcar_functional!r}") from exc
+        raise CalculationValidationError(
+            f"Unsupported legacy POTCAR functional: {potcar_functional!r}"
+        ) from exc
 
 
 def _compatibility_key(spec: CalculationSpec) -> tuple[Purpose, Theory, frozenset[Modifier]]:
@@ -265,6 +302,7 @@ def _format_combination(
 
 
 __all__ = [
+    "CalculationValidationError",
     "calculation_display_name",
     "calculation_form_options",
     "calculation_spec_from_flow_spec",

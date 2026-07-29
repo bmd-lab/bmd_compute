@@ -430,6 +430,8 @@ def build_sbatch_script(submission_spec: dict) -> str:
     module_lines = _module_lines(submission_spec)
     exports = _submission_env_exports(submission_spec)
     job_body = build_job_body(submission_spec)
+    module_block = "\n".join(module_lines)
+    export_block = "\n".join(exports)
 
     header = (
         f"#SBATCH --job-name={run_name}\n"
@@ -445,7 +447,7 @@ set -e -o pipefail
 if ! type module >/dev/null 2>&1; then
     source /etc/bashrc
 fi
-{os.linesep.join(module_lines)}
+{module_block}
 echo "[sbatch debug] PATH=$PATH"
 module list
 which vasp_std
@@ -455,7 +457,7 @@ which mpirun
 ulimit -s 81920 || true
 
 # -- propagate environment expected by the runner --
-{os.linesep.join(exports)}
+{export_block}
 
 # -- POTCAR sanity (warn and show layout) --
 echo "PMG_VASP_PSP_DIR=$PMG_VASP_PSP_DIR"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import posixpath
 import re
@@ -31,6 +32,9 @@ from backend.remote import (
     RemoteTunnel,
 )
 from backend.submission import build_submission_command, parse_sbatch_job_id
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _paramiko_connect_kwargs(profile: RemoteConnectionProfile, paramiko_module) -> dict:
@@ -255,7 +259,7 @@ class ParamikoRemoteRunner(RemoteRunner):
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         connect_kwargs, diagnostics = _paramiko_connect_details(profile, paramiko)
-        print("PARAMIKO CONNECT DIAGNOSTICS", json.dumps(diagnostics, indent=2), flush=True)
+        LOGGER.debug("Paramiko connect diagnostics: %s", json.dumps(diagnostics, indent=2))
         client.connect(**connect_kwargs)
 
         transport = client.get_transport()
@@ -746,9 +750,9 @@ class ParamikoRemoteRunner(RemoteRunner):
 
 
 def _print_sbatch_result(stdout: str, stderr: str, job_id: str | None) -> None:
-    print("SBATCH STDOUT:", stdout, flush=True)
-    print("SBATCH STDERR:", stderr, flush=True)
-    print("JOB ID:", job_id, flush=True)
+    LOGGER.debug("SBATCH stdout: %s", stdout)
+    LOGGER.debug("SBATCH stderr: %s", stderr)
+    LOGGER.debug("SBATCH job id: %s", job_id)
 
 
 def _now_str() -> str:

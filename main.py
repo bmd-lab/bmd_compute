@@ -4,6 +4,7 @@ from fastapi.templating import Jinja2Templates
 from backend.calculations.builder import build_calculation_flow
 from backend.calculations.models import CalculationSpec, Purpose, Theory
 from backend.calculations.registry import (
+    CalculationValidationError,
     calculation_display_name,
     calculation_form_options,
     calculation_spec_from_legacy,
@@ -42,6 +43,7 @@ def page_context(
     results_summary=None,
     resume_job_id: str = "",
     structure_error=None,
+    calculation_error=None,
 ):
     selected_spec = selected_spec or default_calculation_spec()
     return {
@@ -60,6 +62,7 @@ def page_context(
         "results_summary": results_summary,
         "resume_job_id": resume_job_id,
         "structure_error": structure_error,
+        "calculation_error": calculation_error,
     }
 
 
@@ -86,6 +89,41 @@ def structure_error_response(
             fmt=fmt,
             selected_spec=selected_spec,
             structure_error=structure_error_context(exc),
+        ),
+        status_code=400,
+    )
+
+
+def calculation_error_context(exc: CalculationValidationError) -> dict:
+    return {
+        "message": exc.message,
+        "suggestion": exc.suggestion,
+    }
+
+
+def calculation_error_response(
+    request: Request,
+    *,
+    structure_text: str,
+    fmt: str,
+    exc: CalculationValidationError,
+    selected_spec: CalculationSpec | None = None,
+):
+    summary = None
+    try:
+        summary = summarize_structure(parse_structure(structure_text, fmt))
+    except StructureValidationError:
+        pass
+
+    return templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context=page_context(
+            structure_text=structure_text,
+            fmt=fmt,
+            summary=summary,
+            selected_spec=selected_spec,
+            calculation_error=calculation_error_context(exc),
         ),
         status_code=400,
     )
@@ -136,14 +174,14 @@ def build_submission_state(
     summary = summarize_structure(structure_obj)
     potcar_functional = legacy_potcar_functional_from_spec(calculation_spec)
     legacy_workflow = legacy_workflow_from_spec(calculation_spec)
-    flow = build_calculation_flow(
-        structure=structure_obj,
-        spec=calculation_spec,
-        potcar_functional=potcar_functional,
-    )
     generated_inputs = preview_generated_inputs(
         structure_obj,
         calculation_spec,
+        potcar_functional=potcar_functional,
+    )
+    flow = build_calculation_flow(
+        structure=structure_obj,
+        spec=calculation_spec,
         potcar_functional=potcar_functional,
     )
     calculation_summary = summarize_workflow(flow, calculation_spec)
@@ -211,15 +249,8 @@ def resume_existing_calculation(
     request: Request,
     job_id: str = Form(...),
 ):
-    print("ENTER /resume")
-    print("after parsing the form")
-    print("before calling monitor_job()")
     monitoring_result = monitor_job(job_id)
-    print("immediately after monitor_job() returns")
-    print("before calling the results layer")
     results_summary = load_results_for_completed_job(monitoring_result)
-    print("immediately after the results layer returns")
-    print("immediately before returning the template response")
 
     return templates.TemplateResponse(
         request=request,
@@ -259,6 +290,14 @@ def build_workflow(
         )
     except StructureValidationError as exc:
         return structure_error_response(
+            request,
+            structure_text=structure,
+            fmt=fmt,
+            selected_spec=calculation_spec,
+            exc=exc,
+        )
+    except CalculationValidationError as exc:
+        return calculation_error_response(
             request,
             structure_text=structure,
             fmt=fmt,
@@ -315,6 +354,14 @@ def prepare_remote(
             selected_spec=calculation_spec,
             exc=exc,
         )
+    except CalculationValidationError as exc:
+        return calculation_error_response(
+            request,
+            structure_text=structure,
+            fmt=fmt,
+            selected_spec=calculation_spec,
+            exc=exc,
+        )
     remote_preparation = prepare_remote_submission(submission_spec)
 
     return templates.TemplateResponse(
@@ -362,6 +409,14 @@ def submit_workflow(
         )
     except StructureValidationError as exc:
         return structure_error_response(
+            request,
+            structure_text=structure,
+            fmt=fmt,
+            selected_spec=calculation_spec,
+            exc=exc,
+        )
+    except CalculationValidationError as exc:
+        return calculation_error_response(
             request,
             structure_text=structure,
             fmt=fmt,
@@ -438,6 +493,14 @@ def refresh_monitoring(
         )
     except StructureValidationError as exc:
         return structure_error_response(
+            request,
+            structure_text=structure,
+            fmt=fmt,
+            selected_spec=calculation_spec,
+            exc=exc,
+        )
+    except CalculationValidationError as exc:
+        return calculation_error_response(
             request,
             structure_text=structure,
             fmt=fmt,

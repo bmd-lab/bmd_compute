@@ -39,16 +39,16 @@ theories:
 modifiers:
   soc:
     display_name: SOC
-    enabled: false
+    enabled: true
   dft_u:
     display_name: DFT+U
-    enabled: false
+    enabled: true
   spin_polarized:
     display_name: Spin Polarised
     enabled: true
   gamma_only:
     display_name: Gamma-only
-    enabled: false
+    enabled: true
   ions_only:
     display_name: Ions only
     enabled: true

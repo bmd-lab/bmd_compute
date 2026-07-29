@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import logging
 import posixpath
 import tempfile
 import traceback
@@ -22,10 +23,11 @@ RESULT_FILES = {
     "outcar": "OUTCAR",
     "vasprun": "vasprun.xml",
 }
+LOGGER = logging.getLogger(__name__)
 
 
 def _log_results(message: str) -> None:
-    print(message, flush=True)
+    LOGGER.debug(message)
 
 
 def monitoring_indicates_success(monitoring_result: dict | None) -> bool:

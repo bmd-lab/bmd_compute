@@ -108,6 +108,27 @@ assert spin_spec["flow_spec"]["calculation_spec"] == {
     "label": None,
 }
 
+advanced_flow_spec = {
+    **flow_spec,
+    "calculation_spec": {
+        "purpose": "static",
+        "theory": "pbe",
+        "modifiers": ["dft_u", "gamma_only", "soc", "spin_polarized"],
+    },
+}
+advanced_spec = create_submission_spec(
+    advanced_flow_spec,
+    label="Advanced static!",
+    timestamp="20260629-120000",
+    env={},
+)
+assert advanced_spec["flow_spec"]["calculation_spec"] == {
+    "purpose": "static",
+    "theory": "pbe",
+    "modifiers": ["dft_u", "gamma_only", "soc", "spin_polarized"],
+    "label": None,
+}
+
 private_potcars_dir = "/private/bmd-potcars"
 private_potcars_spec = create_submission_spec(
     flow_spec,

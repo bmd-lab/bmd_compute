@@ -1,9 +1,19 @@
 ENCUT_STATIC_PREP_DEFAULT = 520
 ENCUT_RELAX_DEFAULT = 580
 ENCUT_STATIC_FINAL_DEFAULT = 620
+DFT_U_INCAR_KEYS = (
+    "LDAU",
+    "LDAUTYPE",
+    "LDAUL",
+    "LDAUU",
+    "LDAUJ",
+    "LDAUPRINT",
+    "LMAXMIX",
+)
 
 from backend.calculations.models import CalculationSpec, Modifier, Purpose
 from backend.calculations.registry import (
+    CalculationValidationError,
     calculation_spec_from_flow_spec,
     calculation_spec_from_legacy,
     validate_calculation_spec,
@@ -102,6 +112,9 @@ def ksettings(structure, kpoints_config):
     mode = kpoints_config.get("mode")
     value = kpoints_config.get("value")
 
+    if mode == "gamma":
+        return {"grid_density": 1.0}
+
     if mode == "mesh":
         from pymatgen.io.vasp.inputs import Kpoints
 
@@ -164,19 +177,127 @@ def apply_spin_settings(user_incar, *, spin_polarized: bool):
     return settings
 
 
+def calculation_modifiers_from_options(
+    *,
+    modifiers=None,
+    spin_polarized: bool = False,
+) -> frozenset[Modifier]:
+    normalized = set(modifiers or ())
+    if spin_polarized:
+        normalized.add(Modifier.SPIN_POLARIZED)
+    return frozenset(Modifier.from_value(modifier) for modifier in normalized)
+
+
+def apply_modifier_incar_settings(user_incar, *, modifiers) -> dict:
+    settings = dict(user_incar or {})
+    normalized_modifiers = calculation_modifiers_from_options(modifiers=modifiers)
+    spin_polarized = (
+        Modifier.SPIN_POLARIZED in normalized_modifiers
+        or Modifier.SOC in normalized_modifiers
+    )
+
+    settings = apply_spin_settings(settings, spin_polarized=spin_polarized)
+    settings = apply_dft_u_settings(
+        settings,
+        dft_u=Modifier.DFT_U in normalized_modifiers,
+    )
+
+    if Modifier.SOC in normalized_modifiers:
+        settings["LSORBIT"] = True
+        settings["LNONCOLLINEAR"] = True
+        settings["ISYM"] = 0
+        settings.setdefault("SAXIS", [0, 0, 1])
+        settings["MAGMOM"] = None
+
+    return settings
+
+
+def apply_dft_u_settings(user_incar, *, dft_u: bool) -> dict:
+    settings = dict(user_incar or {})
+    if dft_u:
+        return settings
+
+    for key in DFT_U_INCAR_KEYS:
+        settings[key] = None
+
+    return settings
+
+
+def ksettings_for_modifiers(structure, kpoints_config, *, modifiers):
+    normalized_modifiers = calculation_modifiers_from_options(modifiers=modifiers)
+    if Modifier.GAMMA_ONLY in normalized_modifiers:
+        return ksettings(structure, {"mode": "gamma", "value": 1})
+
+    return ksettings(structure, kpoints_config)
+
+
+def validate_input_set_for_modifiers(input_set, *, spec: CalculationSpec) -> None:
+    if Modifier.DFT_U in spec.modifiers and not _input_set_has_active_dft_u(input_set):
+        raise CalculationValidationError(
+            "DFT+U was requested, but no U values are available for this structure "
+            "with the current PBE input set.",
+            suggestion=(
+                "Remove DFT+U for this material, or add a reviewed Burton Lab "
+                "override before submitting the calculation."
+            ),
+        )
+
+
+def _input_set_has_active_dft_u(input_set) -> bool:
+    incar = getattr(input_set, "incar", {}) or {}
+    if not _truthy_incar_value(incar.get("LDAU")):
+        return False
+
+    return any(_numeric_values(incar.get("LDAUU")))
+
+
+def _truthy_incar_value(value) -> bool:
+    if isinstance(value, str):
+        return value.strip().strip(".").upper() in {"T", "TRUE", "YES", "1"}
+    return bool(value)
+
+
+def _numeric_values(value):
+    if isinstance(value, dict):
+        for nested in value.values():
+            yield from _numeric_values(nested)
+        return
+
+    if isinstance(value, (list, tuple)):
+        for nested in value:
+            yield from _numeric_values(nested)
+        return
+
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return
+
+    if abs(numeric) > 1e-12:
+        yield numeric
+
+
 def build_relax_input_set_generator(
     structure,
     *,
     isif=None,
     spin_polarized=False,
+    modifiers=None,
     incar=None,
     kpoints=None,
     potcar_functional="PBE_64",
 ):
     from atomate2.vasp.sets.core import RelaxSetGenerator
 
+    calculation_modifiers = calculation_modifiers_from_options(
+        modifiers=modifiers,
+        spin_polarized=spin_polarized,
+    )
     user_incar = dict(incar or {})
-    user_incar = apply_spin_settings(user_incar, spin_polarized=spin_polarized)
+    user_incar = apply_modifier_incar_settings(
+        user_incar,
+        modifiers=calculation_modifiers,
+    )
     user_incar.setdefault("ENCUT", ENCUT_RELAX_DEFAULT)
     user_incar.setdefault("EDIFF", 1e-6)
     user_incar.setdefault("ADDGRID", True)
@@ -186,7 +307,11 @@ def build_relax_input_set_generator(
 
     return RelaxSetGenerator(
         user_potcar_functional=potcar_functional,
-        user_kpoints_settings=ksettings(structure, kpoints),
+        user_kpoints_settings=ksettings_for_modifiers(
+            structure,
+            kpoints,
+            modifiers=calculation_modifiers,
+        ),
         user_incar_settings=incar_relax(user_incar, user=incar),
     )
 
@@ -198,6 +323,7 @@ def build_relax_flow(
     name=".",
     isif=None,
     spin_polarized=False,
+    modifiers=None,
     incar=None,
     kpoints=None,
     potcar_functional="PBE_64",
@@ -209,6 +335,7 @@ def build_relax_flow(
         structure,
         isif=isif,
         spin_polarized=spin_polarized,
+        modifiers=modifiers,
         incar=incar,
         kpoints=kpoints,
         potcar_functional=potcar_functional,
@@ -231,14 +358,22 @@ def build_static_input_set_generator(
     prep_for_gw=False,
     intent="final",
     spin_polarized=False,
+    modifiers=None,
     incar=None,
     kpoints=None,
     potcar_functional="PBE_64",
 ):
     from atomate2.vasp.sets.core import StaticSetGenerator
 
+    calculation_modifiers = calculation_modifiers_from_options(
+        modifiers=modifiers,
+        spin_polarized=spin_polarized,
+    )
     user_incar = dict(incar or {})
-    user_incar = apply_spin_settings(user_incar, spin_polarized=spin_polarized)
+    user_incar = apply_modifier_incar_settings(
+        user_incar,
+        modifiers=calculation_modifiers,
+    )
 
     if hse:
         for key, value in {"LHFCALC": True, "AEXX": 0.25, "HFSCREEN": 0.2, "ALGO": "Damped"}.items():
@@ -278,7 +413,11 @@ def build_static_input_set_generator(
 
     return StaticSetGenerator(
         user_potcar_functional=potcar_functional,
-        user_kpoints_settings=ksettings(structure, kpoints),
+        user_kpoints_settings=ksettings_for_modifiers(
+            structure,
+            kpoints,
+            modifiers=calculation_modifiers,
+        ),
         user_incar_settings=incar_static(user_incar, allow_ncore=not (hse or prep_for_gw)),
     )
 
@@ -291,6 +430,7 @@ def build_static_flow(
     prep_for_gw=False,
     intent="final",
     spin_polarized=False,
+    modifiers=None,
     incar=None,
     kpoints=None,
     potcar_functional="PBE_64",
@@ -304,6 +444,7 @@ def build_static_flow(
         prep_for_gw=prep_for_gw,
         intent=intent,
         spin_polarized=spin_polarized,
+        modifiers=modifiers,
         incar=incar,
         kpoints=kpoints,
         potcar_functional=potcar_functional,
@@ -326,7 +467,8 @@ def build_vasp_input_set_generator_for_spec(
 ):
     calculation_spec = validate_calculation_spec(spec)
     user_incar = dict(incar or {})
-    spin_polarized = Modifier.SPIN_POLARIZED in calculation_spec.modifiers
+    calculation_modifiers = calculation_spec.modifiers
+    spin_polarized = Modifier.SPIN_POLARIZED in calculation_modifiers
 
     if calculation_spec.purpose is Purpose.STATIC:
         return build_static_input_set_generator(
@@ -334,6 +476,7 @@ def build_vasp_input_set_generator_for_spec(
             hse=_is_hse_incar(user_incar),
             intent="final",
             spin_polarized=spin_polarized,
+            modifiers=calculation_modifiers,
             incar=user_incar,
             kpoints=kpoints,
             potcar_functional=potcar_functional,
@@ -344,6 +487,7 @@ def build_vasp_input_set_generator_for_spec(
             structure,
             isif=2 if Modifier.IONS_ONLY in calculation_spec.modifiers else None,
             spin_polarized=spin_polarized,
+            modifiers=calculation_modifiers,
             incar=user_incar,
             kpoints=kpoints,
             potcar_functional=potcar_functional,
@@ -363,14 +507,17 @@ def build_vasp_input_set_for_spec(
     kpoints=None,
     potcar_functional="PBE_64",
 ):
+    calculation_spec = validate_calculation_spec(spec)
     generator = build_vasp_input_set_generator_for_spec(
         structure,
-        spec,
+        calculation_spec,
         incar=incar,
         kpoints=kpoints,
         potcar_functional=potcar_functional,
     )
-    return generator.get_input_set(structure, potcar_spec=True)
+    input_set = generator.get_input_set(structure, potcar_spec=True)
+    validate_input_set_for_modifiers(input_set, spec=calculation_spec)
+    return input_set
 
 
 def build_atomate2_flow_for_spec(
@@ -384,7 +531,8 @@ def build_atomate2_flow_for_spec(
 ):
     calculation_spec = validate_calculation_spec(spec)
     user_incar = dict(incar or {})
-    spin_polarized = Modifier.SPIN_POLARIZED in calculation_spec.modifiers
+    calculation_modifiers = calculation_spec.modifiers
+    spin_polarized = Modifier.SPIN_POLARIZED in calculation_modifiers
 
     if calculation_spec.purpose is Purpose.STATIC:
         return build_static_flow(
@@ -393,6 +541,7 @@ def build_atomate2_flow_for_spec(
             hse=_is_hse_incar(user_incar),
             intent="final",
             spin_polarized=spin_polarized,
+            modifiers=calculation_modifiers,
             incar=user_incar,
             kpoints=kpoints,
             potcar_functional=potcar_functional,
@@ -404,6 +553,7 @@ def build_atomate2_flow_for_spec(
             label=label,
             isif=2 if Modifier.IONS_ONLY in calculation_spec.modifiers else None,
             spin_polarized=spin_polarized,
+            modifiers=calculation_modifiers,
             incar=user_incar,
             kpoints=kpoints,
             potcar_functional=potcar_functional,
