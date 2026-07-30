@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from backend.calculations.models import CalculationSpec
+from backend.submission import build_slurm_preview_script
 from backend.workflows import build_vasp_input_set_for_spec
 
 
@@ -10,6 +11,7 @@ def preview_generated_inputs(
     *,
     incar: dict | None = None,
     kpoints: dict | None = None,
+    resources=None,
     potcar_functional: str = "PBE_64",
 ) -> dict:
     """
@@ -25,6 +27,7 @@ def preview_generated_inputs(
         spec,
         incar=incar,
         kpoints=kpoints,
+        resources=resources,
         potcar_functional=potcar_functional,
     )
 
@@ -39,6 +42,11 @@ def _input_text(input_object) -> str:
     return str(input_object).rstrip()
 
 
+def preview_slurm_script(submission_spec: dict) -> str:
+    return build_slurm_preview_script(submission_spec).replace("\r\n", "\n").replace("\r", "\n")
+
+
 __all__ = [
     "preview_generated_inputs",
+    "preview_slurm_script",
 ]

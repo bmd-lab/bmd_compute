@@ -1,7 +1,10 @@
 from backend.calculations.models import CalculationSpec, Modifier, Purpose, Theory
+from backend.calculations.resources import ExecutionResources
 from backend.calculations.registry import CalculationValidationError
+from backend.config import DEFAULT_ACCOUNT, DEFAULT_PARTITION, DEFAULT_RESOURCES
 from backend.generated_inputs import preview_generated_inputs
 from backend.parser import parse_structure
+from backend.submission import build_slurm_preview_script
 from main import build_submission_state, build_workflow
 from starlette.requests import Request
 
@@ -26,6 +29,7 @@ static_preview = preview_generated_inputs(
     potcar_functional="PBE_64",
 )
 assert "ENCUT = 620.0" in static_preview["incar"]
+assert "NCORE = 8" in static_preview["incar"]
 assert "ISPIN = 1" in static_preview["incar"]
 assert "MAGMOM" not in static_preview["incar"]
 assert "Gamma" in static_preview["kpoints"]
@@ -42,6 +46,14 @@ assert "ISPIN = 2" in spin_static_preview["incar"]
 assert "MAGMOM = 2*0.6" in spin_static_preview["incar"]
 assert spin_static_preview["kpoints"] == static_preview["kpoints"]
 assert spin_static_preview["poscar"] == static_preview["poscar"]
+
+high_cpu_preview = preview_generated_inputs(
+    structure,
+    CalculationSpec(Purpose.STATIC, Theory.PBE),
+    resources=ExecutionResources(cpus=48),
+    potcar_functional="PBE_64",
+)
+assert high_cpu_preview["incar"] == static_preview["incar"]
 
 soc_static_preview = preview_generated_inputs(
     structure,
@@ -124,7 +136,37 @@ summary, calculation, generated_inputs, submission_spec = build_submission_state
 assert summary["formula"] == "Si2"
 assert calculation["calculation_type"] == "Static Energy"
 assert generated_inputs["incar"] == static_preview["incar"]
+assert generated_inputs["slurm_script"] == build_slurm_preview_script(submission_spec)
+assert "\r" not in generated_inputs["slurm_script"]
+assert generated_inputs["slurm_script"].startswith("#!/bin/bash\n\n")
+assert f"#SBATCH -p {DEFAULT_PARTITION}" in generated_inputs["slurm_script"]
+assert f"#SBATCH --account={DEFAULT_ACCOUNT}" in generated_inputs["slurm_script"]
+assert "#SBATCH -J Si-static" in generated_inputs["slurm_script"]
+assert f"#SBATCH --nodes={DEFAULT_RESOURCES['nodes']}" in generated_inputs["slurm_script"]
+assert f"#SBATCH --ntasks={DEFAULT_RESOURCES['ntasks']}" in generated_inputs["slurm_script"]
+assert f"#SBATCH --mem={DEFAULT_RESOURCES['mem_gb']}GB" in generated_inputs["slurm_script"]
+assert f"#SBATCH --time={DEFAULT_RESOURCES['walltime']}" in generated_inputs["slurm_script"]
+assert "ulimit -s 81920" in generated_inputs["slurm_script"]
+assert "module load intel/rocky8-oneAPI-2023" in generated_inputs["slurm_script"]
+assert "module load vasp/rocky8-intel-6.4.1" in generated_inputs["slurm_script"]
+assert "mpirun -n $SLURM_NTASKS vasp_std" in generated_inputs["slurm_script"]
+for internal_detail in (
+    "/bmd-db/guest",
+    "run_job.py",
+    "submission.json",
+    "JOBFLOW_CONFIG_FILE",
+    "PMG_VASP_PSP_DIR",
+    "CUSTODIAN_",
+    "ATOMATE2_",
+    "BMD_SUBMISSION_SPEC",
+    "echo ",
+    "test -f",
+    "backend",
+):
+    assert internal_detail not in generated_inputs["slurm_script"]
 assert submission_spec["flow_spec"]["calculation_spec"]["purpose"] == "static"
+assert submission_spec["flow_spec"]["execution_resources"]["ntasks"] == 24
+assert submission_spec["resources"]["ntasks"] == 24
 
 request = Request(
     {
@@ -141,6 +183,11 @@ response = build_workflow(
     purpose="static",
     theory="pbe",
     modifiers=None,
+    cpus=None,
+    memory_gb=None,
+    walltime=None,
+    queue=None,
+    account=None,
     workflow=None,
     method=None,
 )
@@ -148,12 +195,57 @@ assert response.status_code == 200
 assert response.context["generated_inputs"]["incar"] == static_preview["incar"]
 assert response.context["generated_inputs"]["kpoints"] == static_preview["kpoints"]
 assert response.context["generated_inputs"]["poscar"] == static_preview["poscar"]
+assert response.context["generated_inputs"]["slurm_script"] == build_slurm_preview_script(
+    response.context["submission_spec"]
+)
 assert response.context["submission_spec"]["flow_spec"]["calculation_spec"] == {
     "purpose": "static",
     "theory": "pbe",
     "modifiers": [],
     "label": None,
 }
+assert response.context["selected_resources"]["cpus"] == 24
+
+resource_response = build_workflow(
+    request,
+    structure=poscar,
+    fmt="poscar",
+    purpose="static",
+    theory="pbe",
+    modifiers=None,
+    cpus="48",
+    memory_gb="256",
+    walltime="12:00:00",
+    queue="debug",
+    account="debug-users",
+    workflow=None,
+    method=None,
+)
+assert resource_response.status_code == 200
+assert resource_response.context["generated_inputs"]["incar"] == static_preview["incar"]
+assert resource_response.context["selected_resources"] == {
+    "nodes": 1,
+    "cpus": 48,
+    "allowed_cpu_counts": [24, 48, 72, 96, 120, 144, 168, 192],
+    "memory_gb": 256,
+    "walltime": "12:00:00",
+    "queue": "debug",
+    "account": "debug-users",
+}
+assert resource_response.context["submission_spec"]["resources"]["ntasks"] == 48
+assert resource_response.context["submission_spec"]["resources"]["mem_gb"] == 256
+assert resource_response.context["submission_spec"]["cluster"]["partition"] == "debug"
+assert resource_response.context["submission_spec"]["cluster"]["account"] == "debug-users"
+assert resource_response.context["generated_inputs"]["slurm_script"] == build_slurm_preview_script(
+    resource_response.context["submission_spec"]
+)
+assert "#SBATCH -p debug" in resource_response.context["generated_inputs"]["slurm_script"]
+assert "#SBATCH --account=debug-users" in resource_response.context["generated_inputs"]["slurm_script"]
+assert "#SBATCH -J Si-static" in resource_response.context["generated_inputs"]["slurm_script"]
+assert "#SBATCH --nodes=1" in resource_response.context["generated_inputs"]["slurm_script"]
+assert "#SBATCH --ntasks=48" in resource_response.context["generated_inputs"]["slurm_script"]
+assert "#SBATCH --mem=256GB" in resource_response.context["generated_inputs"]["slurm_script"]
+assert "#SBATCH --time=12:00:00" in resource_response.context["generated_inputs"]["slurm_script"]
 
 spin_response = build_workflow(
     request,
@@ -234,19 +326,28 @@ assert relax_response.context["submission_spec"]["flow_spec"]["calculation_spec"
 
 template_source = open("templates/index.html", encoding="utf-8").read()
 for heading in (
-    "Scientific Summary",
+    "Calculation Definition",
+    "Scientific Specification",
+    "Execution Resources",
+    "Calculation Summary",
     "Generated Inputs",
-    "Computational Resources",
+    "Execution Summary",
     "Ready for Submission",
 ):
     assert heading in template_source
-assert "Calculation Summary" not in template_source
+assert "Computational Resources" not in template_source
 assert "Submission Preview" not in template_source
+for field_name in ("cpus", "memory_gb", "walltime", "queue", "account"):
+    assert f'name="{field_name}"' in template_source
 assert "input-tab-poscar" in template_source
 assert "tab-panel-poscar" in template_source
 assert "generated_inputs.poscar" in template_source
-assert template_source.count("data-copy-input") == 4
-assert template_source.count('class="input-copy-button" data-copy-input') == 3
+assert "input-tab-slurm" in template_source
+assert "tab-panel-slurm" in template_source
+assert "generated_inputs.slurm_script" in template_source
+assert "SLURM Script" in template_source
+assert template_source.count("data-copy-input") == 5
+assert template_source.count('class="input-copy-button" data-copy-input') == 4
 assert "navigator.clipboard.writeText" in template_source
 assert "\\u2713 Copied" in template_source
 assert "Not supported" in template_source

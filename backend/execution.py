@@ -59,6 +59,7 @@ def run_submission(spec: dict) -> None:
         structure,
         flow_spec,
         run_name=spec["run_name"],
+        resources=spec.get("resources"),
     )
 
     print_vasp_launch_environment()

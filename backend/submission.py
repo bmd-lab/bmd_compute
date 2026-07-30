@@ -34,10 +34,12 @@ REMOTE_BACKEND_PACKAGE_DIR = "backend"
 REMOTE_EXECUTION_MODULE_FILENAME = "execution.py"
 REMOTE_BACKEND_INIT_FILENAME = "__init__.py"
 REMOTE_BACKEND_MODULE_FILENAMES = (
+    "config.py",
     REMOTE_EXECUTION_MODULE_FILENAME,
     "calculations/__init__.py",
     "calculations/builder.py",
     "calculations/models.py",
+    "calculations/resources.py",
     "calculations/registry.py",
     "parser.py",
     "workflows.py",
@@ -427,6 +429,8 @@ echo "Done. Logs:"; echo {shlex.quote(runner["stdout"])}; echo {shlex.quote(runn
 def build_sbatch_script(submission_spec: dict) -> str:
     paths = submission_spec["paths"]
     run_name = submission_spec["run_name"]
+    cluster = submission_spec["cluster"]
+    resources = submission_spec["resources"]
     module_lines = _module_lines(submission_spec)
     exports = _submission_env_exports(submission_spec)
     job_body = build_job_body(submission_spec)
@@ -434,7 +438,13 @@ def build_sbatch_script(submission_spec: dict) -> str:
     export_block = "\n".join(exports)
 
     header = (
+        f"#SBATCH -p {cluster['partition']}\n"
+        f"#SBATCH --account={cluster['account']}\n"
         f"#SBATCH --job-name={run_name}\n"
+        f"#SBATCH --time={resources['walltime']}\n"
+        f"#SBATCH --nodes={int(resources['nodes'])}\n"
+        f"#SBATCH --ntasks={int(resources['ntasks'])}\n"
+        f"#SBATCH --mem={int(resources['mem_gb'])}GB\n"
         f"#SBATCH --output={paths['slurm_out']}\n"
         f"#SBATCH --error={paths['slurm_err']}"
     )
@@ -467,6 +477,34 @@ ls -ld "$PMG_VASP_PSP_DIR"/POT_* >/dev/null 2>&1 || echo "[warn] No POT_* dir fo
 {job_body.strip()}
 """
     return body.rstrip() + "\n"
+
+
+def build_slurm_preview_script(submission_spec: dict) -> str:
+    cluster = submission_spec["cluster"]
+    resources = submission_spec["resources"]
+    modules = submission_spec.get("modules", {}).get("load", MODULES)
+    vasp_cmd = submission_spec.get("environment", {}).get("VASP_CMD") or NOTEBOOK_DEFAULTS["VASP_CMD"]
+    job_name = submission_spec.get("label") or submission_spec["run_name"]
+
+    module_lines = "\n".join(f"module load {module_name}" for module_name in modules)
+
+    return (
+        "#!/bin/bash\n"
+        "\n"
+        f"#SBATCH -p {cluster['partition']}\n"
+        f"#SBATCH --account={cluster['account']}\n"
+        f"#SBATCH -J {job_name}\n"
+        f"#SBATCH --time={resources['walltime']}\n"
+        f"#SBATCH --nodes={int(resources['nodes'])}\n"
+        f"#SBATCH --ntasks={int(resources['ntasks'])}\n"
+        f"#SBATCH --mem={int(resources['mem_gb'])}GB\n"
+        "\n"
+        "ulimit -s 81920\n"
+        "\n"
+        f"{module_lines}\n"
+        "\n"
+        f"{vasp_cmd}\n"
+    )
 
 
 def build_submission_command(submission_spec: dict, *, dry_run: bool = False) -> str:
@@ -919,6 +957,7 @@ __all__ = [
     "SUBMISSION_SPEC_FILENAME",
     "build_backend_module_sources",
     "build_execution_module_source",
+    "build_slurm_preview_script",
     "build_sbatch_script",
     "build_run_job_script",
     "build_submission_command",

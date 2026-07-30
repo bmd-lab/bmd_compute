@@ -15,6 +15,7 @@ def build_calculation_flow(
     label: str = "vasp_run",
     incar: dict | None = None,
     kpoints: dict | None = None,
+    resources=None,
     potcar_functional: str | None = None,
 ):
     """
@@ -39,6 +40,7 @@ def build_calculation_flow(
             label=label,
             incar=incar,
             kpoints=kpoints,
+            resources=resources,
             potcar_functional=potcar_functional,
         )
 
@@ -55,6 +57,7 @@ def _build_pbe_calculation_flow(
     label: str,
     incar: dict | None,
     kpoints: dict | None,
+    resources,
     potcar_functional: str | None,
 ):
     normalized = validate_calculation_spec(spec)
@@ -70,6 +73,7 @@ def _build_pbe_calculation_flow(
         label=label,
         incar=incar,
         kpoints=kpoints,
+        resources=resources,
         potcar_functional=legacy_potcar_functional,
     )
 
@@ -81,6 +85,7 @@ def build_calculation_flow_from_legacy(
     label: str = "vasp_run",
     incar: dict | None = None,
     kpoints: dict | None = None,
+    resources=None,
     potcar_functional: str | None = None,
 ):
     spec = calculation_spec_from_legacy(workflow, potcar_functional)
@@ -90,6 +95,7 @@ def build_calculation_flow_from_legacy(
         label=label,
         incar=incar,
         kpoints=kpoints,
+        resources=resources,
         potcar_functional=potcar_functional,
     )
 

@@ -18,6 +18,7 @@ from backend.submission import (
     build_execution_module_source,
     build_run_job_script,
     build_sbatch_script,
+    build_slurm_preview_script,
     create_submission_spec,
     default_resources_for_workflow,
     summarize_potcar_species,
@@ -189,7 +190,40 @@ assert "run_submission(spec)" in run_job_script
 assert "RelaxMaker" not in run_job_script
 assert "StaticSetGenerator" not in run_job_script
 
+slurm_preview_script = build_slurm_preview_script(spec)
+assert slurm_preview_script.startswith("#!/bin/bash\n\n")
+assert f"#SBATCH -p {DEFAULT_PARTITION}" in slurm_preview_script
+assert f"#SBATCH --account={DEFAULT_ACCOUNT}" in slurm_preview_script
+assert "#SBATCH -J Si-static" in slurm_preview_script
+assert f"#SBATCH --nodes={DEFAULT_RESOURCES['nodes']}" in slurm_preview_script
+assert f"#SBATCH --ntasks={DEFAULT_RESOURCES['ntasks']}" in slurm_preview_script
+assert f"#SBATCH --mem={DEFAULT_RESOURCES['mem_gb']}GB" in slurm_preview_script
+assert f"#SBATCH --time={DEFAULT_RESOURCES['walltime']}" in slurm_preview_script
+assert "ulimit -s 81920" in slurm_preview_script
+for module_name in MODULES:
+    assert f"module load {module_name}\n" in slurm_preview_script
+assert DEFAULT_VASP_CMD in slurm_preview_script
+for internal_detail in (
+    "/bmd-db/guest",
+    "run_job.py",
+    "submission.json",
+    "JOBFLOW_CONFIG_FILE",
+    "PMG_VASP_PSP_DIR",
+    "CUSTODIAN_",
+    "ATOMATE2_",
+    "BMD_SUBMISSION_SPEC",
+    "echo ",
+    "test -f",
+):
+    assert internal_detail not in slurm_preview_script
+
 sbatch_script = build_sbatch_script(spec)
+assert f"#SBATCH -p {DEFAULT_PARTITION}" in sbatch_script
+assert f"#SBATCH --account={DEFAULT_ACCOUNT}" in sbatch_script
+assert f"#SBATCH --nodes={DEFAULT_RESOURCES['nodes']}" in sbatch_script
+assert f"#SBATCH --ntasks={DEFAULT_RESOURCES['ntasks']}" in sbatch_script
+assert f"#SBATCH --mem={DEFAULT_RESOURCES['mem_gb']}GB" in sbatch_script
+assert f"#SBATCH --time={DEFAULT_RESOURCES['walltime']}" in sbatch_script
 assert "export PMG_VASP_PSP_DIR=/bmd-db/potcars" in sbatch_script
 assert "/bmd-db/guest/potcars" not in sbatch_script
 assert "if ! type module >/dev/null 2>&1; then" in sbatch_script
@@ -218,6 +252,7 @@ execution_module_source = build_execution_module_source()
 assert "def run_submission(spec: dict)" in execution_module_source
 assert "structure_from_spec" in execution_module_source
 assert "build_atomate2_flow_from_spec" in execution_module_source
+assert "resources=spec.get(\"resources\")" in execution_module_source
 assert "run_locally" in execution_module_source
 assert "def incar_static" not in execution_module_source
 assert "def incar_relax" not in execution_module_source
@@ -227,15 +262,18 @@ assert "StaticSetGenerator" not in execution_module_source
 
 backend_module_sources = build_backend_module_sources()
 assert set(backend_module_sources) == {
+    "config.py",
     "calculations/__init__.py",
     "calculations/builder.py",
     "calculations/models.py",
+    "calculations/resources.py",
     "calculations/registry.py",
     "execution.py",
     "parser.py",
     "workflows.py",
 }
 assert "class CalculationSpec" in backend_module_sources["calculations/models.py"]
+assert "def ncore_for_execution_resources" in backend_module_sources["calculations/resources.py"]
 assert "def calculation_spec_from_flow_spec" in backend_module_sources["calculations/registry.py"]
 assert "def structure_from_spec" in backend_module_sources["parser.py"]
 assert "def build_atomate2_flow_from_spec" in backend_module_sources["workflows.py"]

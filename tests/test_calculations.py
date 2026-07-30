@@ -143,6 +143,7 @@ assert calls == [
         "label": "demo",
         "incar": {"ENCUT": 520},
         "kpoints": {"grid_density": 1000},
+        "resources": None,
         "potcar_functional": "PBE_64",
     }
 ]

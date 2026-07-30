@@ -361,14 +361,16 @@ ul {
 
 #input-tab-incar:checked ~ .tab-labels label[for="input-tab-incar"],
 #input-tab-kpoints:checked ~ .tab-labels label[for="input-tab-kpoints"],
-#input-tab-poscar:checked ~ .tab-labels label[for="input-tab-poscar"] {
+#input-tab-poscar:checked ~ .tab-labels label[for="input-tab-poscar"],
+#input-tab-slurm:checked ~ .tab-labels label[for="input-tab-slurm"] {
     background: #242424;
     color: var(--accent-2);
 }
 
 #input-tab-incar:checked ~ .tab-panel-incar,
 #input-tab-kpoints:checked ~ .tab-panel-kpoints,
-#input-tab-poscar:checked ~ .tab-panel-poscar {
+#input-tab-poscar:checked ~ .tab-panel-poscar,
+#input-tab-slurm:checked ~ .tab-panel-slurm {
     display: block;
 }
 
@@ -412,6 +414,37 @@ ul {
     gap: 18px;
 }
 
+.configuration-grid {
+    align-items: start;
+    display: grid;
+    gap: 18px;
+    grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
+}
+
+.configuration-panel {
+    background: #1b1b1b;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 16px;
+}
+
+.configuration-panel h3 {
+    color: var(--text);
+    font-size: 16px;
+    letter-spacing: 0;
+    margin: 0 0 14px;
+}
+
+.resource-grid {
+    display: grid;
+    gap: 16px;
+    grid-template-columns: 1fr 1fr;
+}
+
+.resource-grid .wide {
+    grid-column: 1 / -1;
+}
+
 .calculation-actions {
     align-self: flex-start;
 }
@@ -428,6 +461,7 @@ ul {
 
 .settings-panel {
     align-self: flex-start;
+    margin-top: 16px;
     max-width: 100%;
     min-width: min(360px, 100%);
 }
@@ -635,7 +669,8 @@ ul {
     .metric-strip,
     .details-grid,
     .form-grid,
-    .calculation-layout,
+    .configuration-grid,
+    .resource-grid,
     .submission-grid,
     .button-row {
         grid-template-columns: 1fr;
@@ -877,14 +912,10 @@ ul {
                 <div>
                     <div class="stage-title">
                         <span class="stage-number">3</span>
-                        <h2>{% if calculation %}Scientific Summary{% else %}Calculation{% endif %}</h2>
+                        <h2>Calculation Definition</h2>
                     </div>
                     <div class="summary-line">
-                        {% if calculation %}
-                        Review or update the selected calculation.
-                        {% else %}
-                        {{ selected_calculation.purpose_label }} · {{ selected_calculation.theory_label }}
-                        {% endif %}
+                        Configure the scientific specification and execution resources.
                     </div>
                 </div>
                 <div class="stage-status">
@@ -901,54 +932,102 @@ ul {
                 <input type="hidden" name="fmt" value="{{ fmt }}">
 
                 <div class="calculation-layout">
-                    <div class="form-grid">
-                        <div>
-                            <label>Calculation Type</label>
-                            <select name="purpose">
-                                {% for option in calculation_options.purposes %}
-                                <option
-                                    value="{{ option.value }}"
-                                    {% if selected_calculation.purpose == option.value %}selected{% endif %}
-                                    {% if not option.enabled %}disabled{% endif %}>
-                                    {{ option.label }}
-                                </option>
-                                {% endfor %}
-                            </select>
+                    <div class="configuration-grid">
+                        <div class="configuration-panel">
+                            <h3>Scientific Specification</h3>
+                            <div class="form-grid">
+                                <div>
+                                    <label>Calculation Type</label>
+                                    <select name="purpose">
+                                        {% for option in calculation_options.purposes %}
+                                        <option
+                                            value="{{ option.value }}"
+                                            {% if selected_calculation.purpose == option.value %}selected{% endif %}
+                                            {% if not option.enabled %}disabled{% endif %}>
+                                            {{ option.label }}
+                                        </option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+
+                                <div>
+                                    <label>Level of Theory</label>
+                                    <select name="theory">
+                                        {% for option in calculation_options.theories %}
+                                        <option
+                                            value="{{ option.value }}"
+                                            {% if selected_calculation.theory == option.value %}selected{% endif %}
+                                            {% if not option.enabled %}disabled{% endif %}>
+                                            {{ option.label }}
+                                        </option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                            </div>
+
+                            <details class="disclosure settings-panel">
+                                <summary>Advanced Options</summary>
+                                <div class="option-list">
+                                    {% for option in calculation_options.modifiers %}
+                                    <label
+                                        class="modifier-option {% if not option.enabled %}unavailable{% endif %}"
+                                        {% if option.tooltip %}title="{{ option.tooltip }}"{% endif %}>
+                                        <input
+                                            type="checkbox"
+                                            name="modifiers"
+                                            value="{{ option.value }}"
+                                            {% if option.value in selected_calculation.modifiers %}checked{% endif %}
+                                            {% if not option.enabled %}disabled{% endif %}>
+                                        <span>{{ option.label }}</span>
+                                    </label>
+                                    {% endfor %}
+                                </div>
+                            </details>
                         </div>
 
-                        <div>
-                            <label>Level of Theory</label>
-                            <select name="theory">
-                                {% for option in calculation_options.theories %}
-                                <option
-                                    value="{{ option.value }}"
-                                    {% if selected_calculation.theory == option.value %}selected{% endif %}
-                                    {% if not option.enabled %}disabled{% endif %}>
-                                    {{ option.label }}
-                                </option>
-                                {% endfor %}
-                            </select>
+                        <div class="configuration-panel">
+                            <h3>Execution Resources</h3>
+                            <div class="resource-grid">
+                                <div>
+                                    <label>CPUs</label>
+                                    <select name="cpus">
+                                        {% for cpu_count in selected_resources.allowed_cpu_counts %}
+                                        <option
+                                            value="{{ cpu_count }}"
+                                            {% if selected_resources.cpus == cpu_count %}selected{% endif %}>
+                                            {{ cpu_count }}
+                                        </option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label>Memory (GB)</label>
+                                    <input
+                                        type="number"
+                                        min="1"
+                                        step="1"
+                                        name="memory_gb"
+                                        value="{{ selected_resources.memory_gb }}">
+                                </div>
+                                <div>
+                                    <label>Walltime</label>
+                                    <input name="walltime" value="{{ selected_resources.walltime }}">
+                                </div>
+                                <div>
+                                    <label>Queue</label>
+                                    <input name="queue" value="{{ selected_resources.queue }}">
+                                </div>
+                                <div class="wide">
+                                    <label>Account</label>
+                                    <input name="account" value="{{ selected_resources.account }}">
+                                </div>
+                                <input
+                                    type="hidden"
+                                    name="nodes"
+                                    value="{{ selected_resources.nodes }}">
+                            </div>
                         </div>
                     </div>
-
-                    <details class="disclosure settings-panel">
-                        <summary>Advanced Options</summary>
-                        <div class="option-list">
-                            {% for option in calculation_options.modifiers %}
-                            <label
-                                class="modifier-option {% if not option.enabled %}unavailable{% endif %}"
-                                {% if option.tooltip %}title="{{ option.tooltip }}"{% endif %}>
-                                <input
-                                    type="checkbox"
-                                    name="modifiers"
-                                    value="{{ option.value }}"
-                                    {% if option.value in selected_calculation.modifiers %}checked{% endif %}
-                                    {% if not option.enabled %}disabled{% endif %}>
-                                <span>{{ option.label }}</span>
-                            </label>
-                            {% endfor %}
-                        </div>
-                    </details>
 
                     <div class="calculation-actions">
                         <button type="submit" data-build-calculation-button>
@@ -980,13 +1059,69 @@ ul {
         </section>
         {% endif %}
 
-        {% if generated_inputs %}
+        {% if calculation %}
         <section class="stage">
 
             <div class="stage-header">
                 <div>
                     <div class="stage-title">
                         <span class="stage-number">4</span>
+                        <h2>Calculation Summary</h2>
+                    </div>
+                    <div class="summary-line">
+                        {{ calculation.flow_name }} · {{ calculation.number_of_jobs }} job{% if calculation.number_of_jobs != 1 %}s{% endif %}
+                    </div>
+                </div>
+                <div class="stage-status">
+                    {% if calculation.ready_for_submission %}<span class="pill ready">Ready</span>{% else %}<span class="pill">Pending</span>{% endif %}
+                </div>
+            </div>
+
+            <div class="submission-grid">
+                <div class="callout">
+                    <div class="callout-title">Calculation Type</div>
+                    <div class="callout-value">{{ calculation.calculation_type }}</div>
+                </div>
+                <div class="callout">
+                    <div class="callout-title">Level of Theory</div>
+                    <div class="callout-value">{{ selected_calculation.theory_label }}</div>
+                </div>
+                <div class="callout">
+                    <div class="callout-title">Advanced Options</div>
+                    <div class="callout-value">
+                        {% if selected_calculation.modifier_labels %}
+                        {{ selected_calculation.modifier_labels | join(", ") }}
+                        {% else %}
+                        None
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="callout">
+                    <div class="callout-title">Flow Name</div>
+                    <div class="callout-value mono">{{ calculation.flow_name }}</div>
+                </div>
+                <div class="callout">
+                    <div class="callout-title">Jobs</div>
+                    <div class="callout-value mono">
+                        {% if calculation.job_names %}
+                        {{ calculation.job_names | join(", ") }}
+                        {% else %}
+                        None
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+        </section>
+        {% endif %}
+
+        {% if generated_inputs %}
+        <section class="stage">
+
+            <div class="stage-header">
+                <div>
+                    <div class="stage-title">
+                        <span class="stage-number">5</span>
                         <h2>Generated Inputs</h2>
                     </div>
                     <div class="summary-line">
@@ -1002,11 +1137,13 @@ ul {
                 <input type="radio" id="input-tab-incar" name="generated-input-tab" checked>
                 <input type="radio" id="input-tab-kpoints" name="generated-input-tab">
                 <input type="radio" id="input-tab-poscar" name="generated-input-tab">
+                <input type="radio" id="input-tab-slurm" name="generated-input-tab">
 
                 <div class="tab-labels">
                     <label for="input-tab-incar">INCAR</label>
                     <label for="input-tab-kpoints">KPOINTS</label>
                     <label for="input-tab-poscar">POSCAR</label>
+                    <label for="input-tab-slurm">SLURM Script</label>
                 </div>
 
                 <div class="tab-panel tab-panel-incar">
@@ -1029,6 +1166,13 @@ ul {
                         <pre class="input-preview">{{ generated_inputs.poscar }}</pre>
                     </div>
                 </div>
+
+                <div class="tab-panel tab-panel-slurm">
+                    <div class="input-pane">
+                        <button type="button" class="input-copy-button" data-copy-input>Copy</button>
+                        <pre class="input-preview">{{ generated_inputs.slurm_script }}</pre>
+                    </div>
+                </div>
             </div>
 
         </section>
@@ -1040,11 +1184,11 @@ ul {
             <div class="stage-header">
                 <div>
                     <div class="stage-title">
-                        <span class="stage-number">5</span>
-                        <h2>Computational Resources</h2>
+                        <span class="stage-number">6</span>
+                        <h2>Execution Summary</h2>
                     </div>
                     <div class="summary-line">
-                        {{ submission_spec.run_name }} · {{ submission_spec.resources.ntasks }} tasks · {{ submission_spec.resources.walltime }}
+                        {{ submission_spec.run_name }} · {{ submission_spec.resources.ntasks }} CPUs · {{ submission_spec.resources.walltime }}
                     </div>
                 </div>
                 <div class="stage-status">
@@ -1064,7 +1208,7 @@ ul {
                 <div class="callout">
                     <div class="callout-title">Resources</div>
                     <div class="callout-value">
-                        {{ submission_spec.resources.nodes }} node · {{ submission_spec.resources.ntasks }} tasks · {{ submission_spec.resources.mem_gb }}G
+                        {{ submission_spec.resources.nodes }} node · {{ submission_spec.resources.ntasks }} CPUs · {{ submission_spec.resources.mem_gb }}G
                     </div>
                 </div>
                 <div class="callout">
@@ -1113,7 +1257,7 @@ ul {
                             <td>Resources</td>
                             <td class="mono">
                                 nodes={{ submission_spec.resources.nodes }}<br>
-                                ntasks={{ submission_spec.resources.ntasks }}<br>
+                                cpus={{ submission_spec.resources.ntasks }}<br>
                                 memory={{ submission_spec.resources.mem_gb }}G<br>
                                 walltime={{ submission_spec.resources.walltime }}
                             </td>
@@ -1216,7 +1360,7 @@ ul {
             <div class="stage-header">
                 <div>
                     <div class="stage-title">
-                        <span class="stage-number">6</span>
+                        <span class="stage-number">7</span>
                         <h2>Ready for Submission</h2>
                     </div>
                     <div class="summary-line">
@@ -1243,6 +1387,11 @@ ul {
                     {% for modifier in selected_calculation.modifiers %}
                     <input type="hidden" name="modifiers" value="{{ modifier }}">
                     {% endfor %}
+                    <input type="hidden" name="cpus" value="{{ selected_resources.cpus }}">
+                    <input type="hidden" name="memory_gb" value="{{ selected_resources.memory_gb }}">
+                    <input type="hidden" name="walltime" value="{{ selected_resources.walltime }}">
+                    <input type="hidden" name="queue" value="{{ selected_resources.queue }}">
+                    <input type="hidden" name="account" value="{{ selected_resources.account }}">
                     <input type="hidden" name="created_at" value="{{ submission_spec.created_at }}">
                     <button type="submit" data-current-calculation-action>Prepare Remote</button>
                 </form>
@@ -1255,6 +1404,11 @@ ul {
                     {% for modifier in selected_calculation.modifiers %}
                     <input type="hidden" name="modifiers" value="{{ modifier }}">
                     {% endfor %}
+                    <input type="hidden" name="cpus" value="{{ selected_resources.cpus }}">
+                    <input type="hidden" name="memory_gb" value="{{ selected_resources.memory_gb }}">
+                    <input type="hidden" name="walltime" value="{{ selected_resources.walltime }}">
+                    <input type="hidden" name="queue" value="{{ selected_resources.queue }}">
+                    <input type="hidden" name="account" value="{{ selected_resources.account }}">
                     <input type="hidden" name="created_at" value="{{ submission_spec.created_at }}">
                     <input
                         type="hidden"
@@ -1403,7 +1557,7 @@ ul {
             <div class="stage-header">
                 <div>
                     <div class="stage-title">
-                        <span class="stage-number">7</span>
+                        <span class="stage-number">8</span>
                         <h2>Monitoring</h2>
                     </div>
                     <div class="summary-line">
@@ -1434,6 +1588,11 @@ ul {
                 {% for modifier in selected_calculation.modifiers %}
                 <input type="hidden" name="modifiers" value="{{ modifier }}">
                 {% endfor %}
+                <input type="hidden" name="cpus" value="{{ selected_resources.cpus }}">
+                <input type="hidden" name="memory_gb" value="{{ selected_resources.memory_gb }}">
+                <input type="hidden" name="walltime" value="{{ selected_resources.walltime }}">
+                <input type="hidden" name="queue" value="{{ selected_resources.queue }}">
+                <input type="hidden" name="account" value="{{ selected_resources.account }}">
                 <input type="hidden" name="created_at" value="{{ submission_spec.created_at }}">
                 <input type="hidden" name="job_id" value="{{ submission_result.job_id if submission_result else monitoring_result.job_id }}">
                 <input type="hidden" name="submitted_at" value="{{ submission_result.job_record.submitted_at if submission_result else '' }}">
@@ -1559,7 +1718,7 @@ ul {
             <div class="stage-header">
                 <div>
                     <div class="stage-title">
-                        <span class="stage-number">8</span>
+                        <span class="stage-number">9</span>
                         <h2>Results</h2>
                     </div>
                     <div class="summary-line">

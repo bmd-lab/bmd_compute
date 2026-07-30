@@ -12,6 +12,9 @@ DFT_U_INCAR_KEYS = (
 )
 
 from backend.calculations.models import CalculationSpec, Modifier, Purpose
+from backend.calculations.resources import (
+    ncore_for_execution_resources,
+)
 from backend.calculations.registry import (
     CalculationValidationError,
     calculation_spec_from_flow_spec,
@@ -65,9 +68,6 @@ def incar_static(settings, allow_ncore=True):
     }.items():
         user_settings.setdefault(key, value)
 
-    if allow_ncore and not _is_hse_incar(user_settings):
-        user_settings.setdefault("NCORE", 2)
-
     return user_settings
 
 
@@ -98,9 +98,6 @@ def incar_relax(settings, user=None):
     if _is_hse_incar(user_settings) or _is_hse_incar(explicit_user_settings):
         user_settings.setdefault("PRECFOCK", "Fast")
         user_settings.setdefault("ALGO", "Damped")
-
-    if not _is_hse_incar(user_settings) and not _is_hse_incar(explicit_user_settings):
-        user_settings.setdefault("NCORE", 2)
 
     return user_settings
 
@@ -223,6 +220,16 @@ def apply_dft_u_settings(user_incar, *, dft_u: bool) -> dict:
     return settings
 
 
+def apply_resource_incar_settings(user_incar, *, resources=None, allow_ncore=True) -> dict:
+    settings = dict(user_incar or {})
+    if not allow_ncore:
+        settings.pop("NCORE", None)
+        return settings
+
+    settings["NCORE"] = ncore_for_execution_resources(resources)
+    return settings
+
+
 def ksettings_for_modifiers(structure, kpoints_config, *, modifiers):
     normalized_modifiers = calculation_modifiers_from_options(modifiers=modifiers)
     if Modifier.GAMMA_ONLY in normalized_modifiers:
@@ -283,6 +290,7 @@ def build_relax_input_set_generator(
     isif=None,
     spin_polarized=False,
     modifiers=None,
+    resources=None,
     incar=None,
     kpoints=None,
     potcar_functional="PBE_64",
@@ -304,6 +312,11 @@ def build_relax_input_set_generator(
     user_incar.setdefault("EDIFFG", -0.01)
     if isif is not None:
         user_incar["ISIF"] = isif
+    user_incar = apply_resource_incar_settings(
+        user_incar,
+        resources=resources,
+        allow_ncore=not _is_hse_incar(user_incar),
+    )
 
     return RelaxSetGenerator(
         user_potcar_functional=potcar_functional,
@@ -324,6 +337,7 @@ def build_relax_flow(
     isif=None,
     spin_polarized=False,
     modifiers=None,
+    resources=None,
     incar=None,
     kpoints=None,
     potcar_functional="PBE_64",
@@ -336,6 +350,7 @@ def build_relax_flow(
         isif=isif,
         spin_polarized=spin_polarized,
         modifiers=modifiers,
+        resources=resources,
         incar=incar,
         kpoints=kpoints,
         potcar_functional=potcar_functional,
@@ -359,6 +374,7 @@ def build_static_input_set_generator(
     intent="final",
     spin_polarized=False,
     modifiers=None,
+    resources=None,
     incar=None,
     kpoints=None,
     potcar_functional="PBE_64",
@@ -411,6 +427,12 @@ def build_static_input_set_generator(
         user_incar["LWAVE"] = True
         user_incar["LCHARG"] = True
 
+    user_incar = apply_resource_incar_settings(
+        user_incar,
+        resources=resources,
+        allow_ncore=not (hse or prep_for_gw),
+    )
+
     return StaticSetGenerator(
         user_potcar_functional=potcar_functional,
         user_kpoints_settings=ksettings_for_modifiers(
@@ -431,6 +453,7 @@ def build_static_flow(
     intent="final",
     spin_polarized=False,
     modifiers=None,
+    resources=None,
     incar=None,
     kpoints=None,
     potcar_functional="PBE_64",
@@ -445,6 +468,7 @@ def build_static_flow(
         intent=intent,
         spin_polarized=spin_polarized,
         modifiers=modifiers,
+        resources=resources,
         incar=incar,
         kpoints=kpoints,
         potcar_functional=potcar_functional,
@@ -463,6 +487,7 @@ def build_vasp_input_set_generator_for_spec(
     *,
     incar=None,
     kpoints=None,
+    resources=None,
     potcar_functional="PBE_64",
 ):
     calculation_spec = validate_calculation_spec(spec)
@@ -477,6 +502,7 @@ def build_vasp_input_set_generator_for_spec(
             intent="final",
             spin_polarized=spin_polarized,
             modifiers=calculation_modifiers,
+            resources=resources,
             incar=user_incar,
             kpoints=kpoints,
             potcar_functional=potcar_functional,
@@ -488,6 +514,7 @@ def build_vasp_input_set_generator_for_spec(
             isif=2 if Modifier.IONS_ONLY in calculation_spec.modifiers else None,
             spin_polarized=spin_polarized,
             modifiers=calculation_modifiers,
+            resources=resources,
             incar=user_incar,
             kpoints=kpoints,
             potcar_functional=potcar_functional,
@@ -505,6 +532,7 @@ def build_vasp_input_set_for_spec(
     *,
     incar=None,
     kpoints=None,
+    resources=None,
     potcar_functional="PBE_64",
 ):
     calculation_spec = validate_calculation_spec(spec)
@@ -513,6 +541,7 @@ def build_vasp_input_set_for_spec(
         calculation_spec,
         incar=incar,
         kpoints=kpoints,
+        resources=resources,
         potcar_functional=potcar_functional,
     )
     input_set = generator.get_input_set(structure, potcar_spec=True)
@@ -527,6 +556,7 @@ def build_atomate2_flow_for_spec(
     label="vasp_run",
     incar=None,
     kpoints=None,
+    resources=None,
     potcar_functional="PBE_64",
 ):
     calculation_spec = validate_calculation_spec(spec)
@@ -542,6 +572,7 @@ def build_atomate2_flow_for_spec(
             intent="final",
             spin_polarized=spin_polarized,
             modifiers=calculation_modifiers,
+            resources=resources,
             incar=user_incar,
             kpoints=kpoints,
             potcar_functional=potcar_functional,
@@ -554,6 +585,7 @@ def build_atomate2_flow_for_spec(
             isif=2 if Modifier.IONS_ONLY in calculation_spec.modifiers else None,
             spin_polarized=spin_polarized,
             modifiers=calculation_modifiers,
+            resources=resources,
             incar=user_incar,
             kpoints=kpoints,
             potcar_functional=potcar_functional,
@@ -572,6 +604,7 @@ def build_atomate2_flow(
     label="vasp_run",
     incar=None,
     kpoints=None,
+    resources=None,
     potcar_functional="PBE_64",
 ):
     calculation_spec = calculation_spec_from_legacy(workflow, potcar_functional)
@@ -583,11 +616,18 @@ def build_atomate2_flow(
         label=label,
         incar=incar,
         kpoints=kpoints,
+        resources=resources,
         potcar_functional=potcar_functional,
     )
 
 
-def build_atomate2_flow_from_spec(structure, flow_spec: dict, *, run_name: str):
+def build_atomate2_flow_from_spec(
+    structure,
+    flow_spec: dict,
+    *,
+    run_name: str,
+    resources=None,
+):
     """
     Build the Atomate2 Flow represented by a SubmissionSpec flow_spec.
 
@@ -598,6 +638,7 @@ def build_atomate2_flow_from_spec(structure, flow_spec: dict, *, run_name: str):
 
     calculation_spec = calculation_spec_from_flow_spec(flow_spec)
     potcar_functional = flow_spec.get("potcar_functional") or "PBE_64"
+    execution_resources = resources or flow_spec.get("execution_resources")
     from backend.calculations.builder import build_calculation_flow
 
     flow = build_calculation_flow(
@@ -606,6 +647,7 @@ def build_atomate2_flow_from_spec(structure, flow_spec: dict, *, run_name: str):
         label=run_name,
         incar=flow_spec.get("incar") or flow_spec.get("incar_overrides") or {},
         kpoints=flow_spec.get("kpoints"),
+        resources=execution_resources,
         potcar_functional=potcar_functional,
     )
 

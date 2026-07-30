@@ -1,8 +1,14 @@
 from backend.calculations.models import CalculationSpec, Modifier, Purpose, Theory
+from backend.calculations.resources import (
+    ALLOWED_CPU_COUNTS,
+    ExecutionResources,
+    ncore_for_execution_resources,
+)
 from backend.calculations.registry import CalculationValidationError
 from backend.workflows import (
     apply_modifier_incar_settings,
     apply_dft_u_settings,
+    apply_resource_incar_settings,
     apply_spin_settings,
     build_atomate2_flow_for_spec,
     incar_relax,
@@ -70,6 +76,33 @@ dft_u_settings = apply_modifier_incar_settings(
 assert dft_u_settings["LDAU"] is True
 assert dft_u_settings["LDAUU"] == {"Ni": 6.2, "O": 0}
 assert apply_dft_u_settings({"LDAU": True}, dft_u=False)["LDAU"] is None
+assert ALLOWED_CPU_COUNTS == (24, 48, 72, 96, 120, 144, 168, 192)
+assert ncore_for_execution_resources(ExecutionResources(cpus=24)) == 8
+assert ncore_for_execution_resources({"ntasks": 48}) == 8
+try:
+    ExecutionResources(cpus=25)
+except CalculationValidationError as exc:
+    assert "CPUs must be one of" in exc.message
+else:
+    raise AssertionError("Unsupported CPU counts should be rejected.")
+assert apply_resource_incar_settings(
+    {"ENCUT": 520},
+    resources=ExecutionResources(cpus=24),
+) == {
+    "ENCUT": 520,
+    "NCORE": 8,
+}
+assert apply_resource_incar_settings(
+    {"NCORE": 4},
+    resources=ExecutionResources(cpus=48),
+) == {
+    "NCORE": 8,
+}
+assert apply_resource_incar_settings(
+    {"NCORE": 4},
+    resources=ExecutionResources(cpus=24),
+    allow_ncore=False,
+) == {}
 assert apply_modifier_incar_settings(
     {"MAGMOM": {"Fe": 5}},
     modifiers={Modifier.SOC},
@@ -188,5 +221,6 @@ assert [call[2]["modifiers"] for call in calls] == [
     frozenset(),
     frozenset({Modifier.SPIN_POLARIZED}),
 ]
+assert [call[2]["resources"] for call in calls] == [None, None, None, None]
 
 print("spin modifier smoke test passed")
