@@ -325,6 +325,40 @@ ul {
     display: none;
 }
 
+.input-pane {
+    position: relative;
+}
+
+.input-copy-button {
+    background: #2a2a2a;
+    border: 1px solid var(--line-strong);
+    border-radius: 6px;
+    color: var(--soft);
+    font-size: 12px;
+    margin: 0;
+    padding: 7px 10px;
+    position: absolute;
+    right: 10px;
+    top: 10px;
+    width: auto;
+    z-index: 1;
+}
+
+.input-copy-button:hover {
+    background: #333333;
+    color: var(--text);
+}
+
+.input-copy-button.copied {
+    border-color: var(--ok);
+    color: var(--ok);
+}
+
+.input-copy-button.unsupported {
+    border-color: var(--bad);
+    color: var(--bad);
+}
+
 #input-tab-incar:checked ~ .tab-labels label[for="input-tab-incar"],
 #input-tab-kpoints:checked ~ .tab-labels label[for="input-tab-kpoints"],
 #input-tab-poscar:checked ~ .tab-labels label[for="input-tab-poscar"] {
@@ -346,7 +380,7 @@ ul {
     line-height: 1.45;
     margin: 0;
     overflow-x: auto;
-    padding: 16px;
+    padding: 48px 16px 16px;
     white-space: pre;
 }
 
@@ -976,15 +1010,24 @@ ul {
                 </div>
 
                 <div class="tab-panel tab-panel-incar">
-                    <pre class="input-preview">{{ generated_inputs.incar }}</pre>
+                    <div class="input-pane">
+                        <button type="button" class="input-copy-button" data-copy-input>Copy</button>
+                        <pre class="input-preview">{{ generated_inputs.incar }}</pre>
+                    </div>
                 </div>
 
                 <div class="tab-panel tab-panel-kpoints">
-                    <pre class="input-preview">{{ generated_inputs.kpoints }}</pre>
+                    <div class="input-pane">
+                        <button type="button" class="input-copy-button" data-copy-input>Copy</button>
+                        <pre class="input-preview">{{ generated_inputs.kpoints }}</pre>
+                    </div>
                 </div>
 
                 <div class="tab-panel tab-panel-poscar">
-                    <pre class="input-preview">{{ generated_inputs.poscar }}</pre>
+                    <div class="input-pane">
+                        <button type="button" class="input-copy-button" data-copy-input>Copy</button>
+                        <pre class="input-preview">{{ generated_inputs.poscar }}</pre>
+                    </div>
                 </div>
             </div>
 
@@ -1675,6 +1718,44 @@ ul {
     </div>
 
 </div>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    var resetDelayMs = 2000;
+
+    function setButtonState(button, label, stateClass) {
+        button.textContent = label;
+        button.classList.remove("copied", "unsupported");
+        if (stateClass) {
+            button.classList.add(stateClass);
+        }
+        window.clearTimeout(button.dataset.copyResetTimer);
+        button.dataset.copyResetTimer = window.setTimeout(function () {
+            button.textContent = "Copy";
+            button.classList.remove("copied", "unsupported");
+        }, resetDelayMs);
+    }
+
+    document.querySelectorAll("[data-copy-input]").forEach(function (button) {
+        button.addEventListener("click", function () {
+            var pane = button.closest(".input-pane");
+            var preview = pane ? pane.querySelector(".input-preview") : null;
+            var text = preview ? preview.textContent : "";
+
+            if (!navigator.clipboard || !navigator.clipboard.writeText) {
+                setButtonState(button, "Not supported", "unsupported");
+                return;
+            }
+
+            navigator.clipboard.writeText(text).then(function () {
+                setButtonState(button, "\u2713 Copied", "copied");
+            }).catch(function () {
+                setButtonState(button, "Not supported", "unsupported");
+            });
+        });
+    });
+});
+</script>
 
 {% if results_summary and results_summary.status == "success" and results_summary.viewer and results_summary.viewer.cif %}
 <script src="https://3Dmol.org/build/3Dmol-min.js"></script>
