@@ -39,6 +39,7 @@ def _build_supported_compatibility_workflows() -> dict[
     for modifiers in _modifier_subsets(_ACTIVE_UI_MODIFIERS):
         supported[(Purpose.STATIC, Theory.PBE, modifiers)] = "static"
         supported[(Purpose.RELAX, Theory.PBE, modifiers)] = "relax"
+        supported[(Purpose.DOUBLE_RELAX, Theory.PBE, modifiers)] = "double_relax"
         supported[
             (
                 Purpose.RELAX,
@@ -55,6 +56,7 @@ _SUPPORTED_COMPATIBILITY_WORKFLOWS = _build_supported_compatibility_workflows()
 _LEGACY_WORKFLOW_SPECS = {
     "static": CalculationSpec(Purpose.STATIC, Theory.PBE),
     "relax": CalculationSpec(Purpose.RELAX, Theory.PBE),
+    "double_relax": CalculationSpec(Purpose.DOUBLE_RELAX, Theory.PBE),
     "relax_ions": CalculationSpec(Purpose.RELAX, Theory.PBE, {Modifier.IONS_ONLY}),
 }
 
@@ -71,6 +73,7 @@ _THEORY_DEFAULT_POTCAR_FUNCTIONAL = {
 
 _PURPOSE_DISPLAY_NAMES = {
     Purpose.RELAX: "Geometry Optimisation",
+    Purpose.DOUBLE_RELAX: "Double Geometry Optimisation",
     Purpose.STATIC: "Static Energy",
     Purpose.DOS: "Density of States",
     Purpose.BAND_STRUCTURE: "Band Structure",
@@ -79,10 +82,15 @@ _PURPOSE_DISPLAY_NAMES = {
 
 _PURPOSE_DESCRIPTIONS = {
     Purpose.RELAX: "Optimise the atomic structure before analysis or follow-up calculations.",
+    Purpose.DOUBLE_RELAX: "Run two consecutive geometry optimisations, using the first final structure as the second starting structure.",
     Purpose.STATIC: "Calculate a single-point total energy for the supplied structure.",
     Purpose.DOS: "Calculate the electronic density of states.",
     Purpose.BAND_STRUCTURE: "Calculate the electronic band structure.",
     Purpose.DIELECTRIC: "Calculate dielectric response properties.",
+}
+
+_PURPOSE_STAGE_DIRECTORIES = {
+    Purpose.DOUBLE_RELAX: ("relax_01", "relax_02"),
 }
 
 _THEORY_DISPLAY_NAMES = {
@@ -182,6 +190,19 @@ def legacy_potcar_functional_from_spec(spec: CalculationSpec) -> str:
         raise CalculationValidationError(
             f"No legacy POTCAR functional for theory: {normalized.theory.value}"
         ) from exc
+
+
+def calculation_stage_directories(spec: CalculationSpec) -> tuple[str, ...]:
+    normalized = validate_calculation_spec(spec)
+    return _PURPOSE_STAGE_DIRECTORIES.get(normalized.purpose, ())
+
+
+def calculation_result_stage_directory(spec: CalculationSpec) -> str | None:
+    stage_directories = calculation_stage_directories(spec)
+    if not stage_directories:
+        return None
+
+    return stage_directories[-1]
 
 
 def supported_combinations() -> tuple[CalculationSpec, ...]:
@@ -305,6 +326,8 @@ __all__ = [
     "CalculationValidationError",
     "calculation_display_name",
     "calculation_form_options",
+    "calculation_result_stage_directory",
+    "calculation_stage_directories",
     "calculation_spec_from_flow_spec",
     "calculation_spec_from_legacy",
     "legacy_potcar_functional_from_spec",

@@ -3,6 +3,8 @@ from backend.calculations.models import CalculationSpec, Modifier, Purpose, Theo
 from backend.calculations.registry import (
     calculation_display_name,
     calculation_form_options,
+    calculation_result_stage_directory,
+    calculation_stage_directories,
     calculation_spec_from_flow_spec,
     calculation_spec_from_legacy,
     legacy_potcar_functional_from_spec,
@@ -33,6 +35,18 @@ assert spec.to_dict() == {
 
 assert legacy_workflow_from_spec(CalculationSpec(Purpose.STATIC, Theory.PBE)) == "static"
 assert legacy_workflow_from_spec(CalculationSpec(Purpose.RELAX, Theory.PBE)) == "relax"
+assert (
+    legacy_workflow_from_spec(CalculationSpec(Purpose.DOUBLE_RELAX, Theory.PBE))
+    == "double_relax"
+)
+assert calculation_stage_directories(
+    CalculationSpec(Purpose.DOUBLE_RELAX, Theory.PBE)
+) == ("relax_01", "relax_02")
+assert (
+    calculation_result_stage_directory(CalculationSpec(Purpose.DOUBLE_RELAX, Theory.PBE))
+    == "relax_02"
+)
+assert calculation_stage_directories(CalculationSpec(Purpose.RELAX, Theory.PBE)) == ()
 assert legacy_workflow_from_spec(spec) == "relax_ions"
 assert legacy_potcar_functional_from_spec(spec) == "PBE_64"
 
@@ -56,11 +70,16 @@ assert flow_spec_spec == legacy_spec
 
 assert CalculationSpec(Purpose.STATIC, Theory.PBE) in supported_combinations()
 assert calculation_display_name(CalculationSpec(Purpose.RELAX, Theory.PBE)) == "Geometry Optimisation"
+assert (
+    calculation_display_name(CalculationSpec(Purpose.DOUBLE_RELAX, Theory.PBE))
+    == "Double Geometry Optimisation"
+)
 assert calculation_display_name(CalculationSpec(Purpose.STATIC, Theory.PBE)) == "Static Energy"
 
 form_options = calculation_form_options()
 assert [option["label"] for option in form_options["purposes"]] == [
     "Geometry Optimisation",
+    "Double Geometry Optimisation",
     "Static Energy",
 ]
 assert [option["label"] for option in form_options["theories"]] == ["PBE"]
@@ -77,16 +96,23 @@ for modifier in ("spin_polarized", "soc", "dft_u", "gamma_only"):
 
 spin_static_spec = CalculationSpec(Purpose.STATIC, Theory.PBE, {Modifier.SPIN_POLARIZED})
 spin_relax_spec = CalculationSpec(Purpose.RELAX, Theory.PBE, {Modifier.SPIN_POLARIZED})
+spin_double_relax_spec = CalculationSpec(
+    Purpose.DOUBLE_RELAX,
+    Theory.PBE,
+    {Modifier.SPIN_POLARIZED},
+)
 soc_static_spec = CalculationSpec(Purpose.STATIC, Theory.PBE, {Modifier.SOC})
 dft_u_relax_spec = CalculationSpec(Purpose.RELAX, Theory.PBE, {Modifier.DFT_U})
 gamma_static_spec = CalculationSpec(Purpose.STATIC, Theory.PBE, {Modifier.GAMMA_ONLY})
 assert validate_calculation_spec(spin_static_spec) == spin_static_spec
 assert validate_calculation_spec(spin_relax_spec) == spin_relax_spec
+assert validate_calculation_spec(spin_double_relax_spec) == spin_double_relax_spec
 assert validate_calculation_spec(soc_static_spec) == soc_static_spec
 assert validate_calculation_spec(dft_u_relax_spec) == dft_u_relax_spec
 assert validate_calculation_spec(gamma_static_spec) == gamma_static_spec
 assert legacy_workflow_from_spec(spin_static_spec) == "static"
 assert legacy_workflow_from_spec(spin_relax_spec) == "relax"
+assert legacy_workflow_from_spec(spin_double_relax_spec) == "double_relax"
 assert legacy_workflow_from_spec(soc_static_spec) == "static"
 assert legacy_workflow_from_spec(dft_u_relax_spec) == "relax"
 assert legacy_workflow_from_spec(gamma_static_spec) == "static"

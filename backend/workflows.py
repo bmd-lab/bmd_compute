@@ -17,6 +17,7 @@ from backend.calculations.resources import (
 )
 from backend.calculations.registry import (
     CalculationValidationError,
+    calculation_stage_directories,
     calculation_spec_from_flow_spec,
     calculation_spec_from_legacy,
     validate_calculation_spec,
@@ -366,6 +367,67 @@ def build_relax_flow(
     return Flow([maker.make(structure)], name=flow_name)
 
 
+def build_double_relax_flow(
+    structure,
+    *,
+    label="vasp_run",
+    spin_polarized=False,
+    modifiers=None,
+    resources=None,
+    incar=None,
+    kpoints=None,
+    potcar_functional="PBE_64",
+):
+    from atomate2.vasp.jobs.core import RelaxMaker
+    from jobflow import Flow
+
+    stage_directories = calculation_stage_directories(
+        CalculationSpec(Purpose.DOUBLE_RELAX, modifiers=modifiers or ())
+    )
+    first_stage_dir, second_stage_dir = stage_directories
+
+    first_generator = build_relax_input_set_generator(
+        structure,
+        spin_polarized=spin_polarized,
+        modifiers=modifiers,
+        resources=resources,
+        incar=incar,
+        kpoints=kpoints,
+        potcar_functional=potcar_functional,
+    )
+    first_maker = RelaxMaker(
+        input_set_generator=first_generator,
+        name=first_stage_dir,
+    )
+    first_relax = first_maker.make(structure)
+
+    second_generator = build_relax_input_set_generator(
+        first_relax.output.structure,
+        spin_polarized=spin_polarized,
+        modifiers=modifiers,
+        resources=resources,
+        incar=incar,
+        kpoints=kpoints,
+        potcar_functional=potcar_functional,
+    )
+    second_maker = RelaxMaker(
+        input_set_generator=second_generator,
+        name=second_stage_dir,
+    )
+    second_relax = second_maker.make(first_relax.output.structure)
+
+    try:
+        return Flow(
+            [first_relax, second_relax],
+            name=f"{label}_double_relax",
+            metadata={"bmd_stage_directories": stage_directories},
+        )
+    except TypeError:
+        flow = Flow([first_relax, second_relax], name=f"{label}_double_relax")
+        flow.bmd_stage_directories = stage_directories
+        return flow
+
+
 def build_static_input_set_generator(
     structure,
     *,
@@ -508,7 +570,7 @@ def build_vasp_input_set_generator_for_spec(
             potcar_functional=potcar_functional,
         )
 
-    if calculation_spec.purpose is Purpose.RELAX:
+    if calculation_spec.purpose in (Purpose.RELAX, Purpose.DOUBLE_RELAX):
         return build_relax_input_set_generator(
             structure,
             isif=2 if Modifier.IONS_ONLY in calculation_spec.modifiers else None,
@@ -583,6 +645,18 @@ def build_atomate2_flow_for_spec(
             structure,
             label=label,
             isif=2 if Modifier.IONS_ONLY in calculation_spec.modifiers else None,
+            spin_polarized=spin_polarized,
+            modifiers=calculation_modifiers,
+            resources=resources,
+            incar=user_incar,
+            kpoints=kpoints,
+            potcar_functional=potcar_functional,
+        )
+
+    if calculation_spec.purpose is Purpose.DOUBLE_RELAX:
+        return build_double_relax_flow(
+            structure,
+            label=label,
             spin_polarized=spin_polarized,
             modifiers=calculation_modifiers,
             resources=resources,
@@ -667,6 +741,7 @@ __all__ = [
     "build_atomate2_flow",
     "build_atomate2_flow_from_spec",
     "build_atomate2_flow_for_spec",
+    "build_double_relax_flow",
     "build_relax_flow",
     "build_relax_input_set_generator",
     "build_static_flow",

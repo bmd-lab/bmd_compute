@@ -29,6 +29,7 @@ class _IntentEnum(str, Enum):
 
 class Purpose(_IntentEnum):
     RELAX = "relax"
+    DOUBLE_RELAX = "double_relax"
     STATIC = "static"
     DOS = "dos"
     BAND_STRUCTURE = "band_structure"

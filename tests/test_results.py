@@ -40,8 +40,9 @@ submission_spec = {
 
 
 class ResultsRunner:
-    def __init__(self, *, missing: str | None = None):
+    def __init__(self, *, missing: str | None = None, state_payload: dict | None = None):
         self.missing = missing
+        self.state_payload = state_payload or {"run_dir": RUN_DIR}
         self.connected_profile = None
         self.closed = False
         self.checked_paths = []
@@ -71,7 +72,7 @@ class ResultsRunner:
 
     def read_text(self, remote_path, *, max_bytes=None):
         self.state_path = remote_path
-        return json.dumps({"run_dir": RUN_DIR})
+        return json.dumps(self.state_payload)
 
     def read_bytes(self, remote_path, *, max_bytes=None):
         self.read_paths.append(remote_path)
@@ -128,6 +129,38 @@ def test_results_load_for_submitted_completed_job_uses_submission_profile():
     assert result["workdir"] == RUN_DIR
 
 
+def test_results_for_double_relax_use_final_stage_directory():
+    double_relax_spec = {
+        **submission_spec,
+        "flow_spec": {
+            "calculation_spec": {
+                "purpose": "double_relax",
+                "theory": "pbe",
+                "modifiers": [],
+            },
+            "workflow": "double_relax",
+            "potcar_functional": "PBE_64",
+        },
+    }
+    runner = ResultsRunner()
+    result = load_results_for_completed_job(
+        monitoring_success,
+        submission_spec=double_relax_spec,
+        runner_factory=lambda: runner,
+        parser=fake_parser,
+    )
+
+    final_stage_dir = f"{RUN_DIR}/relax_02"
+    assert runner.checked_paths == [
+        f"{final_stage_dir}/CONTCAR",
+        f"{final_stage_dir}/OUTCAR",
+        f"{final_stage_dir}/vasprun.xml",
+    ]
+    assert result["run_dir"] == RUN_DIR
+    assert result["workdir"] == final_stage_dir
+    assert result["files"]["contcar"] == f"{final_stage_dir}/CONTCAR"
+
+
 def test_results_load_for_resumed_completed_job_uses_default_profile():
     runner = ResultsRunner()
     result = load_results_for_completed_job(
@@ -149,6 +182,41 @@ def test_results_load_for_resumed_completed_job_uses_default_profile():
     assert result["status"] == "success"
     assert result["job_id"] == "123456"
     assert result["run_dir"] == RUN_DIR
+
+
+def test_resumed_double_relax_uses_final_stage_directory_from_job_state():
+    double_relax_state = {
+        "run_dir": RUN_DIR,
+        "submission_spec": {
+            **submission_spec,
+            "flow_spec": {
+                "calculation_spec": {
+                    "purpose": "double_relax",
+                    "theory": "pbe",
+                    "modifiers": [],
+                },
+                "workflow": "double_relax",
+                "potcar_functional": "PBE_64",
+            },
+        },
+    }
+    runner = ResultsRunner(state_payload=double_relax_state)
+    result = load_results_for_completed_job(
+        monitoring_success,
+        runner_factory=lambda: runner,
+        parser=fake_parser,
+    )
+
+    final_stage_dir = f"{RUN_DIR}/relax_02"
+    assert runner.checked_paths == [
+        f"{DEFAULT_LOGS_DIR}/job_123456.json",
+        f"{final_stage_dir}/CONTCAR",
+        f"{final_stage_dir}/OUTCAR",
+        f"{final_stage_dir}/vasprun.xml",
+    ]
+    assert result["run_dir"] == RUN_DIR
+    assert result["workdir"] == final_stage_dir
+    assert result["files"]["vasprun"] == f"{final_stage_dir}/vasprun.xml"
 
 
 def test_results_are_skipped_until_monitoring_reports_success():
@@ -197,7 +265,9 @@ def test_results_report_missing_bmd_job_state_for_resume():
 if __name__ == "__main__":
     test_monitoring_success_detection_requires_completed_success()
     test_results_load_for_submitted_completed_job_uses_submission_profile()
+    test_results_for_double_relax_use_final_stage_directory()
     test_results_load_for_resumed_completed_job_uses_default_profile()
+    test_resumed_double_relax_uses_final_stage_directory_from_job_state()
     test_results_are_skipped_until_monitoring_reports_success()
     test_results_report_missing_required_output_file()
     test_results_report_missing_bmd_job_state_for_resume()

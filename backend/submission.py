@@ -10,6 +10,8 @@ from pathlib import Path
 
 from backend.calculations.models import CalculationSpec
 from backend.calculations.registry import (
+    calculation_result_stage_directory,
+    calculation_stage_directories,
     calculation_spec_from_flow_spec,
     validate_calculation_spec,
 )
@@ -796,6 +798,8 @@ def create_submission_spec(
     sanitized_label = sanitize_label(label)
     run_timestamp = timestamp or time.strftime("%Y%m%d-%H%M%S")
     run_name = f"{sanitized_label}-{run_timestamp}"
+    stage_directories = calculation_stage_directories(calculation_spec)
+    result_stage_directory = calculation_result_stage_directory(calculation_spec)
 
     resolved_username = username or NOTEBOOK_DEFAULTS["username"]
     resolved_flows_dir = flows_dir or NOTEBOOK_DEFAULTS["flows_dir"]
@@ -859,11 +863,16 @@ def create_submission_spec(
         )
 
     run_dir = posixpath.join(resolved_flows_dir, run_name)
+    stage_dirs = {
+        stage_directory: posixpath.join(run_dir, stage_directory)
+        for stage_directory in stage_directories
+    }
     log_out = posixpath.join(resolved_logs_dir, f"{run_name}.out")
     log_err = posixpath.join(resolved_logs_dir, f"{run_name}.err")
     slurm_out = posixpath.join(resolved_logs_dir, f"{run_name}.slurm.out")
     slurm_err = posixpath.join(resolved_logs_dir, f"{run_name}.slurm.err")
     remote_script = posixpath.join(resolved_flows_dir, f"{run_name}.sbatch.sh")
+    directories_to_prepare.extend(stage_dirs.values())
 
     return {
         "status": "pending",
@@ -881,6 +890,12 @@ def create_submission_spec(
             "log_err": log_err,
             "slurm_out": slurm_out,
             "slurm_err": slurm_err,
+            "stage_dirs": stage_dirs,
+            "result_dir": (
+                stage_dirs[result_stage_directory]
+                if result_stage_directory
+                else run_dir
+            ),
             "directories_to_prepare": directories_to_prepare,
         },
         "cluster": {

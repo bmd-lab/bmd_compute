@@ -7,6 +7,10 @@ purposes:
     display_name: Geometry Optimisation
     enabled: true
     description: Relax atomic positions and, by default, the cell.
+  double_relax:
+    display_name: Double Geometry Optimisation
+    enabled: true
+    description: Run two consecutive geometry optimisations.
   static:
     display_name: Static Energy
     enabled: true

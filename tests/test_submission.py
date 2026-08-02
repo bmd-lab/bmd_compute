@@ -55,6 +55,8 @@ assert spec["paths"]["log_out"] == f"{DEFAULT_LOGS_DIR}/Si-static-20260629-12000
 assert spec["paths"]["log_err"] == f"{DEFAULT_LOGS_DIR}/Si-static-20260629-120000.err"
 assert spec["paths"]["slurm_out"] == f"{DEFAULT_LOGS_DIR}/Si-static-20260629-120000.slurm.out"
 assert spec["paths"]["slurm_err"] == f"{DEFAULT_LOGS_DIR}/Si-static-20260629-120000.slurm.err"
+assert spec["paths"]["stage_dirs"] == {}
+assert spec["paths"]["result_dir"] == spec["paths"]["run_dir"]
 assert spec["cluster"]["partition"] == DEFAULT_PARTITION
 assert spec["cluster"]["account"] == DEFAULT_ACCOUNT
 assert spec["resources"] == DEFAULT_RESOURCES
@@ -106,6 +108,37 @@ assert spin_spec["flow_spec"]["calculation_spec"] == {
     "purpose": "static",
     "theory": "pbe",
     "modifiers": ["spin_polarized"],
+    "label": None,
+}
+
+double_relax_flow_spec = {
+    **flow_spec,
+    "workflow": "double_relax",
+    "calculation_spec": {
+        "purpose": "double_relax",
+        "theory": "pbe",
+        "modifiers": [],
+    },
+}
+double_relax_spec = create_submission_spec(
+    double_relax_flow_spec,
+    label="Si double relax!",
+    timestamp="20260629-120000",
+    env={},
+)
+double_relax_run_dir = f"{DEFAULT_FLOWS_DIR}/Si-double-relax-20260629-120000"
+assert double_relax_spec["paths"]["run_dir"] == double_relax_run_dir
+assert double_relax_spec["paths"]["stage_dirs"] == {
+    "relax_01": f"{double_relax_run_dir}/relax_01",
+    "relax_02": f"{double_relax_run_dir}/relax_02",
+}
+assert double_relax_spec["paths"]["result_dir"] == f"{double_relax_run_dir}/relax_02"
+assert f"{double_relax_run_dir}/relax_01" in double_relax_spec["paths"]["directories_to_prepare"]
+assert f"{double_relax_run_dir}/relax_02" in double_relax_spec["paths"]["directories_to_prepare"]
+assert double_relax_spec["flow_spec"]["calculation_spec"] == {
+    "purpose": "double_relax",
+    "theory": "pbe",
+    "modifiers": [],
     "label": None,
 }
 

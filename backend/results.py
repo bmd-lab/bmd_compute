@@ -9,6 +9,10 @@ import traceback
 from pathlib import Path
 from typing import Callable
 
+from backend.calculations.registry import (
+    calculation_result_stage_directory,
+    calculation_spec_from_flow_spec,
+)
 from backend.config import DEFAULT_LOGS_DIR
 from backend.remote import RemoteRunner
 from backend.remote_runtime import (
@@ -75,11 +79,12 @@ def load_results_for_completed_job(
         ) as runner:
             _log_results("Results RemoteRunner connected")
             _log_results("Locate run directory")
-            run_dir = resolve_results_run_dir(
+            location = resolve_results_location(
                 runner,
                 monitoring_result,
                 submission_spec,
             )
+            run_dir = location["run_dir"]
             if not run_dir:
                 _log_results("Run directory missing")
                 _log_results("RETURN results")
@@ -91,7 +96,8 @@ def load_results_for_completed_job(
             _log_results("Run directory found")
 
             _log_results("Build direct result paths")
-            paths = result_file_paths(run_dir)
+            output_dir = location["output_dir"]
+            paths = result_file_paths(output_dir)
             _log_results("Direct result paths built")
             _log_results("Verify result files")
             missing = missing_result_files(runner, paths)
@@ -138,11 +144,45 @@ def load_results_for_completed_job(
     result.setdefault("status", "success")
     result.setdefault("title", "Results Summary")
     result.setdefault("run_dir", run_dir)
-    result.setdefault("workdir", run_dir)
+    result.setdefault("workdir", output_dir)
     result.setdefault("job_id", monitoring_result.get("job_id"))
     result.setdefault("files", {key: value["path"] for key, value in files.items()})
     _log_results("RETURN results")
     return result
+
+
+def resolve_results_location(
+    runner: RemoteRunner,
+    monitoring_result: dict,
+    submission_spec: dict | None,
+) -> dict[str, str]:
+    state = {}
+    resolved_spec = submission_spec
+
+    if resolved_spec is None:
+        job_id = str(monitoring_result.get("job_id") or "").strip()
+        if not job_id:
+            return {"run_dir": "", "output_dir": ""}
+
+        state_path = remote_job_state_path(job_id)
+        _log_results("Locate BMD remote job state")
+        if not runner.is_file(state_path):
+            _log_results("BMD remote job state missing")
+            return {"run_dir": "", "output_dir": ""}
+        _log_results("BMD remote job state found")
+
+        _log_results("Read BMD remote job state")
+        payload = runner.read_text(state_path)
+        _log_results("BMD remote job state read")
+        state = json.loads(payload)
+        resolved_spec = state.get("submission_spec")
+
+    run_dir = _run_dir_from_submission_or_state(resolved_spec, state)
+    if not run_dir:
+        return {"run_dir": "", "output_dir": ""}
+
+    output_dir = result_output_dir_from_submission_spec(run_dir, resolved_spec)
+    return {"run_dir": run_dir, "output_dir": output_dir}
 
 
 def resolve_results_run_dir(
@@ -150,27 +190,53 @@ def resolve_results_run_dir(
     monitoring_result: dict,
     submission_spec: dict | None,
 ) -> str:
+    return resolve_results_location(
+        runner,
+        monitoring_result,
+        submission_spec,
+    )["run_dir"]
+
+
+def _run_dir_from_submission_or_state(
+    submission_spec: dict | None,
+    state: dict,
+) -> str:
     if submission_spec is not None:
         run_dir = submission_spec.get("paths", {}).get("run_dir")
         if run_dir:
             return str(run_dir)
 
-    job_id = str(monitoring_result.get("job_id") or "").strip()
-    if not job_id:
-        return ""
-
-    state_path = remote_job_state_path(job_id)
-    _log_results("Locate BMD remote job state")
-    if not runner.is_file(state_path):
-        _log_results("BMD remote job state missing")
-        return ""
-    _log_results("BMD remote job state found")
-
-    _log_results("Read BMD remote job state")
-    payload = runner.read_text(state_path)
-    _log_results("BMD remote job state read")
-    state = json.loads(payload)
     return str(state.get("run_dir") or "")
+
+
+def result_stage_directory_from_submission_spec(submission_spec: dict | None) -> str | None:
+    if not submission_spec:
+        return None
+
+    try:
+        calculation_spec = calculation_spec_from_flow_spec(
+            submission_spec.get("flow_spec")
+        )
+    except Exception:
+        return None
+
+    return calculation_result_stage_directory(calculation_spec)
+
+
+def result_output_dir_from_submission_spec(
+    run_dir: str,
+    submission_spec: dict | None,
+) -> str:
+    if submission_spec:
+        result_dir = submission_spec.get("paths", {}).get("result_dir")
+        if result_dir:
+            return str(result_dir)
+
+    stage_dir = result_stage_directory_from_submission_spec(submission_spec)
+    if stage_dir:
+        return posixpath.join(run_dir.rstrip("/"), stage_dir)
+
+    return run_dir
 
 
 def remote_job_state_path(job_id: str) -> str:
@@ -383,6 +449,9 @@ __all__ = [
     "parse_vasp_result_files",
     "read_result_files",
     "remote_job_state_path",
+    "resolve_results_location",
     "resolve_results_run_dir",
+    "result_output_dir_from_submission_spec",
+    "result_stage_directory_from_submission_spec",
     "result_file_paths",
 ]
