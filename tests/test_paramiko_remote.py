@@ -12,9 +12,11 @@ from backend.paramiko_remote import (
     JobRecord,
     ParamikoRemoteRunner,
     _identity_files_from_ssh_config,
+    _openssh_host_patterns_match,
     _parse_openssh_config_output,
+    _paramiko_connect_details_from_ssh_options,
 )
-from backend.remote import RemoteCommandResult
+from backend.remote import RemoteCommandResult, RemoteConnectionProfile
 from backend.submission import create_submission_spec, parse_sbatch_job_id
 
 
@@ -43,6 +45,112 @@ assert ssh_g_options["user"] == "bmdguest"
 assert ssh_g_options["port"] == "22"
 identity_file = _identity_files_from_ssh_config(ssh_g_options)
 assert identity_file.replace("\\", "/").endswith("/.ssh/bmd_guest_ed25519")
+
+quoted_identity_options = _parse_openssh_config_output(
+    'identityfile "C:/Users/lalbu/.ssh/key with spaces"\n'
+)
+assert _identity_files_from_ssh_config(quoted_identity_options).replace("\\", "/").endswith(
+    "/.ssh/key with spaces"
+)
+
+
+class FakeParamikoModule:
+    class ProxyCommand:
+        def __init__(self, command):
+            self.command = command
+
+
+profile = RemoteConnectionProfile(
+    host="powerslurm-bmdguest",
+    username="bmdguest",
+    port=22,
+    key_file="C:/explicit/key",
+    ssh_config_host="powerslurm-bmdguest",
+)
+
+connect_kwargs, connect_diagnostics = _paramiko_connect_details_from_ssh_options(
+    profile,
+    "powerslurm-bmdguest",
+    {
+        "hostname": "powerslurm-login.tau.ac.il",
+        "user": "cluster-user",
+        "port": "2222",
+        "identityfile": ["C:/Users/lalbu/.ssh/bmd_guest_ed25519"],
+        "proxycommand": "ssh jump-host nc powerslurm-login.tau.ac.il 2222",
+    },
+    {
+        "source": "openssh ssh -G",
+        "host_entry_found": True,
+        "loaded_config_files": ["C:/Users/lalbu/.ssh/config"],
+        "matching_host_patterns": ["powerslurm-bmdguest"],
+    },
+    FakeParamikoModule,
+)
+assert connect_kwargs["hostname"] == "powerslurm-login.tau.ac.il"
+assert connect_kwargs["username"] == "cluster-user"
+assert connect_kwargs["port"] == 2222
+assert connect_kwargs["key_filename"].replace("\\", "/").endswith(
+    "/.ssh/bmd_guest_ed25519"
+)
+assert connect_kwargs["sock"].command == "ssh jump-host nc powerslurm-login.tau.ac.il 2222"
+assert connect_diagnostics["ssh_config_applied"] is True
+assert connect_diagnostics["resolved_hostname"] == "powerslurm-login.tau.ac.il"
+assert connect_diagnostics["resolved_username"] == "cluster-user"
+assert connect_diagnostics["resolved_port"] == 2222
+assert connect_diagnostics["ssh_config_lookup"]["loaded_config_files"] == [
+    "C:/Users/lalbu/.ssh/config"
+]
+assert connect_diagnostics["ssh_config_lookup"]["host_entry_found"] is True
+
+fallback_kwargs, fallback_diagnostics = _paramiko_connect_details_from_ssh_options(
+    profile,
+    "powerslurm-bmdguest",
+    {
+        "hostname": "powerslurm-bmdguest",
+        "user": "local-dev-user",
+        "port": "22",
+        "identityfile": ["~/.ssh/id_ed25519"],
+    },
+    {
+        "source": "openssh ssh -G",
+        "host_entry_found": False,
+        "loaded_config_files": [],
+        "matching_host_patterns": [],
+    },
+    FakeParamikoModule,
+)
+assert fallback_kwargs["hostname"] == "powerslurm-bmdguest"
+assert fallback_kwargs["username"] == "bmdguest"
+assert fallback_kwargs["port"] == 22
+assert fallback_kwargs["key_filename"] == "C:/explicit/key"
+assert "sock" not in fallback_kwargs
+assert fallback_diagnostics["ssh_config_applied"] is False
+
+included_config_kwargs, included_config_diagnostics = _paramiko_connect_details_from_ssh_options(
+    profile,
+    "powerslurm-bmdguest",
+    {
+        "hostname": "powerslurm-login.tau.ac.il",
+        "user": "included-user",
+        "port": "22",
+    },
+    {
+        "source": "openssh ssh -G",
+        "host_entry_found": False,
+        "loaded_config_files": [],
+        "matching_host_patterns": [],
+    },
+    FakeParamikoModule,
+)
+assert included_config_kwargs["hostname"] == "powerslurm-login.tau.ac.il"
+assert included_config_kwargs["username"] == "included-user"
+assert included_config_diagnostics["ssh_config_applied"] is True
+
+assert _openssh_host_patterns_match("powerslurm-bmdguest", ["powerslurm-*"])
+assert not _openssh_host_patterns_match(
+    "powerslurm-bmdguest",
+    ["powerslurm-*", "!powerslurm-bmdguest"],
+)
 
 
 class RecordingRunner(ParamikoRemoteRunner):

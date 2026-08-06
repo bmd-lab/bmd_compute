@@ -46,11 +46,56 @@ def _paramiko_connect_details(profile: RemoteConnectionProfile, paramiko_module)
     ssh_config_host = profile.ssh_config_host or profile.host
     ssh_options, lookup_diagnostics = _resolve_ssh_config(ssh_config_host, paramiko_module)
 
-    hostname = ssh_options.get("hostname") or profile.host
-    port = int(ssh_options.get("port") or profile.port)
-    username = ssh_options.get("user") or profile.username
-    key_filename = _identity_files_from_ssh_config(ssh_options) or profile.key_file
-    proxy_command = ssh_options.get("proxycommand")
+    return _paramiko_connect_details_from_ssh_options(
+        profile,
+        ssh_config_host,
+        ssh_options,
+        lookup_diagnostics,
+        paramiko_module,
+    )
+
+
+def _paramiko_connect_details_from_ssh_options(
+    profile: RemoteConnectionProfile,
+    ssh_config_host: str,
+    ssh_options: Mapping[str, Any],
+    lookup_diagnostics: Mapping[str, Any],
+    paramiko_module,
+) -> tuple[dict, dict]:
+    use_ssh_config = _ssh_config_resolution_applies(
+        ssh_config_host,
+        ssh_options,
+        lookup_diagnostics,
+    )
+
+    hostname = (
+        _clean_ssh_value(ssh_options.get("hostname"))
+        if use_ssh_config
+        else None
+    ) or profile.host
+    port = int(
+        (
+            _clean_ssh_value(ssh_options.get("port"))
+            if use_ssh_config
+            else None
+        )
+        or profile.port
+    )
+    username = (
+        _clean_ssh_value(ssh_options.get("user"))
+        if use_ssh_config
+        else None
+    ) or profile.username
+    key_filename = (
+        _identity_files_from_ssh_config(ssh_options)
+        if use_ssh_config
+        else None
+    ) or profile.key_file
+    proxy_command = (
+        _clean_ssh_value(ssh_options.get("proxycommand"))
+        if use_ssh_config
+        else None
+    )
 
     kwargs = {
         "hostname": hostname,
@@ -71,18 +116,37 @@ def _paramiko_connect_details(profile: RemoteConnectionProfile, paramiko_module)
         "username": username,
         "port": port,
         "key_filename": key_filename,
+        "resolved_hostname": hostname,
+        "resolved_username": username,
+        "resolved_port": port,
+        "resolved_identity_file": key_filename,
         "key_file_exists": _key_file_exists(key_filename),
         "proxy_command": proxy_command if proxy_command and str(proxy_command).lower() != "none" else None,
+        "ssh_config_applied": use_ssh_config,
         "ssh_config_lookup": lookup_diagnostics,
     }
 
     return kwargs, diagnostics
 
 
+def _ssh_config_resolution_applies(
+    host: str,
+    ssh_options: Mapping[str, Any],
+    lookup_diagnostics: Mapping[str, Any],
+) -> bool:
+    if lookup_diagnostics.get("host_entry_found"):
+        return True
+
+    resolved_hostname = _clean_ssh_value(ssh_options.get("hostname"))
+    return bool(resolved_hostname and resolved_hostname != host)
+
+
 def _resolve_ssh_config(host: str, paramiko_module) -> tuple[dict, dict]:
+    matching_host_patterns = _matching_host_patterns_in_loaded_configs(host)
     diagnostics = {
         "loaded_config_files": _existing_ssh_config_paths(),
-        "host_entry_found": _host_entry_found_in_loaded_configs(host),
+        "host_entry_found": bool(matching_host_patterns),
+        "matching_host_patterns": matching_host_patterns,
         "source": None,
         "ssh_g_returncode": None,
         "ssh_g_stderr": "",
@@ -138,7 +202,7 @@ def _parse_openssh_config_output(output: str) -> dict:
             continue
 
         key = key.lower()
-        value = value.strip()
+        value = _clean_ssh_value(value)
         if key == "identityfile":
             if value and value.lower() != "none":
                 identity_files.append(value)
@@ -157,8 +221,11 @@ def _lookup_ssh_config_with_paramiko(host: str, paramiko_module) -> dict:
     for config_path in _ssh_config_paths():
         if not config_path.exists():
             continue
-        with config_path.open("r", encoding="utf-8") as handle:
-            ssh_config.parse(handle)
+        try:
+            with config_path.open("r", encoding="utf-8") as handle:
+                ssh_config.parse(handle)
+        except Exception:
+            continue
         parsed = True
 
     if not parsed:
@@ -176,7 +243,12 @@ def _existing_ssh_config_paths() -> list[str]:
 
 
 def _host_entry_found_in_loaded_configs(host: str) -> bool:
+    return bool(_matching_host_patterns_in_loaded_configs(host))
+
+
+def _matching_host_patterns_in_loaded_configs(host: str) -> list[str]:
     host_pattern = re.compile(r"^\s*Host\s+(.+?)\s*$", re.IGNORECASE)
+    matches = []
     for config_path in _ssh_config_paths():
         if not config_path.exists():
             continue
@@ -191,17 +263,59 @@ def _host_entry_found_in_loaded_configs(host: str) -> bool:
             if not match:
                 continue
             patterns = match.group(1).split()
-            if any(pattern == host for pattern in patterns):
-                return True
+            if _openssh_host_patterns_match(host, patterns):
+                matches.extend(patterns)
 
-    return False
+    return matches
+
+
+def _openssh_host_patterns_match(host: str, patterns: list[str]) -> bool:
+    import fnmatch
+
+    normalized_host = str(host or "").lower()
+    positive_match = False
+    for pattern in patterns:
+        normalized_pattern = str(pattern or "").strip().lower()
+        if not normalized_pattern:
+            continue
+        negated = normalized_pattern.startswith("!")
+        if negated:
+            normalized_pattern = normalized_pattern[1:]
+        if fnmatch.fnmatchcase(normalized_host, normalized_pattern):
+            if negated:
+                return False
+            positive_match = True
+
+    return positive_match
 
 
 def _ssh_config_paths() -> tuple[Path, ...]:
-    return (
+    candidates = [
         Path.home() / ".ssh" / "config",
-        Path("/etc/ssh/ssh_config"),
-    )
+        Path(os.path.expanduser("~/.ssh/config")),
+    ]
+
+    for env_name in ("HOME", "USERPROFILE"):
+        root = os.environ.get(env_name)
+        if root:
+            candidates.append(Path(root) / ".ssh" / "config")
+
+    program_data = os.environ.get("PROGRAMDATA")
+    if program_data:
+        candidates.append(Path(program_data) / "ssh" / "ssh_config")
+
+    candidates.append(Path("/etc/ssh/ssh_config"))
+
+    unique = []
+    seen = set()
+    for path in candidates:
+        key = str(path)
+        if key in seen:
+            continue
+        unique.append(path)
+        seen.add(key)
+
+    return tuple(unique)
 
 
 def _identity_files_from_ssh_config(ssh_options: Mapping[str, Any]) -> str | list[str] | None:
@@ -215,15 +329,22 @@ def _identity_files_from_ssh_config(ssh_options: Mapping[str, Any]) -> str | lis
         identity_files = list(identity_file)
 
     expanded = [
-        os.path.abspath(os.path.expanduser(str(path)))
+        os.path.abspath(os.path.expanduser(_clean_ssh_value(path)))
         for path in identity_files
-        if str(path).strip() and str(path).strip().lower() != "none"
+        if _clean_ssh_value(path) and _clean_ssh_value(path).lower() != "none"
     ]
     if not expanded:
         return None
     if len(expanded) == 1:
         return expanded[0]
     return expanded
+
+
+def _clean_ssh_value(value) -> str:
+    text = str(value or "").strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in {"'", '"'}:
+        return text[1:-1]
+    return text
 
 
 def _key_file_exists(key_filename) -> bool | list[dict[str, bool]]:
@@ -260,7 +381,19 @@ class ParamikoRemoteRunner(RemoteRunner):
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         connect_kwargs, diagnostics = _paramiko_connect_details(profile, paramiko)
         LOGGER.debug("Paramiko connect diagnostics: %s", json.dumps(diagnostics, indent=2))
-        client.connect(**connect_kwargs)
+        try:
+            client.connect(**connect_kwargs)
+        except Exception as exc:
+            client.close()
+            setattr(exc, "ssh_diagnostics", diagnostics)
+            if hasattr(exc, "add_note"):
+                exc.add_note("SSH diagnostics: " + _format_ssh_diagnostics(diagnostics))
+            LOGGER.error(
+                "Paramiko connection failed. SSH diagnostics: %s",
+                _format_ssh_diagnostics(diagnostics),
+                exc_info=True,
+            )
+            raise
 
         transport = client.get_transport()
         if not transport or not transport.is_active():
@@ -753,6 +886,10 @@ def _print_sbatch_result(stdout: str, stderr: str, job_id: str | None) -> None:
     LOGGER.debug("SBATCH stdout: %s", stdout)
     LOGGER.debug("SBATCH stderr: %s", stderr)
     LOGGER.debug("SBATCH job id: %s", job_id)
+
+
+def _format_ssh_diagnostics(diagnostics: Mapping[str, Any]) -> str:
+    return json.dumps(diagnostics, sort_keys=True, default=str)
 
 
 def _now_str() -> str:

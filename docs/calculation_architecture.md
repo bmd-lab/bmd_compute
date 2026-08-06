@@ -26,6 +26,8 @@ Current compatibility support:
 
 * `static`
 * `relax`
+* `double_relax`
+* `dos`
 * `relax` with the compatibility modifier `ions_only`
 
 ## Theory
@@ -163,9 +165,11 @@ Current responsibilities:
 Current compatibility mapping:
 
 ```text
-(static, pbe, no modifiers)        -> static
-(relax,  pbe, no modifiers)        -> relax
-(relax,  pbe, ions_only modifier)  -> relax_ions
+(static,       pbe, no modifiers)        -> static
+(relax,        pbe, no modifiers)        -> relax
+(double_relax, pbe, no modifiers)        -> double_relax
+(dos,          pbe, no modifiers)        -> dos
+(relax,        pbe, ions_only modifier)  -> relax_ions
 ```
 
 Future responsibilities:
@@ -326,7 +330,7 @@ CalculationSpec -> Registry -> Builder -> atomate2 makers -> pymatgen input sets
 Future PRs should complete the migration in small steps:
 
 1. Use `presets.yaml` to drive browser labels and enabled options.
-2. Add explicit registry entries for DOS, band structure and dielectric calculations.
+2. Add explicit registry entries for band structure and dielectric calculations.
 3. Map `Theory` values directly to atomate2 and pymatgen-supported input-set options.
 4. Add modifier handling only where atomate2 or pymatgen does not already provide a complete abstraction.
 5. Move `SubmissionSpec.flow_spec` toward `CalculationSpec` while preserving backwards compatibility for existing submitted jobs.

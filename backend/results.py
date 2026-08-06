@@ -9,6 +9,7 @@ import traceback
 from pathlib import Path
 from typing import Callable
 
+from backend.calculations.models import CalculationSpec
 from backend.calculations.registry import (
     calculation_result_stage_directory,
     calculation_spec_from_flow_spec,
@@ -20,12 +21,18 @@ from backend.remote_runtime import (
     connection_profile_from_submission_spec,
     default_connection_profile,
 )
+from backend.workflow_results import (
+    render_workflow_results,
+    workflow_result_file_keys,
+    workflow_result_parse_dos,
+)
 
 
 RESULT_FILES = {
     "contcar": "CONTCAR",
     "outcar": "OUTCAR",
     "vasprun": "vasprun.xml",
+    "doscar": "DOSCAR",
 }
 LOGGER = logging.getLogger(__name__)
 
@@ -97,7 +104,10 @@ def load_results_for_completed_job(
 
             _log_results("Build direct result paths")
             output_dir = location["output_dir"]
-            paths = result_file_paths(output_dir)
+            paths = result_file_paths(
+                output_dir,
+                extra_file_keys=location["workflow_result_file_keys"],
+            )
             _log_results("Direct result paths built")
             _log_results("Verify result files")
             missing = missing_result_files(runner, paths)
@@ -126,9 +136,10 @@ def load_results_for_completed_job(
         )
 
     parse = parser or parse_vasp_result_files
+    parse_context = _results_parse_context(monitoring_result, location)
     try:
         _log_results("Parse result files")
-        result = parse(files, monitoring_result)
+        result = parse(files, parse_context)
         _log_results("Result file parsing complete")
     except Exception as exc:
         _log_results("Results parsing failed")
@@ -147,6 +158,7 @@ def load_results_for_completed_job(
     result.setdefault("workdir", output_dir)
     result.setdefault("job_id", monitoring_result.get("job_id"))
     result.setdefault("files", {key: value["path"] for key, value in files.items()})
+    result.setdefault("visualizations", [])
     _log_results("RETURN results")
     return result
 
@@ -155,20 +167,20 @@ def resolve_results_location(
     runner: RemoteRunner,
     monitoring_result: dict,
     submission_spec: dict | None,
-) -> dict[str, str]:
+) -> dict:
     state = {}
     resolved_spec = submission_spec
 
     if resolved_spec is None:
         job_id = str(monitoring_result.get("job_id") or "").strip()
         if not job_id:
-            return {"run_dir": "", "output_dir": ""}
+            return _empty_results_location()
 
         state_path = remote_job_state_path(job_id)
         _log_results("Locate BMD remote job state")
         if not runner.is_file(state_path):
             _log_results("BMD remote job state missing")
-            return {"run_dir": "", "output_dir": ""}
+            return _empty_results_location()
         _log_results("BMD remote job state found")
 
         _log_results("Read BMD remote job state")
@@ -179,10 +191,16 @@ def resolve_results_location(
 
     run_dir = _run_dir_from_submission_or_state(resolved_spec, state)
     if not run_dir:
-        return {"run_dir": "", "output_dir": ""}
+        return _empty_results_location()
 
+    calculation_spec = calculation_spec_from_submission_spec(resolved_spec)
     output_dir = result_output_dir_from_submission_spec(run_dir, resolved_spec)
-    return {"run_dir": run_dir, "output_dir": output_dir}
+    return {
+        "run_dir": run_dir,
+        "output_dir": output_dir,
+        "calculation_spec": calculation_spec,
+        "workflow_result_file_keys": workflow_result_file_keys(calculation_spec),
+    }
 
 
 def resolve_results_run_dir(
@@ -213,14 +231,39 @@ def result_stage_directory_from_submission_spec(submission_spec: dict | None) ->
     if not submission_spec:
         return None
 
+    calculation_spec = calculation_spec_from_submission_spec(submission_spec)
+    if calculation_spec is None:
+        return None
+
+    return calculation_result_stage_directory(calculation_spec)
+
+
+def calculation_spec_from_submission_spec(
+    submission_spec: dict | None,
+) -> CalculationSpec | None:
+    if not submission_spec:
+        return None
+
     try:
-        calculation_spec = calculation_spec_from_flow_spec(
+        return calculation_spec_from_flow_spec(
             submission_spec.get("flow_spec")
         )
     except Exception:
         return None
 
-    return calculation_result_stage_directory(calculation_spec)
+
+def result_includes_dos_from_submission_spec(submission_spec: dict | None) -> bool:
+    calculation_spec = calculation_spec_from_submission_spec(submission_spec)
+    return "doscar" in workflow_result_file_keys(calculation_spec)
+
+
+def _empty_results_location() -> dict:
+    return {
+        "run_dir": "",
+        "output_dir": "",
+        "calculation_spec": None,
+        "workflow_result_file_keys": (),
+    }
 
 
 def result_output_dir_from_submission_spec(
@@ -244,11 +287,23 @@ def remote_job_state_path(job_id: str) -> str:
     return posixpath.join(DEFAULT_LOGS_DIR, f"job_{safe_job_id}.json")
 
 
-def result_file_paths(run_dir: str) -> dict[str, str]:
+def result_file_paths(
+    run_dir: str,
+    *,
+    include_dos: bool = False,
+    extra_file_keys: tuple[str, ...] = (),
+) -> dict[str, str]:
     root = run_dir.rstrip("/")
+    keys = ["contcar", "outcar", "vasprun"]
+    if include_dos:
+        keys.append("doscar")
+    for key in extra_file_keys:
+        if key not in keys:
+            keys.append(key)
     return {
         key: posixpath.join(root, filename)
         for key, filename in RESULT_FILES.items()
+        if key in keys
     }
 
 
@@ -289,11 +344,18 @@ def parse_vasp_result_files(files: dict, monitoring_result: dict) -> dict:
     with tempfile.TemporaryDirectory(prefix="bmd-results-") as tmpdir:
         _log_results("Write temporary VASP files")
         tmp = Path(tmpdir)
+        calculation_spec = _calculation_spec_from_results_context(monitoring_result)
+        parse_dos = workflow_result_parse_dos(
+            calculation_spec,
+            available_file_keys=set(files),
+        )
         local_paths = {
             "contcar": tmp / "CONTCAR",
             "outcar": tmp / "OUTCAR",
             "vasprun": tmp / "vasprun.xml",
         }
+        if "doscar" in files:
+            local_paths["doscar"] = tmp / "DOSCAR"
 
         for key, local_path in local_paths.items():
             local_path.write_text(files[key]["text"], encoding="utf-8")
@@ -318,7 +380,7 @@ def parse_vasp_result_files(files: dict, monitoring_result: dict) -> dict:
             _log_results("Parse Vasprun")
             vasprun = Vasprun(
                 str(local_paths["vasprun"]),
-                parse_dos=False,
+                parse_dos=parse_dos,
                 parse_eigenvalues=False,
                 exception_on_bad_xml=False,
                 parse_potcar_file=False,
@@ -328,7 +390,7 @@ def parse_vasp_result_files(files: dict, monitoring_result: dict) -> dict:
             _log_results("Parse Vasprun with legacy eigenvalue argument")
             vasprun = Vasprun(
                 str(local_paths["vasprun"]),
-                parse_dos=False,
+                parse_dos=parse_dos,
                 parse_eigen=False,
                 exception_on_bad_xml=False,
                 parse_potcar_file=False,
@@ -353,12 +415,17 @@ def parse_vasp_result_files(files: dict, monitoring_result: dict) -> dict:
 
         completion_status = _completion_status(monitoring_result)
         formula = final_structure.composition.reduced_formula
+        workflow_payload = render_workflow_results(
+            calculation_spec,
+            vasprun=vasprun,
+            files=files,
+        )
         _log_results("Generate CIF")
         cif_text = final_structure.to(fmt="cif")
         _log_results("CIF generated")
 
         _log_results("RETURN parse_vasp_result_files")
-        return {
+        result = {
             "status": "success",
             "title": "Results Summary",
             "completion_status": completion_status,
@@ -374,12 +441,16 @@ def parse_vasp_result_files(files: dict, monitoring_result: dict) -> dict:
                 "outcar_error": outcar_error,
                 "parser": "pymatgen",
             },
+            "visualizations": workflow_payload.visualizations,
             "viewer": {
                 "format": "cif",
                 "source": "CONTCAR",
                 "cif": cif_text,
             },
         }
+        for key, summary in workflow_payload.summaries.items():
+            result[key] = summary
+        return result
 
 
 def _decode_remote_output(remote_path: str, data: bytes) -> str:
@@ -393,6 +464,30 @@ def _completion_status(monitoring_result: dict) -> str:
     state = monitoring_result.get("slurm_state") or "COMPLETED"
     exit_code = monitoring_result.get("exit_code") or "0:0"
     return f"{state} (ExitCode {exit_code})"
+
+
+def _results_parse_context(monitoring_result: dict | None, location: dict) -> dict:
+    context = dict(monitoring_result or {})
+    calculation_spec = location.get("calculation_spec")
+    if calculation_spec is not None:
+        context["calculation_spec"] = calculation_spec.to_dict()
+    return context
+
+
+def _calculation_spec_from_results_context(context: dict | None) -> CalculationSpec | None:
+    if not context:
+        return None
+
+    value = context.get("calculation_spec")
+    if isinstance(value, CalculationSpec):
+        return value
+    if value:
+        try:
+            return CalculationSpec.from_dict(value)
+        except Exception:
+            return None
+
+    return calculation_spec_from_submission_spec(context.get("submission_spec"))
 
 
 def _failure_result(
@@ -451,6 +546,7 @@ __all__ = [
     "remote_job_state_path",
     "resolve_results_location",
     "resolve_results_run_dir",
+    "result_includes_dos_from_submission_spec",
     "result_output_dir_from_submission_spec",
     "result_stage_directory_from_submission_spec",
     "result_file_paths",

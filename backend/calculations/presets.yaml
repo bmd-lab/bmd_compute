@@ -16,8 +16,8 @@ purposes:
     enabled: true
     description: Single-point total-energy calculation.
   dos:
-    display_name: DOS
-    enabled: false
+    display_name: Density of States
+    enabled: true
     description: Density of states calculation.
   band_structure:
     display_name: Band Structure

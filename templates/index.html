@@ -640,8 +640,26 @@ ul {
     width: 100%;
 }
 
+.result-plot {
+    background: #121212;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    height: 420px;
+    margin-top: 14px;
+    min-height: 320px;
+    overflow: hidden;
+    position: relative;
+    width: 100%;
+}
+
 .viewer-message {
     color: #333333;
+    font-size: 14px;
+    padding: 18px;
+}
+
+.plot-message {
+    color: var(--soft);
     font-size: 14px;
     padding: 18px;
 }
@@ -678,6 +696,10 @@ ul {
 
     .structure-viewer {
         height: 360px;
+    }
+
+    .result-plot {
+        height: 340px;
     }
 
     .metric,
@@ -1101,6 +1123,18 @@ ul {
                     <div class="callout-value mono">{{ calculation.flow_name }}</div>
                 </div>
                 <div class="callout">
+                    <div class="callout-title">Calculation Plan</div>
+                    <div class="callout-value">
+                        {% if calculation.calculation_plan %}
+                        {% for stage in calculation.calculation_plan %}
+                        {{ loop.index }}. {{ stage }}{% if not loop.last %}<br>{% endif %}
+                        {% endfor %}
+                        {% else %}
+                        {{ calculation.calculation_type }}
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="callout">
                     <div class="callout-title">Jobs</div>
                     <div class="callout-value mono">
                         {% if calculation.job_names %}
@@ -1307,6 +1341,16 @@ ul {
                             <td>Remote Script</td>
                             <td class="mono">{{ submission_spec.paths.remote_script }}</td>
                         </tr>
+                        {% if submission_spec.paths.stage_dirs %}
+                        <tr>
+                            <td>Stage Directories</td>
+                            <td class="mono">
+                                {% for stage_name, stage_path in submission_spec.paths.stage_dirs.items() %}
+                                {{ stage_name }}={{ stage_path }}<br>
+                                {% endfor %}
+                            </td>
+                        </tr>
+                        {% endif %}
                         <tr>
                             <td>Modules</td>
                             <td class="mono">
@@ -1778,6 +1822,36 @@ ul {
                             {% endif %}
                         </div>
                     </div>
+                    {% if results_summary.dos %}
+                    <div class="callout">
+                        <div class="callout-title">DOS</div>
+                        <div class="callout-value">
+                            {% if results_summary.dos.available %}
+                            Available
+                            {% else %}
+                            Not available
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="callout">
+                        <div class="callout-title">DOS Points</div>
+                        <div class="callout-value">{{ results_summary.dos.energy_points or "Unknown" }}</div>
+                    </div>
+                    <div class="callout">
+                        <div class="callout-title">DOS Energy Window</div>
+                        <div class="callout-value">
+                            {% if results_summary.dos.energy_min_ev is not none and results_summary.dos.energy_max_ev is not none %}
+                            {{ results_summary.dos.energy_min_ev }} to {{ results_summary.dos.energy_max_ev }} eV
+                            {% else %}
+                            Unknown
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="callout">
+                        <div class="callout-title">DOS Spin Channels</div>
+                        <div class="callout-value">{{ results_summary.dos.spin_channels or "Unknown" }}</div>
+                    </div>
+                    {% endif %}
                 </div>
             </div>
 
@@ -1792,6 +1866,25 @@ ul {
                     <div class="viewer-message">Loading crystal viewer...</div>
                 </div>
             </div>
+            {% endif %}
+
+            {% if results_summary.visualizations %}
+            {% for visualization in results_summary.visualizations %}
+            <div class="prep-panel workflow-visualization">
+                <div class="prep-title">{{ visualization.title }}</div>
+                {% if visualization.subtitle %}
+                <div class="summary-line">{{ visualization.subtitle }}</div>
+                {% endif %}
+                {% if visualization.kind == "line_plot" %}
+                <div
+                    id="{{ visualization.element_id }}"
+                    class="result-plot"
+                    data-result-plot="{{ visualization.id }}">
+                    <div class="plot-message">Loading plot...</div>
+                </div>
+                {% endif %}
+            </div>
+            {% endfor %}
             {% endif %}
 
             <details class="disclosure details-wide">
@@ -1817,6 +1910,12 @@ ul {
                         <td>vasprun.xml</td>
                         <td class="mono">{{ results_summary.files.vasprun }}</td>
                     </tr>
+                    {% if results_summary.files.doscar %}
+                    <tr>
+                        <td>DOSCAR</td>
+                        <td class="mono">{{ results_summary.files.doscar }}</td>
+                    </tr>
+                    {% endif %}
                     <tr>
                         <td>Parser</td>
                         <td>{{ results_summary.diagnostics.parser }}</td>
@@ -1947,6 +2046,125 @@ document.addEventListener("DOMContentLoaded", function () {
     } catch (err) {
         target.innerHTML = '<div class="viewer-message">Crystal viewer failed: ' + String(err) + '</div>';
     }
+});
+</script>
+{% endif %}
+
+{% if results_summary and results_summary.status == "success" and results_summary.visualizations %}
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<script type="application/json" id="workflow-result-visualizations">{{ results_summary.visualizations | tojson }}</script>
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    var dataElement = document.getElementById("workflow-result-visualizations");
+    if (!dataElement) {
+        return;
+    }
+
+    var visualizations = [];
+    try {
+        visualizations = JSON.parse(dataElement.textContent);
+    } catch (err) {
+        return;
+    }
+
+    function showPlotMessage(target, message) {
+        target.innerHTML = '<div class="plot-message">' + message + '</div>';
+    }
+
+    function renderLinePlot(visualization) {
+        var target = document.getElementById(visualization.element_id);
+        if (!target) {
+            return;
+        }
+        if (!window.Plotly) {
+            showPlotMessage(target, "Plot could not be loaded.");
+            return;
+        }
+
+        var plot = visualization.plot || {};
+        var xValues = plot.x || [];
+        var colors = ["#4FC3F7", "#FF8A80", "#B2EBF2", "#7ED957"];
+        var traces = (plot.traces || []).map(function (trace, index) {
+            var name = trace.name || ("Trace " + (index + 1));
+            return {
+                x: xValues,
+                y: trace.y || [],
+                type: "scatter",
+                mode: "lines",
+                name: name,
+                line: {
+                    color: colors[index % colors.length],
+                    width: 2
+                },
+                hovertemplate: "%{x:.3f} eV<br>%{y:.3f}<extra>" + name + "</extra>"
+            };
+        });
+        if (!traces.length) {
+            showPlotMessage(target, "Plot data unavailable.");
+            return;
+        }
+
+        var shapes = [];
+        if (plot.energy_reference === "fermi") {
+            shapes.push({
+                type: "line",
+                x0: 0,
+                x1: 0,
+                y0: 0,
+                y1: 1,
+                xref: "x",
+                yref: "paper",
+                line: {
+                    color: "#B2EBF2",
+                    dash: "dot",
+                    width: 1
+                }
+            });
+        }
+
+        var layout = {
+            autosize: true,
+            paper_bgcolor: "#1b1b1b",
+            plot_bgcolor: "#121212",
+            font: {
+                color: "#f2f2f2",
+                family: "Arial, sans-serif"
+            },
+            margin: {
+                l: 62,
+                r: 22,
+                t: 24,
+                b: 58
+            },
+            xaxis: {
+                title: plot.xaxis_title || "Energy (eV)",
+                gridcolor: "#333333",
+                zerolinecolor: "#555555"
+            },
+            yaxis: {
+                title: plot.yaxis_title || "Value",
+                gridcolor: "#333333",
+                zerolinecolor: "#555555"
+            },
+            legend: {
+                orientation: "h",
+                x: 0,
+                y: 1.12
+            },
+            shapes: shapes
+        };
+        var config = {
+            displaylogo: false,
+            responsive: true
+        };
+        window.Plotly.newPlot(target, traces, layout, config);
+    }
+
+    visualizations.forEach(function (visualization) {
+        if (visualization.kind === "line_plot") {
+            renderLinePlot(visualization);
+        }
+    });
 });
 </script>
 {% endif %}

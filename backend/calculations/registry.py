@@ -40,6 +40,7 @@ def _build_supported_compatibility_workflows() -> dict[
         supported[(Purpose.STATIC, Theory.PBE, modifiers)] = "static"
         supported[(Purpose.RELAX, Theory.PBE, modifiers)] = "relax"
         supported[(Purpose.DOUBLE_RELAX, Theory.PBE, modifiers)] = "double_relax"
+        supported[(Purpose.DOS, Theory.PBE, modifiers)] = "dos"
         supported[
             (
                 Purpose.RELAX,
@@ -57,6 +58,7 @@ _LEGACY_WORKFLOW_SPECS = {
     "static": CalculationSpec(Purpose.STATIC, Theory.PBE),
     "relax": CalculationSpec(Purpose.RELAX, Theory.PBE),
     "double_relax": CalculationSpec(Purpose.DOUBLE_RELAX, Theory.PBE),
+    "dos": CalculationSpec(Purpose.DOS, Theory.PBE),
     "relax_ions": CalculationSpec(Purpose.RELAX, Theory.PBE, {Modifier.IONS_ONLY}),
 }
 
@@ -91,6 +93,7 @@ _PURPOSE_DESCRIPTIONS = {
 
 _PURPOSE_STAGE_DIRECTORIES = {
     Purpose.DOUBLE_RELAX: ("relax_01", "relax_02"),
+    Purpose.DOS: ("stage_01", "stage_02", "stage_03"),
 }
 
 _THEORY_DISPLAY_NAMES = {

@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import json
+import sys
+import types
+from contextlib import contextmanager
 
+from backend.calculations.models import CalculationSpec, Purpose, Theory
 from backend.config import (
     DEFAULT_FLOWS_DIR,
     DEFAULT_LOGS_DIR,
@@ -11,6 +15,7 @@ from backend.config import (
 from backend.results import (
     load_results_for_completed_job,
     monitoring_indicates_success,
+    parse_vasp_result_files,
     remote_job_state_path,
 )
 
@@ -64,6 +69,8 @@ class ResultsRunner:
             return self.missing != "state"
         if remote_path.endswith("/vasprun.xml"):
             return self.missing != "vasprun"
+        if remote_path.endswith("/DOSCAR"):
+            return self.missing != "doscar"
         if remote_path.endswith("/CONTCAR"):
             return self.missing != "contcar"
         if remote_path.endswith("/OUTCAR"):
@@ -94,6 +101,29 @@ def fake_parser(files, monitoring_result):
         "diagnostics": {"parser": "fake", "outcar_parsed": True, "outcar_error": ""},
         "viewer": {"format": "cif", "source": "CONTCAR", "cif": "data_TiO2\n"},
     }
+
+
+def fake_dos_parser(files, monitoring_result):
+    assert monitoring_result["job_id"] == "123456"
+    assert set(files) == {"contcar", "outcar", "vasprun", "doscar"}
+    result = fake_parser(
+        {
+            "contcar": files["contcar"],
+            "outcar": files["outcar"],
+            "vasprun": files["vasprun"],
+        },
+        monitoring_result,
+    )
+    result["dos"] = {
+        "available": True,
+        "source": "vasprun.xml",
+        "doscar": files["doscar"]["path"],
+        "energy_points": 4001,
+        "energy_min_ev": -10.0,
+        "energy_max_ev": 10.0,
+        "spin_channels": 1,
+    }
+    return result
 
 
 def test_monitoring_success_detection_requires_completed_success():
@@ -161,6 +191,41 @@ def test_results_for_double_relax_use_final_stage_directory():
     assert result["files"]["contcar"] == f"{final_stage_dir}/CONTCAR"
 
 
+def test_results_for_dos_use_final_stage_directory_and_doscar():
+    dos_spec = {
+        **submission_spec,
+        "flow_spec": {
+            "calculation_spec": {
+                "purpose": "dos",
+                "theory": "pbe",
+                "modifiers": [],
+            },
+            "workflow": "dos",
+            "potcar_functional": "PBE_64",
+        },
+    }
+    runner = ResultsRunner()
+    result = load_results_for_completed_job(
+        monitoring_success,
+        submission_spec=dos_spec,
+        runner_factory=lambda: runner,
+        parser=fake_dos_parser,
+    )
+
+    final_stage_dir = f"{RUN_DIR}/stage_03"
+    assert runner.checked_paths == [
+        f"{final_stage_dir}/CONTCAR",
+        f"{final_stage_dir}/OUTCAR",
+        f"{final_stage_dir}/vasprun.xml",
+        f"{final_stage_dir}/DOSCAR",
+    ]
+    assert result["run_dir"] == RUN_DIR
+    assert result["workdir"] == final_stage_dir
+    assert result["files"]["doscar"] == f"{final_stage_dir}/DOSCAR"
+    assert result["dos"]["available"] is True
+    assert result["dos"]["energy_points"] == 4001
+
+
 def test_results_load_for_resumed_completed_job_uses_default_profile():
     runner = ResultsRunner()
     result = load_results_for_completed_job(
@@ -219,6 +284,43 @@ def test_resumed_double_relax_uses_final_stage_directory_from_job_state():
     assert result["files"]["vasprun"] == f"{final_stage_dir}/vasprun.xml"
 
 
+def test_resumed_dos_uses_final_stage_directory_from_job_state():
+    dos_state = {
+        "run_dir": RUN_DIR,
+        "submission_spec": {
+            **submission_spec,
+            "flow_spec": {
+                "calculation_spec": {
+                    "purpose": "dos",
+                    "theory": "pbe",
+                    "modifiers": [],
+                },
+                "workflow": "dos",
+                "potcar_functional": "PBE_64",
+            },
+        },
+    }
+    runner = ResultsRunner(state_payload=dos_state)
+    result = load_results_for_completed_job(
+        monitoring_success,
+        runner_factory=lambda: runner,
+        parser=fake_dos_parser,
+    )
+
+    final_stage_dir = f"{RUN_DIR}/stage_03"
+    assert runner.checked_paths == [
+        f"{DEFAULT_LOGS_DIR}/job_123456.json",
+        f"{final_stage_dir}/CONTCAR",
+        f"{final_stage_dir}/OUTCAR",
+        f"{final_stage_dir}/vasprun.xml",
+        f"{final_stage_dir}/DOSCAR",
+    ]
+    assert result["run_dir"] == RUN_DIR
+    assert result["workdir"] == final_stage_dir
+    assert result["files"]["doscar"] == f"{final_stage_dir}/DOSCAR"
+    assert result["dos"]["doscar"] == f"{final_stage_dir}/DOSCAR"
+
+
 def test_results_are_skipped_until_monitoring_reports_success():
     class UnusedRunner(ResultsRunner):
         def connect(self, profile):
@@ -262,13 +364,121 @@ def test_results_report_missing_bmd_job_state_for_resume():
     assert runner.closed is True
 
 
+class FakeComposition:
+    reduced_formula = "Si"
+
+
+class FakeStructure:
+    composition = FakeComposition()
+
+    def __len__(self):
+        return 2
+
+    def to(self, fmt):
+        assert fmt == "cif"
+        return "data_Si\n"
+
+
+class FakeSpin:
+    def __init__(self, name, value):
+        self.name = name
+        self.value = value
+
+    def __str__(self):
+        return self.name
+
+
+class FakeTotalDos:
+    energies = [-1.0, 0.0, 1.0]
+    efermi = 0.0
+    densities = {
+        FakeSpin("up", 1): [0.0, 1.0, 0.0],
+    }
+
+
+class FakeVasprun:
+    calls = []
+
+    def __init__(self, path, **kwargs):
+        self.calls.append({"path": path, "kwargs": kwargs})
+        self.final_structure = FakeStructure()
+        self.final_energy = -4.0
+        self.ionic_steps = [1]
+        self.converged_electronic = True
+        self.tdos = FakeTotalDos()
+        self.efermi = 0.0
+
+
+class FakeOutcar:
+    def __init__(self, path):
+        self.path = path
+
+
+@contextmanager
+def fake_pymatgen_results_modules():
+    modules = {
+        "pymatgen": types.ModuleType("pymatgen"),
+        "pymatgen.core": types.ModuleType("pymatgen.core"),
+        "pymatgen.io": types.ModuleType("pymatgen.io"),
+        "pymatgen.io.vasp": types.ModuleType("pymatgen.io.vasp"),
+        "pymatgen.io.vasp.outputs": types.ModuleType("pymatgen.io.vasp.outputs"),
+    }
+    modules["pymatgen.core"].Structure = types.SimpleNamespace(
+        from_file=lambda path: FakeStructure(),
+    )
+    modules["pymatgen.io.vasp.outputs"].Outcar = FakeOutcar
+    modules["pymatgen.io.vasp.outputs"].Vasprun = FakeVasprun
+
+    previous = {name: sys.modules.get(name) for name in modules}
+    sys.modules.update(modules)
+    try:
+        yield
+    finally:
+        for name, module in previous.items():
+            if module is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
+
+
+def test_parse_vasp_result_files_uses_vasprun_dos_for_dos_workflow():
+    FakeVasprun.calls = []
+    files = {
+        "contcar": {"path": "/remote/stage_03/CONTCAR", "text": "contcar"},
+        "outcar": {"path": "/remote/stage_03/OUTCAR", "text": "outcar"},
+        "vasprun": {"path": "/remote/stage_03/vasprun.xml", "text": "<modeling />"},
+        "doscar": {"path": "/remote/stage_03/DOSCAR", "text": "doscar"},
+    }
+    context = {
+        **monitoring_success,
+        "calculation_spec": CalculationSpec(Purpose.DOS, Theory.PBE).to_dict(),
+    }
+
+    with fake_pymatgen_results_modules():
+        result = parse_vasp_result_files(files, context)
+
+    assert FakeVasprun.calls
+    assert FakeVasprun.calls[-1]["kwargs"]["parse_dos"] is True
+    assert result["final_energy_ev"] == -4.0
+    assert result["energy_per_atom_ev"] == -2.0
+    assert result["viewer"]["cif"] == "data_Si\n"
+    assert result["dos"]["available"] is True
+    assert result["dos"]["source"] == "vasprun.xml"
+    assert result["dos"]["doscar"] == "/remote/stage_03/DOSCAR"
+    assert result["visualizations"][0]["id"] == "dos"
+    assert result["visualizations"][0]["plot"]["x"] == [-1.0, 0.0, 1.0]
+
+
 if __name__ == "__main__":
     test_monitoring_success_detection_requires_completed_success()
     test_results_load_for_submitted_completed_job_uses_submission_profile()
     test_results_for_double_relax_use_final_stage_directory()
+    test_results_for_dos_use_final_stage_directory_and_doscar()
     test_results_load_for_resumed_completed_job_uses_default_profile()
     test_resumed_double_relax_uses_final_stage_directory_from_job_state()
+    test_resumed_dos_uses_final_stage_directory_from_job_state()
     test_results_are_skipped_until_monitoring_reports_success()
     test_results_report_missing_required_output_file()
     test_results_report_missing_bmd_job_state_for_resume()
+    test_parse_vasp_result_files_uses_vasprun_dos_for_dos_workflow()
     print("results smoke test passed")

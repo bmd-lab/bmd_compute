@@ -142,6 +142,39 @@ assert double_relax_spec["flow_spec"]["calculation_spec"] == {
     "label": None,
 }
 
+dos_flow_spec = {
+    **flow_spec,
+    "workflow": "dos",
+    "calculation_spec": {
+        "purpose": "dos",
+        "theory": "pbe",
+        "modifiers": [],
+    },
+}
+dos_spec = create_submission_spec(
+    dos_flow_spec,
+    label="Si dos!",
+    timestamp="20260629-120000",
+    env={},
+)
+dos_run_dir = f"{DEFAULT_FLOWS_DIR}/Si-dos-20260629-120000"
+assert dos_spec["paths"]["run_dir"] == dos_run_dir
+assert dos_spec["paths"]["stage_dirs"] == {
+    "stage_01": f"{dos_run_dir}/stage_01",
+    "stage_02": f"{dos_run_dir}/stage_02",
+    "stage_03": f"{dos_run_dir}/stage_03",
+}
+assert dos_spec["paths"]["result_dir"] == f"{dos_run_dir}/stage_03"
+assert f"{dos_run_dir}/stage_01" in dos_spec["paths"]["directories_to_prepare"]
+assert f"{dos_run_dir}/stage_02" in dos_spec["paths"]["directories_to_prepare"]
+assert f"{dos_run_dir}/stage_03" in dos_spec["paths"]["directories_to_prepare"]
+assert dos_spec["flow_spec"]["calculation_spec"] == {
+    "purpose": "dos",
+    "theory": "pbe",
+    "modifiers": [],
+    "label": None,
+}
+
 advanced_flow_spec = {
     **flow_spec,
     "calculation_spec": {

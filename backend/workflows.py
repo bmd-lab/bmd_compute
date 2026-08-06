@@ -428,8 +428,7 @@ def build_double_relax_flow(
         return flow
 
 
-def build_static_input_set_generator(
-    structure,
+def _static_user_incar_settings(
     *,
     hse=False,
     prep_for_gw=False,
@@ -438,11 +437,7 @@ def build_static_input_set_generator(
     modifiers=None,
     resources=None,
     incar=None,
-    kpoints=None,
-    potcar_functional="PBE_64",
 ):
-    from atomate2.vasp.sets.core import StaticSetGenerator
-
     calculation_modifiers = calculation_modifiers_from_options(
         modifiers=modifiers,
         spin_polarized=spin_polarized,
@@ -495,6 +490,37 @@ def build_static_input_set_generator(
         allow_ncore=not (hse or prep_for_gw),
     )
 
+    return incar_static(user_incar, allow_ncore=not (hse or prep_for_gw))
+
+
+def build_static_input_set_generator(
+    structure,
+    *,
+    hse=False,
+    prep_for_gw=False,
+    intent="final",
+    spin_polarized=False,
+    modifiers=None,
+    resources=None,
+    incar=None,
+    kpoints=None,
+    potcar_functional="PBE_64",
+):
+    from atomate2.vasp.sets.core import StaticSetGenerator
+
+    calculation_modifiers = calculation_modifiers_from_options(
+        modifiers=modifiers,
+        spin_polarized=spin_polarized,
+    )
+    user_incar_settings = _static_user_incar_settings(
+        hse=hse,
+        prep_for_gw=prep_for_gw,
+        intent=intent,
+        modifiers=calculation_modifiers,
+        resources=resources,
+        incar=incar,
+    )
+
     return StaticSetGenerator(
         user_potcar_functional=potcar_functional,
         user_kpoints_settings=ksettings_for_modifiers(
@@ -502,7 +528,7 @@ def build_static_input_set_generator(
             kpoints,
             modifiers=calculation_modifiers,
         ),
-        user_incar_settings=incar_static(user_incar, allow_ncore=not (hse or prep_for_gw)),
+        user_incar_settings=user_incar_settings,
     )
 
 
@@ -543,6 +569,126 @@ def build_static_flow(
     return Flow([maker.make(structure)], name=label + ("_hse_static" if hse else "_static"))
 
 
+def build_dos_input_set_generator(
+    structure,
+    *,
+    spin_polarized=False,
+    modifiers=None,
+    resources=None,
+    incar=None,
+    kpoints=None,
+    potcar_functional="PBE_64",
+):
+    from atomate2.vasp.sets.core import NonSCFSetGenerator
+
+    calculation_modifiers = calculation_modifiers_from_options(
+        modifiers=modifiers,
+        spin_polarized=spin_polarized,
+    )
+    # Keep the DOS grid and basis compatible with the preceding static CHGCAR.
+    dos_incar = _static_user_incar_settings(
+        hse=_is_hse_incar(incar or {}),
+        intent="final",
+        modifiers=calculation_modifiers,
+        resources=resources,
+        incar=incar,
+    )
+    dos_incar["ICHARG"] = 11
+
+    return NonSCFSetGenerator(
+        mode="uniform",
+        user_potcar_functional=potcar_functional,
+        user_kpoints_settings=ksettings_for_modifiers(
+            structure,
+            kpoints,
+            modifiers=calculation_modifiers,
+        ),
+        user_incar_settings=dos_incar,
+    )
+
+
+def build_dos_flow(
+    structure,
+    *,
+    label="vasp_run",
+    spin_polarized=False,
+    modifiers=None,
+    resources=None,
+    incar=None,
+    kpoints=None,
+    potcar_functional="PBE_64",
+):
+    from atomate2.vasp.jobs.core import NonSCFMaker, RelaxMaker, StaticMaker
+    from jobflow import Flow
+
+    stage_directories = calculation_stage_directories(
+        CalculationSpec(Purpose.DOS, modifiers=modifiers or ())
+    )
+    relax_stage_dir, static_stage_dir, dos_stage_dir = stage_directories
+
+    relax_generator = build_relax_input_set_generator(
+        structure,
+        spin_polarized=spin_polarized,
+        modifiers=modifiers,
+        resources=resources,
+        incar=incar,
+        kpoints=kpoints,
+        potcar_functional=potcar_functional,
+    )
+    relax_job = RelaxMaker(
+        input_set_generator=relax_generator,
+        name=relax_stage_dir,
+    ).make(structure)
+
+    static_generator = build_static_input_set_generator(
+        relax_job.output.structure,
+        hse=_is_hse_incar(incar or {}),
+        intent="final",
+        spin_polarized=spin_polarized,
+        modifiers=modifiers,
+        resources=resources,
+        incar=incar,
+        kpoints=kpoints,
+        potcar_functional=potcar_functional,
+    )
+    static_job = StaticMaker(
+        input_set_generator=static_generator,
+        name=static_stage_dir,
+    ).make(
+        relax_job.output.structure,
+        prev_dir=relax_job.output.dir_name,
+    )
+
+    dos_generator = build_dos_input_set_generator(
+        static_job.output.structure,
+        spin_polarized=spin_polarized,
+        modifiers=modifiers,
+        resources=resources,
+        incar=incar,
+        kpoints=kpoints,
+        potcar_functional=potcar_functional,
+    )
+    dos_job = NonSCFMaker(
+        input_set_generator=dos_generator,
+        name=dos_stage_dir,
+    ).make(
+        static_job.output.structure,
+        prev_dir=static_job.output.dir_name,
+        mode="uniform",
+    )
+
+    try:
+        return Flow(
+            [relax_job, static_job, dos_job],
+            name=f"{label}_dos",
+            metadata={"bmd_stage_directories": stage_directories},
+        )
+    except TypeError:
+        flow = Flow([relax_job, static_job, dos_job], name=f"{label}_dos")
+        flow.bmd_stage_directories = stage_directories
+        return flow
+
+
 def build_vasp_input_set_generator_for_spec(
     structure,
     spec: CalculationSpec,
@@ -574,6 +720,17 @@ def build_vasp_input_set_generator_for_spec(
         return build_relax_input_set_generator(
             structure,
             isif=2 if Modifier.IONS_ONLY in calculation_spec.modifiers else None,
+            spin_polarized=spin_polarized,
+            modifiers=calculation_modifiers,
+            resources=resources,
+            incar=user_incar,
+            kpoints=kpoints,
+            potcar_functional=potcar_functional,
+        )
+
+    if calculation_spec.purpose is Purpose.DOS:
+        return build_dos_input_set_generator(
+            structure,
             spin_polarized=spin_polarized,
             modifiers=calculation_modifiers,
             resources=resources,
@@ -665,6 +822,18 @@ def build_atomate2_flow_for_spec(
             potcar_functional=potcar_functional,
         )
 
+    if calculation_spec.purpose is Purpose.DOS:
+        return build_dos_flow(
+            structure,
+            label=label,
+            spin_polarized=spin_polarized,
+            modifiers=calculation_modifiers,
+            resources=resources,
+            incar=user_incar,
+            kpoints=kpoints,
+            potcar_functional=potcar_functional,
+        )
+
     raise ValueError(
         "Only single-step Atomate2 flow construction is migrated. "
         f"Purpose '{calculation_spec.purpose.value}' requires execution or non-Atomate2 logic."
@@ -741,6 +910,8 @@ __all__ = [
     "build_atomate2_flow",
     "build_atomate2_flow_from_spec",
     "build_atomate2_flow_for_spec",
+    "build_dos_flow",
+    "build_dos_input_set_generator",
     "build_double_relax_flow",
     "build_relax_flow",
     "build_relax_input_set_generator",
