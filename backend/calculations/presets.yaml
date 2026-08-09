@@ -21,7 +21,7 @@ purposes:
     description: Density of states calculation.
   band_structure:
     display_name: Band Structure
-    enabled: false
+    enabled: true
     description: Electronic band structure calculation.
   dielectric:
     display_name: Dielectric

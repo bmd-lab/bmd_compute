@@ -41,6 +41,8 @@ def _build_supported_compatibility_workflows() -> dict[
         supported[(Purpose.RELAX, Theory.PBE, modifiers)] = "relax"
         supported[(Purpose.DOUBLE_RELAX, Theory.PBE, modifiers)] = "double_relax"
         supported[(Purpose.DOS, Theory.PBE, modifiers)] = "dos"
+        if Modifier.GAMMA_ONLY not in modifiers:
+            supported[(Purpose.BAND_STRUCTURE, Theory.PBE, modifiers)] = "band_structure"
         supported[
             (
                 Purpose.RELAX,
@@ -59,6 +61,7 @@ _LEGACY_WORKFLOW_SPECS = {
     "relax": CalculationSpec(Purpose.RELAX, Theory.PBE),
     "double_relax": CalculationSpec(Purpose.DOUBLE_RELAX, Theory.PBE),
     "dos": CalculationSpec(Purpose.DOS, Theory.PBE),
+    "band_structure": CalculationSpec(Purpose.BAND_STRUCTURE, Theory.PBE),
     "relax_ions": CalculationSpec(Purpose.RELAX, Theory.PBE, {Modifier.IONS_ONLY}),
 }
 
@@ -94,6 +97,7 @@ _PURPOSE_DESCRIPTIONS = {
 _PURPOSE_STAGE_DIRECTORIES = {
     Purpose.DOUBLE_RELAX: ("relax_01", "relax_02"),
     Purpose.DOS: ("stage_01", "stage_02", "stage_03"),
+    Purpose.BAND_STRUCTURE: ("stage_01", "stage_02", "stage_03"),
 }
 
 _THEORY_DISPLAY_NAMES = {

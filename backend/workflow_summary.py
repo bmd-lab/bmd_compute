@@ -26,6 +26,13 @@ def calculation_plan_from_spec(spec: CalculationSpec) -> list[str]:
             "Density of States",
         ]
 
+    if spec.purpose is Purpose.BAND_STRUCTURE:
+        return [
+            "Geometry Optimisation",
+            "Static Energy",
+            "Band Structure",
+        ]
+
     if spec.purpose is Purpose.DOUBLE_RELAX:
         return [
             "Geometry Optimisation",

@@ -25,6 +25,7 @@ from backend.workflow_results import (
     render_workflow_results,
     workflow_result_file_keys,
     workflow_result_parse_dos,
+    workflow_result_parse_eigenvalues,
 )
 
 
@@ -33,6 +34,7 @@ RESULT_FILES = {
     "outcar": "OUTCAR",
     "vasprun": "vasprun.xml",
     "doscar": "DOSCAR",
+    "kpoints": "KPOINTS",
 }
 LOGGER = logging.getLogger(__name__)
 
@@ -349,6 +351,10 @@ def parse_vasp_result_files(files: dict, monitoring_result: dict) -> dict:
             calculation_spec,
             available_file_keys=set(files),
         )
+        parse_eigenvalues = workflow_result_parse_eigenvalues(
+            calculation_spec,
+            available_file_keys=set(files),
+        )
         local_paths = {
             "contcar": tmp / "CONTCAR",
             "outcar": tmp / "OUTCAR",
@@ -356,6 +362,8 @@ def parse_vasp_result_files(files: dict, monitoring_result: dict) -> dict:
         }
         if "doscar" in files:
             local_paths["doscar"] = tmp / "DOSCAR"
+        if "kpoints" in files:
+            local_paths["kpoints"] = tmp / "KPOINTS"
 
         for key, local_path in local_paths.items():
             local_path.write_text(files[key]["text"], encoding="utf-8")
@@ -380,20 +388,21 @@ def parse_vasp_result_files(files: dict, monitoring_result: dict) -> dict:
             _log_results("Parse Vasprun")
             vasprun = Vasprun(
                 str(local_paths["vasprun"]),
-                parse_dos=parse_dos,
-                parse_eigenvalues=False,
-                exception_on_bad_xml=False,
-                parse_potcar_file=False,
+                **_vasprun_parse_kwargs(
+                    parse_dos=parse_dos,
+                    parse_eigenvalues=parse_eigenvalues,
+                ),
             )
             _log_results("Vasprun parsed")
         except TypeError:
             _log_results("Parse Vasprun with legacy eigenvalue argument")
             vasprun = Vasprun(
                 str(local_paths["vasprun"]),
-                parse_dos=parse_dos,
-                parse_eigen=False,
-                exception_on_bad_xml=False,
-                parse_potcar_file=False,
+                **_vasprun_parse_kwargs(
+                    parse_dos=parse_dos,
+                    parse_eigenvalues=parse_eigenvalues,
+                    legacy_eigen_arg=True,
+                ),
             )
             _log_results("Vasprun parsed")
 
@@ -419,6 +428,7 @@ def parse_vasp_result_files(files: dict, monitoring_result: dict) -> dict:
             calculation_spec,
             vasprun=vasprun,
             files=files,
+            local_paths=local_paths,
         )
         _log_results("Generate CIF")
         cif_text = final_structure.to(fmt="cif")
@@ -464,6 +474,28 @@ def _completion_status(monitoring_result: dict) -> str:
     state = monitoring_result.get("slurm_state") or "COMPLETED"
     exit_code = monitoring_result.get("exit_code") or "0:0"
     return f"{state} (ExitCode {exit_code})"
+
+
+def _vasprun_parse_kwargs(
+    *,
+    parse_dos: bool,
+    parse_eigenvalues: bool,
+    legacy_eigen_arg: bool = False,
+) -> dict:
+    common = {
+        "exception_on_bad_xml": False,
+        "parse_potcar_file": False,
+    }
+    if parse_eigenvalues:
+        # Keep pymatgen's standard band-structure parse path; parse_dos=False can leave efermi unset.
+        return common
+
+    eigen_key = "parse_eigen" if legacy_eigen_arg else "parse_eigenvalues"
+    return {
+        "parse_dos": parse_dos,
+        eigen_key: False,
+        **common,
+    }
 
 
 def _results_parse_context(monitoring_result: dict | None, location: dict) -> dict:

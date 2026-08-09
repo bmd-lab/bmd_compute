@@ -1,6 +1,7 @@
 ENCUT_STATIC_PREP_DEFAULT = 520
 ENCUT_RELAX_DEFAULT = 580
 ENCUT_STATIC_FINAL_DEFAULT = 620
+BAND_STRUCTURE_LINE_DENSITY_DEFAULT = 40
 DFT_U_INCAR_KEYS = (
     "LDAU",
     "LDAUTYPE",
@@ -237,6 +238,19 @@ def ksettings_for_modifiers(structure, kpoints_config, *, modifiers):
         return ksettings(structure, {"mode": "gamma", "value": 1})
 
     return ksettings(structure, kpoints_config)
+
+
+def line_mode_ksettings(kpoints_config=None):
+    if kpoints_config:
+        mode = str(kpoints_config.get("mode") or "").strip().lower()
+        value = kpoints_config.get("value")
+        if mode in ("line", "line_density"):
+            return {"line_density": int(float(value))}
+
+        if "line_density" in kpoints_config:
+            return {"line_density": int(float(kpoints_config["line_density"]))}
+
+    return {"line_density": BAND_STRUCTURE_LINE_DENSITY_DEFAULT}
 
 
 def validate_input_set_for_modifiers(input_set, *, spec: CalculationSpec) -> None:
@@ -493,6 +507,25 @@ def _static_user_incar_settings(
     return incar_static(user_incar, allow_ncore=not (hse or prep_for_gw))
 
 
+def _static_restart_incar_settings(
+    *,
+    spin_polarized=False,
+    modifiers=None,
+    resources=None,
+    incar=None,
+):
+    settings = _static_user_incar_settings(
+        hse=_is_hse_incar(incar or {}),
+        intent="final",
+        spin_polarized=spin_polarized,
+        modifiers=modifiers,
+        resources=resources,
+        incar=incar,
+    )
+    settings["ICHARG"] = 11
+    return settings
+
+
 def build_static_input_set_generator(
     structure,
     *,
@@ -586,14 +619,12 @@ def build_dos_input_set_generator(
         spin_polarized=spin_polarized,
     )
     # Keep the DOS grid and basis compatible with the preceding static CHGCAR.
-    dos_incar = _static_user_incar_settings(
-        hse=_is_hse_incar(incar or {}),
-        intent="final",
+    dos_incar = _static_restart_incar_settings(
+        spin_polarized=spin_polarized,
         modifiers=calculation_modifiers,
         resources=resources,
         incar=incar,
     )
-    dos_incar["ICHARG"] = 11
 
     return NonSCFSetGenerator(
         mode="uniform",
@@ -689,6 +720,129 @@ def build_dos_flow(
         return flow
 
 
+def build_band_structure_input_set_generator(
+    structure,
+    *,
+    spin_polarized=False,
+    modifiers=None,
+    resources=None,
+    incar=None,
+    kpoints=None,
+    potcar_functional="PBE_64",
+):
+    from atomate2.vasp.sets.core import NonSCFSetGenerator
+
+    calculation_modifiers = calculation_modifiers_from_options(
+        modifiers=modifiers,
+        spin_polarized=spin_polarized,
+    )
+    if Modifier.GAMMA_ONLY in calculation_modifiers:
+        raise CalculationValidationError(
+            "Gamma-only k-points are not compatible with a Band Structure calculation.",
+            suggestion=(
+                "Remove Gamma-only so BMD Compute can generate the required "
+                "high-symmetry line-mode k-point path."
+            ),
+        )
+
+    # Keep the band path grid and basis compatible with the preceding static CHGCAR.
+    band_incar = _static_restart_incar_settings(
+        spin_polarized=spin_polarized,
+        modifiers=calculation_modifiers,
+        resources=resources,
+        incar=incar,
+    )
+
+    return NonSCFSetGenerator(
+        mode="line",
+        user_potcar_functional=potcar_functional,
+        user_kpoints_settings=line_mode_ksettings(kpoints),
+        user_incar_settings=band_incar,
+    )
+
+
+def build_band_structure_flow(
+    structure,
+    *,
+    label="vasp_run",
+    spin_polarized=False,
+    modifiers=None,
+    resources=None,
+    incar=None,
+    kpoints=None,
+    potcar_functional="PBE_64",
+):
+    from atomate2.vasp.jobs.core import NonSCFMaker, RelaxMaker, StaticMaker
+    from jobflow import Flow
+
+    stage_directories = calculation_stage_directories(
+        CalculationSpec(Purpose.BAND_STRUCTURE, modifiers=modifiers or ())
+    )
+    relax_stage_dir, static_stage_dir, band_stage_dir = stage_directories
+
+    relax_generator = build_relax_input_set_generator(
+        structure,
+        spin_polarized=spin_polarized,
+        modifiers=modifiers,
+        resources=resources,
+        incar=incar,
+        kpoints=kpoints,
+        potcar_functional=potcar_functional,
+    )
+    relax_job = RelaxMaker(
+        input_set_generator=relax_generator,
+        name=relax_stage_dir,
+    ).make(structure)
+
+    static_generator = build_static_input_set_generator(
+        relax_job.output.structure,
+        hse=_is_hse_incar(incar or {}),
+        intent="final",
+        spin_polarized=spin_polarized,
+        modifiers=modifiers,
+        resources=resources,
+        incar=incar,
+        kpoints=kpoints,
+        potcar_functional=potcar_functional,
+    )
+    static_job = StaticMaker(
+        input_set_generator=static_generator,
+        name=static_stage_dir,
+    ).make(
+        relax_job.output.structure,
+        prev_dir=relax_job.output.dir_name,
+    )
+
+    band_generator = build_band_structure_input_set_generator(
+        static_job.output.structure,
+        spin_polarized=spin_polarized,
+        modifiers=modifiers,
+        resources=resources,
+        incar=incar,
+        kpoints=kpoints,
+        potcar_functional=potcar_functional,
+    )
+    band_job = NonSCFMaker(
+        input_set_generator=band_generator,
+        name=band_stage_dir,
+    ).make(
+        static_job.output.structure,
+        prev_dir=static_job.output.dir_name,
+        mode="line",
+    )
+
+    try:
+        return Flow(
+            [relax_job, static_job, band_job],
+            name=f"{label}_band_structure",
+            metadata={"bmd_stage_directories": stage_directories},
+        )
+    except TypeError:
+        flow = Flow([relax_job, static_job, band_job], name=f"{label}_band_structure")
+        flow.bmd_stage_directories = stage_directories
+        return flow
+
+
 def build_vasp_input_set_generator_for_spec(
     structure,
     spec: CalculationSpec,
@@ -730,6 +884,17 @@ def build_vasp_input_set_generator_for_spec(
 
     if calculation_spec.purpose is Purpose.DOS:
         return build_dos_input_set_generator(
+            structure,
+            spin_polarized=spin_polarized,
+            modifiers=calculation_modifiers,
+            resources=resources,
+            incar=user_incar,
+            kpoints=kpoints,
+            potcar_functional=potcar_functional,
+        )
+
+    if calculation_spec.purpose is Purpose.BAND_STRUCTURE:
+        return build_band_structure_input_set_generator(
             structure,
             spin_polarized=spin_polarized,
             modifiers=calculation_modifiers,
@@ -834,6 +999,18 @@ def build_atomate2_flow_for_spec(
             potcar_functional=potcar_functional,
         )
 
+    if calculation_spec.purpose is Purpose.BAND_STRUCTURE:
+        return build_band_structure_flow(
+            structure,
+            label=label,
+            spin_polarized=spin_polarized,
+            modifiers=calculation_modifiers,
+            resources=resources,
+            incar=user_incar,
+            kpoints=kpoints,
+            potcar_functional=potcar_functional,
+        )
+
     raise ValueError(
         "Only single-step Atomate2 flow construction is migrated. "
         f"Purpose '{calculation_spec.purpose.value}' requires execution or non-Atomate2 logic."
@@ -910,6 +1087,8 @@ __all__ = [
     "build_atomate2_flow",
     "build_atomate2_flow_from_spec",
     "build_atomate2_flow_for_spec",
+    "build_band_structure_flow",
+    "build_band_structure_input_set_generator",
     "build_dos_flow",
     "build_dos_input_set_generator",
     "build_double_relax_flow",
@@ -923,4 +1102,5 @@ __all__ = [
     "incar_relax",
     "incar_static",
     "ksettings",
+    "line_mode_ksettings",
 ]

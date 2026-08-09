@@ -359,6 +359,15 @@ ul {
     color: var(--bad);
 }
 
+.workflow-visualization {
+    position: relative;
+}
+
+.plot-download-button {
+    right: 16px;
+    top: 16px;
+}
+
 #input-tab-incar:checked ~ .tab-labels label[for="input-tab-incar"],
 #input-tab-kpoints:checked ~ .tab-labels label[for="input-tab-kpoints"],
 #input-tab-poscar:checked ~ .tab-labels label[for="input-tab-poscar"],
@@ -1852,6 +1861,36 @@ ul {
                         <div class="callout-value">{{ results_summary.dos.spin_channels or "Unknown" }}</div>
                     </div>
                     {% endif %}
+                    {% if results_summary.band_structure %}
+                    <div class="callout">
+                        <div class="callout-title">Band Structure</div>
+                        <div class="callout-value">
+                            {% if results_summary.band_structure.available %}
+                            Available
+                            {% else %}
+                            Not available
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="callout">
+                        <div class="callout-title">Band Gap</div>
+                        <div class="callout-value">
+                            {% if results_summary.band_structure.band_gap_ev is not none %}
+                            {{ results_summary.band_structure.band_gap_ev }} eV
+                            {% else %}
+                            Unknown
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="callout">
+                        <div class="callout-title">Band Path K-points</div>
+                        <div class="callout-value">{{ results_summary.band_structure.kpoints_count or "Unknown" }}</div>
+                    </div>
+                    <div class="callout">
+                        <div class="callout-title">Bands</div>
+                        <div class="callout-value">{{ results_summary.band_structure.bands or "Unknown" }}</div>
+                    </div>
+                    {% endif %}
                 </div>
             </div>
 
@@ -1876,6 +1915,13 @@ ul {
                 <div class="summary-line">{{ visualization.subtitle }}</div>
                 {% endif %}
                 {% if visualization.kind == "line_plot" %}
+                <button
+                    type="button"
+                    class="input-copy-button plot-download-button"
+                    data-download-plot="{{ visualization.element_id }}"
+                    data-download-filename="{{ visualization.download_filename or '' }}">
+                    Download PNG
+                </button>
                 <div
                     id="{{ visualization.element_id }}"
                     class="result-plot"
@@ -1914,6 +1960,12 @@ ul {
                     <tr>
                         <td>DOSCAR</td>
                         <td class="mono">{{ results_summary.files.doscar }}</td>
+                    </tr>
+                    {% endif %}
+                    {% if results_summary.files.kpoints %}
+                    <tr>
+                        <td>KPOINTS</td>
+                        <td class="mono">{{ results_summary.files.kpoints }}</td>
                     </tr>
                     {% endif %}
                     <tr>
@@ -2071,12 +2123,98 @@ document.addEventListener("DOMContentLoaded", function () {
         target.innerHTML = '<div class="plot-message">' + message + '</div>';
     }
 
+    function fallbackPlotFilename(visualization) {
+        var base = String(visualization.id || "workflow_visualization")
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "_")
+            .replace(/^_+|_+$/g, "");
+        return (base || "workflow_visualization") + ".png";
+    }
+
+    function normalizePngFilename(value, visualization) {
+        var filename = String(value || visualization.download_filename || fallbackPlotFilename(visualization)).trim();
+        if (!filename) {
+            filename = fallbackPlotFilename(visualization);
+        }
+        return /\.png$/i.test(filename) ? filename : filename + ".png";
+    }
+
+    function findPlotDownloadButton(plotId) {
+        var buttons = document.querySelectorAll("[data-download-plot]");
+        for (var index = 0; index < buttons.length; index += 1) {
+            if (buttons[index].getAttribute("data-download-plot") === plotId) {
+                return buttons[index];
+            }
+        }
+        return null;
+    }
+
+    function downloadDataUrl(dataUrl, filename) {
+        var link = document.createElement("a");
+        link.href = dataUrl;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+    }
+
+    function markPlotDownloadUnavailable(button, label) {
+        if (!button) {
+            return;
+        }
+        var originalText = label || button.textContent;
+        button.classList.add("unsupported");
+        button.textContent = "Not available";
+        window.setTimeout(function () {
+            button.classList.remove("unsupported");
+            button.textContent = originalText;
+            button.disabled = false;
+        }, 1600);
+    }
+
+    function bindPlotDownload(visualization, target) {
+        var button = findPlotDownloadButton(visualization.element_id);
+        if (!button || button.dataset.downloadBound === "true") {
+            return;
+        }
+
+        var filename = normalizePngFilename(
+            button.getAttribute("data-download-filename"),
+            visualization
+        );
+        button.dataset.downloadBound = "true";
+        button.disabled = false;
+        button.addEventListener("click", function () {
+            var originalText = button.textContent;
+            if (!window.Plotly || typeof window.Plotly.toImage !== "function") {
+                markPlotDownloadUnavailable(button, originalText);
+                return;
+            }
+
+            button.disabled = true;
+            button.textContent = "Preparing...";
+            window.Plotly.toImage(target, {
+                format: "png",
+                width: 1600,
+                height: 1000,
+                scale: 2
+            }).then(function (dataUrl) {
+                downloadDataUrl(dataUrl, filename);
+                button.textContent = originalText;
+                button.disabled = false;
+            }).catch(function () {
+                markPlotDownloadUnavailable(button, originalText);
+            });
+        });
+    }
+
     function renderLinePlot(visualization) {
         var target = document.getElementById(visualization.element_id);
         if (!target) {
             return;
         }
         if (!window.Plotly) {
+            markPlotDownloadUnavailable(findPlotDownloadButton(visualization.element_id));
             showPlotMessage(target, "Plot could not be loaded.");
             return;
         }
@@ -2086,6 +2224,8 @@ document.addEventListener("DOMContentLoaded", function () {
         var colors = ["#4FC3F7", "#FF8A80", "#B2EBF2", "#7ED957"];
         var traces = (plot.traces || []).map(function (trace, index) {
             var name = trace.name || ("Trace " + (index + 1));
+            var xUnit = plot.x_hover_unit || "";
+            var yUnit = plot.y_hover_unit || "";
             return {
                 x: xValues,
                 y: trace.y || [],
@@ -2093,10 +2233,16 @@ document.addEventListener("DOMContentLoaded", function () {
                 mode: "lines",
                 name: name,
                 line: {
-                    color: colors[index % colors.length],
+                    color: trace.color || colors[index % colors.length],
+                    dash: trace.dash || "solid",
                     width: 2
                 },
-                hovertemplate: "%{x:.3f} eV<br>%{y:.3f}<extra>" + name + "</extra>"
+                legendgroup: trace.legendgroup || name,
+                showlegend: trace.showlegend !== false,
+                hovertemplate: (
+                    "%{x:.3f}" + xUnit + "<br>%{y:.3f}" + yUnit +
+                    "<extra>" + name + "</extra>"
+                )
             };
         });
         if (!traces.length) {
@@ -2106,22 +2252,55 @@ document.addEventListener("DOMContentLoaded", function () {
 
         var shapes = [];
         if (plot.energy_reference === "fermi") {
+            if (plot.reference_axis === "y") {
+                shapes.push({
+                    type: "line",
+                    x0: 0,
+                    x1: 1,
+                    y0: 0,
+                    y1: 0,
+                    xref: "paper",
+                    yref: "y",
+                    line: {
+                        color: "#B2EBF2",
+                        dash: "dot",
+                        width: 1
+                    }
+                });
+            } else {
+                shapes.push({
+                    type: "line",
+                    x0: 0,
+                    x1: 0,
+                    y0: 0,
+                    y1: 1,
+                    xref: "x",
+                    yref: "paper",
+                    line: {
+                        color: "#B2EBF2",
+                        dash: "dot",
+                        width: 1
+                    }
+                });
+            }
+        }
+        (plot.vertical_lines || []).forEach(function (value) {
             shapes.push({
                 type: "line",
-                x0: 0,
-                x1: 0,
+                x0: value,
+                x1: value,
                 y0: 0,
                 y1: 1,
                 xref: "x",
                 yref: "paper",
                 line: {
-                    color: "#B2EBF2",
-                    dash: "dot",
+                    color: "#3a3a3a",
                     width: 1
                 }
             });
-        }
+        });
 
+        var hasTicks = Array.isArray(plot.tickvals) && plot.tickvals.length;
         var layout = {
             autosize: true,
             paper_bgcolor: "#1b1b1b",
@@ -2139,7 +2318,10 @@ document.addEventListener("DOMContentLoaded", function () {
             xaxis: {
                 title: plot.xaxis_title || "Energy (eV)",
                 gridcolor: "#333333",
-                zerolinecolor: "#555555"
+                zerolinecolor: "#555555",
+                tickmode: hasTicks ? "array" : "auto",
+                tickvals: hasTicks ? plot.tickvals : undefined,
+                ticktext: hasTicks ? plot.ticktext : undefined
             },
             yaxis: {
                 title: plot.yaxis_title || "Value",
@@ -2157,7 +2339,14 @@ document.addEventListener("DOMContentLoaded", function () {
             displaylogo: false,
             responsive: true
         };
-        window.Plotly.newPlot(target, traces, layout, config);
+        var rendered = window.Plotly.newPlot(target, traces, layout, config);
+        if (rendered && typeof rendered.then === "function") {
+            rendered.then(function () {
+                bindPlotDownload(visualization, target);
+            });
+        } else {
+            bindPlotDownload(visualization, target);
+        }
     }
 
     visualizations.forEach(function (visualization) {

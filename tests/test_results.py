@@ -71,6 +71,8 @@ class ResultsRunner:
             return self.missing != "vasprun"
         if remote_path.endswith("/DOSCAR"):
             return self.missing != "doscar"
+        if remote_path.endswith("/KPOINTS"):
+            return self.missing != "kpoints"
         if remote_path.endswith("/CONTCAR"):
             return self.missing != "contcar"
         if remote_path.endswith("/OUTCAR"):
@@ -123,6 +125,34 @@ def fake_dos_parser(files, monitoring_result):
         "energy_max_ev": 10.0,
         "spin_channels": 1,
     }
+    return result
+
+
+def fake_band_parser(files, monitoring_result):
+    assert monitoring_result["job_id"] == "123456"
+    assert set(files) == {"contcar", "outcar", "vasprun", "kpoints"}
+    result = fake_parser(
+        {
+            "contcar": files["contcar"],
+            "outcar": files["outcar"],
+            "vasprun": files["vasprun"],
+        },
+        monitoring_result,
+    )
+    result["band_structure"] = {
+        "available": True,
+        "source": "vasprun.xml",
+        "kpoints": files["kpoints"]["path"],
+        "bands": 12,
+        "kpoints_count": 80,
+        "spin_channels": 1,
+    }
+    result["visualizations"] = [
+        {
+            "id": "band_structure",
+            "kind": "line_plot",
+        },
+    ]
     return result
 
 
@@ -226,6 +256,42 @@ def test_results_for_dos_use_final_stage_directory_and_doscar():
     assert result["dos"]["energy_points"] == 4001
 
 
+def test_results_for_band_structure_use_final_stage_directory_and_kpoints():
+    band_spec = {
+        **submission_spec,
+        "flow_spec": {
+            "calculation_spec": {
+                "purpose": "band_structure",
+                "theory": "pbe",
+                "modifiers": [],
+            },
+            "workflow": "band_structure",
+            "potcar_functional": "PBE_64",
+        },
+    }
+    runner = ResultsRunner()
+    result = load_results_for_completed_job(
+        monitoring_success,
+        submission_spec=band_spec,
+        runner_factory=lambda: runner,
+        parser=fake_band_parser,
+    )
+
+    final_stage_dir = f"{RUN_DIR}/stage_03"
+    assert runner.checked_paths == [
+        f"{final_stage_dir}/CONTCAR",
+        f"{final_stage_dir}/OUTCAR",
+        f"{final_stage_dir}/vasprun.xml",
+        f"{final_stage_dir}/KPOINTS",
+    ]
+    assert result["run_dir"] == RUN_DIR
+    assert result["workdir"] == final_stage_dir
+    assert result["files"]["kpoints"] == f"{final_stage_dir}/KPOINTS"
+    assert result["band_structure"]["available"] is True
+    assert result["band_structure"]["kpoints_count"] == 80
+    assert result["visualizations"][0]["id"] == "band_structure"
+
+
 def test_results_load_for_resumed_completed_job_uses_default_profile():
     runner = ResultsRunner()
     result = load_results_for_completed_job(
@@ -321,6 +387,43 @@ def test_resumed_dos_uses_final_stage_directory_from_job_state():
     assert result["dos"]["doscar"] == f"{final_stage_dir}/DOSCAR"
 
 
+def test_resumed_band_structure_uses_final_stage_directory_from_job_state():
+    band_state = {
+        "run_dir": RUN_DIR,
+        "submission_spec": {
+            **submission_spec,
+            "flow_spec": {
+                "calculation_spec": {
+                    "purpose": "band_structure",
+                    "theory": "pbe",
+                    "modifiers": [],
+                },
+                "workflow": "band_structure",
+                "potcar_functional": "PBE_64",
+            },
+        },
+    }
+    runner = ResultsRunner(state_payload=band_state)
+    result = load_results_for_completed_job(
+        monitoring_success,
+        runner_factory=lambda: runner,
+        parser=fake_band_parser,
+    )
+
+    final_stage_dir = f"{RUN_DIR}/stage_03"
+    assert runner.checked_paths == [
+        f"{DEFAULT_LOGS_DIR}/job_123456.json",
+        f"{final_stage_dir}/CONTCAR",
+        f"{final_stage_dir}/OUTCAR",
+        f"{final_stage_dir}/vasprun.xml",
+        f"{final_stage_dir}/KPOINTS",
+    ]
+    assert result["run_dir"] == RUN_DIR
+    assert result["workdir"] == final_stage_dir
+    assert result["files"]["kpoints"] == f"{final_stage_dir}/KPOINTS"
+    assert result["band_structure"]["kpoints"] == f"{final_stage_dir}/KPOINTS"
+
+
 def test_results_are_skipped_until_monitoring_reports_success():
     class UnusedRunner(ResultsRunner):
         def connect(self, profile):
@@ -396,8 +499,39 @@ class FakeTotalDos:
     }
 
 
+class FakeKpoint:
+    def __init__(self, label=None):
+        self.label = label
+
+
+class FakeBandStructure:
+    efermi = 0.0
+    distance = [0.0, 1.0, 2.0]
+    kpoints = [
+        FakeKpoint("\\Gamma"),
+        FakeKpoint(),
+        FakeKpoint("X"),
+    ]
+    bands = {
+        FakeSpin("up", 1): [
+            [-1.0, 0.0, 1.0],
+            [1.0, 2.0, 3.0],
+        ],
+    }
+
+    def get_band_gap(self):
+        return {
+            "energy": 1.0,
+            "direct": True,
+        }
+
+    def is_metal(self):
+        return False
+
+
 class FakeVasprun:
     calls = []
+    band_calls = []
 
     def __init__(self, path, **kwargs):
         self.calls.append({"path": path, "kwargs": kwargs})
@@ -406,7 +540,13 @@ class FakeVasprun:
         self.ionic_steps = [1]
         self.converged_electronic = True
         self.tdos = FakeTotalDos()
-        self.efermi = 0.0
+        self.efermi = None if kwargs.get("parse_dos") is False else 0.0
+
+    def get_band_structure(self, **kwargs):
+        self.band_calls.append(kwargs)
+        if self.efermi is None:
+            raise ValueError("e_fermi is None.")
+        return FakeBandStructure()
 
 
 class FakeOutcar:
@@ -466,7 +606,50 @@ def test_parse_vasp_result_files_uses_vasprun_dos_for_dos_workflow():
     assert result["dos"]["source"] == "vasprun.xml"
     assert result["dos"]["doscar"] == "/remote/stage_03/DOSCAR"
     assert result["visualizations"][0]["id"] == "dos"
+    assert result["visualizations"][0]["download_filename"] == "density_of_states.png"
     assert result["visualizations"][0]["plot"]["x"] == [-1.0, 0.0, 1.0]
+
+
+def test_parse_vasp_result_files_uses_vasprun_band_structure_for_band_workflow():
+    FakeVasprun.calls = []
+    FakeVasprun.band_calls = []
+    files = {
+        "contcar": {"path": "/remote/stage_03/CONTCAR", "text": "contcar"},
+        "outcar": {"path": "/remote/stage_03/OUTCAR", "text": "outcar"},
+        "vasprun": {"path": "/remote/stage_03/vasprun.xml", "text": "<modeling />"},
+        "kpoints": {"path": "/remote/stage_03/KPOINTS", "text": "line-mode"},
+    }
+    context = {
+        **monitoring_success,
+        "calculation_spec": CalculationSpec(Purpose.BAND_STRUCTURE, Theory.PBE).to_dict(),
+    }
+
+    with fake_pymatgen_results_modules():
+        result = parse_vasp_result_files(files, context)
+
+    assert FakeVasprun.calls
+    vasprun_kwargs = FakeVasprun.calls[-1]["kwargs"]
+    assert "parse_dos" not in vasprun_kwargs
+    assert "parse_eigenvalues" not in vasprun_kwargs
+    assert vasprun_kwargs["exception_on_bad_xml"] is False
+    assert vasprun_kwargs["parse_potcar_file"] is False
+    assert FakeVasprun.band_calls
+    assert FakeVasprun.band_calls[-1]["line_mode"] is True
+    assert FakeVasprun.band_calls[-1]["kpoints_filename"].endswith("KPOINTS")
+    assert "efermi" not in FakeVasprun.band_calls[-1]
+    assert result["final_energy_ev"] == -4.0
+    assert result["energy_per_atom_ev"] == -2.0
+    assert result["viewer"]["cif"] == "data_Si\n"
+    assert result["band_structure"]["available"] is True
+    assert result["band_structure"]["source"] == "vasprun.xml"
+    assert result["band_structure"]["kpoints"] == "/remote/stage_03/KPOINTS"
+    assert result["band_structure"]["band_gap_ev"] == 1.0
+    assert result["visualizations"][0]["id"] == "band_structure"
+    assert result["visualizations"][0]["download_filename"] == "band_structure.png"
+    assert result["visualizations"][0]["plot"]["x"] == [0.0, 1.0, 2.0]
+    assert result["visualizations"][0]["plot"]["ticktext"] == ["Γ", "X"]
+    assert result["visualizations"][0]["plot"]["traces"][0]["name"] == "Bands"
+    assert result["visualizations"][0]["plot"]["traces"][0]["showlegend"] is False
 
 
 if __name__ == "__main__":
@@ -474,11 +657,14 @@ if __name__ == "__main__":
     test_results_load_for_submitted_completed_job_uses_submission_profile()
     test_results_for_double_relax_use_final_stage_directory()
     test_results_for_dos_use_final_stage_directory_and_doscar()
+    test_results_for_band_structure_use_final_stage_directory_and_kpoints()
     test_results_load_for_resumed_completed_job_uses_default_profile()
     test_resumed_double_relax_uses_final_stage_directory_from_job_state()
     test_resumed_dos_uses_final_stage_directory_from_job_state()
+    test_resumed_band_structure_uses_final_stage_directory_from_job_state()
     test_results_are_skipped_until_monitoring_reports_success()
     test_results_report_missing_required_output_file()
     test_results_report_missing_bmd_job_state_for_resume()
     test_parse_vasp_result_files_uses_vasprun_dos_for_dos_workflow()
+    test_parse_vasp_result_files_uses_vasprun_band_structure_for_band_workflow()
     print("results smoke test passed")

@@ -175,6 +175,39 @@ assert dos_spec["flow_spec"]["calculation_spec"] == {
     "label": None,
 }
 
+band_flow_spec = {
+    **flow_spec,
+    "workflow": "band_structure",
+    "calculation_spec": {
+        "purpose": "band_structure",
+        "theory": "pbe",
+        "modifiers": [],
+    },
+}
+band_spec = create_submission_spec(
+    band_flow_spec,
+    label="Si bands!",
+    timestamp="20260629-120000",
+    env={},
+)
+band_run_dir = f"{DEFAULT_FLOWS_DIR}/Si-bands-20260629-120000"
+assert band_spec["paths"]["run_dir"] == band_run_dir
+assert band_spec["paths"]["stage_dirs"] == {
+    "stage_01": f"{band_run_dir}/stage_01",
+    "stage_02": f"{band_run_dir}/stage_02",
+    "stage_03": f"{band_run_dir}/stage_03",
+}
+assert band_spec["paths"]["result_dir"] == f"{band_run_dir}/stage_03"
+assert f"{band_run_dir}/stage_01" in band_spec["paths"]["directories_to_prepare"]
+assert f"{band_run_dir}/stage_02" in band_spec["paths"]["directories_to_prepare"]
+assert f"{band_run_dir}/stage_03" in band_spec["paths"]["directories_to_prepare"]
+assert band_spec["flow_spec"]["calculation_spec"] == {
+    "purpose": "band_structure",
+    "theory": "pbe",
+    "modifiers": [],
+    "label": None,
+}
+
 advanced_flow_spec = {
     **flow_spec,
     "calculation_spec": {

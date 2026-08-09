@@ -1,6 +1,7 @@
 from backend.calculations.builder import build_calculation_flow
 from backend.calculations.models import CalculationSpec, Modifier, Purpose, Theory
 from backend.calculations.registry import (
+    CalculationValidationError,
     calculation_display_name,
     calculation_form_options,
     calculation_result_stage_directory,
@@ -40,17 +41,28 @@ assert (
     == "double_relax"
 )
 assert legacy_workflow_from_spec(CalculationSpec(Purpose.DOS, Theory.PBE)) == "dos"
+assert (
+    legacy_workflow_from_spec(CalculationSpec(Purpose.BAND_STRUCTURE, Theory.PBE))
+    == "band_structure"
+)
 assert calculation_stage_directories(
     CalculationSpec(Purpose.DOUBLE_RELAX, Theory.PBE)
 ) == ("relax_01", "relax_02")
 assert calculation_stage_directories(
     CalculationSpec(Purpose.DOS, Theory.PBE)
 ) == ("stage_01", "stage_02", "stage_03")
+assert calculation_stage_directories(
+    CalculationSpec(Purpose.BAND_STRUCTURE, Theory.PBE)
+) == ("stage_01", "stage_02", "stage_03")
 assert (
     calculation_result_stage_directory(CalculationSpec(Purpose.DOUBLE_RELAX, Theory.PBE))
     == "relax_02"
 )
 assert calculation_result_stage_directory(CalculationSpec(Purpose.DOS, Theory.PBE)) == "stage_03"
+assert (
+    calculation_result_stage_directory(CalculationSpec(Purpose.BAND_STRUCTURE, Theory.PBE))
+    == "stage_03"
+)
 assert calculation_stage_directories(CalculationSpec(Purpose.RELAX, Theory.PBE)) == ()
 assert legacy_workflow_from_spec(spec) == "relax_ions"
 assert legacy_potcar_functional_from_spec(spec) == "PBE_64"
@@ -80,6 +92,10 @@ assert (
     == "Double Geometry Optimisation"
 )
 assert calculation_display_name(CalculationSpec(Purpose.DOS, Theory.PBE)) == "Density of States"
+assert (
+    calculation_display_name(CalculationSpec(Purpose.BAND_STRUCTURE, Theory.PBE))
+    == "Band Structure"
+)
 assert calculation_display_name(CalculationSpec(Purpose.STATIC, Theory.PBE)) == "Static Energy"
 
 form_options = calculation_form_options()
@@ -88,6 +104,7 @@ assert [option["label"] for option in form_options["purposes"]] == [
     "Double Geometry Optimisation",
     "Static Energy",
     "Density of States",
+    "Band Structure",
 ]
 assert [option["label"] for option in form_options["theories"]] == ["PBE"]
 assert [option["label"] for option in form_options["modifiers"]] == [
@@ -109,6 +126,16 @@ spin_double_relax_spec = CalculationSpec(
     {Modifier.SPIN_POLARIZED},
 )
 spin_dos_spec = CalculationSpec(Purpose.DOS, Theory.PBE, {Modifier.SPIN_POLARIZED})
+spin_band_spec = CalculationSpec(
+    Purpose.BAND_STRUCTURE,
+    Theory.PBE,
+    {Modifier.SPIN_POLARIZED},
+)
+gamma_band_spec = CalculationSpec(
+    Purpose.BAND_STRUCTURE,
+    Theory.PBE,
+    {Modifier.GAMMA_ONLY},
+)
 soc_static_spec = CalculationSpec(Purpose.STATIC, Theory.PBE, {Modifier.SOC})
 dft_u_relax_spec = CalculationSpec(Purpose.RELAX, Theory.PBE, {Modifier.DFT_U})
 gamma_static_spec = CalculationSpec(Purpose.STATIC, Theory.PBE, {Modifier.GAMMA_ONLY})
@@ -116,6 +143,7 @@ assert validate_calculation_spec(spin_static_spec) == spin_static_spec
 assert validate_calculation_spec(spin_relax_spec) == spin_relax_spec
 assert validate_calculation_spec(spin_double_relax_spec) == spin_double_relax_spec
 assert validate_calculation_spec(spin_dos_spec) == spin_dos_spec
+assert validate_calculation_spec(spin_band_spec) == spin_band_spec
 assert validate_calculation_spec(soc_static_spec) == soc_static_spec
 assert validate_calculation_spec(dft_u_relax_spec) == dft_u_relax_spec
 assert validate_calculation_spec(gamma_static_spec) == gamma_static_spec
@@ -123,9 +151,16 @@ assert legacy_workflow_from_spec(spin_static_spec) == "static"
 assert legacy_workflow_from_spec(spin_relax_spec) == "relax"
 assert legacy_workflow_from_spec(spin_double_relax_spec) == "double_relax"
 assert legacy_workflow_from_spec(spin_dos_spec) == "dos"
+assert legacy_workflow_from_spec(spin_band_spec) == "band_structure"
 assert legacy_workflow_from_spec(soc_static_spec) == "static"
 assert legacy_workflow_from_spec(dft_u_relax_spec) == "relax"
 assert legacy_workflow_from_spec(gamma_static_spec) == "static"
+try:
+    validate_calculation_spec(gamma_band_spec)
+except CalculationValidationError as exc:
+    assert "band_structure" in exc.message
+else:
+    raise AssertionError("Gamma-only should not be supported for line-mode bands.")
 
 for unsupported_theory in (Theory.R2SCAN, Theory.HSE06):
     try:
