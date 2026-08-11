@@ -221,6 +221,38 @@ def test_results_for_double_relax_use_final_stage_directory():
     assert result["files"]["contcar"] == f"{final_stage_dir}/CONTCAR"
 
 
+def test_results_for_relax_static_use_final_stage_directory():
+    relax_static_spec = {
+        **submission_spec,
+        "flow_spec": {
+            "calculation_spec": {
+                "purpose": "relax_static",
+                "theory": "hse06",
+                "modifiers": [],
+            },
+            "workflow": "relax_static",
+            "potcar_functional": "PBE_64",
+        },
+    }
+    runner = ResultsRunner()
+    result = load_results_for_completed_job(
+        monitoring_success,
+        submission_spec=relax_static_spec,
+        runner_factory=lambda: runner,
+        parser=fake_parser,
+    )
+
+    final_stage_dir = f"{RUN_DIR}/stage_02"
+    assert runner.checked_paths == [
+        f"{final_stage_dir}/CONTCAR",
+        f"{final_stage_dir}/OUTCAR",
+        f"{final_stage_dir}/vasprun.xml",
+    ]
+    assert result["run_dir"] == RUN_DIR
+    assert result["workdir"] == final_stage_dir
+    assert result["files"]["contcar"] == f"{final_stage_dir}/CONTCAR"
+
+
 def test_results_for_dos_use_final_stage_directory_and_doscar():
     dos_spec = {
         **submission_spec,
@@ -656,6 +688,7 @@ if __name__ == "__main__":
     test_monitoring_success_detection_requires_completed_success()
     test_results_load_for_submitted_completed_job_uses_submission_profile()
     test_results_for_double_relax_use_final_stage_directory()
+    test_results_for_relax_static_use_final_stage_directory()
     test_results_for_dos_use_final_stage_directory_and_doscar()
     test_results_for_band_structure_use_final_stage_directory_and_kpoints()
     test_results_load_for_resumed_completed_job_uses_default_profile()

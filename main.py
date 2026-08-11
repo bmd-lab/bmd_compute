@@ -1,8 +1,16 @@
+import json
+
 from fastapi import FastAPI, Form, Request
 from fastapi.templating import Jinja2Templates
 
 from backend.calculations.builder import build_calculation_flow
-from backend.calculations.models import CalculationSpec, Purpose, Theory
+from backend.calculations.models import (
+    CalculationSpec,
+    Purpose,
+    StageType,
+    Theory,
+    WorkflowSpec,
+)
 from backend.calculations.resources import (
     ALLOWED_CPU_COUNTS,
     ExecutionResources,
@@ -10,13 +18,18 @@ from backend.calculations.resources import (
 )
 from backend.calculations.registry import (
     CalculationValidationError,
+    calculation_spec_from_workflow_spec,
     calculation_display_name,
     calculation_form_options,
     calculation_spec_from_legacy,
     legacy_potcar_functional_from_spec,
     legacy_workflow_from_spec,
     modifier_display_name,
+    stage_display_name,
     theory_display_name,
+    validate_workflow_spec,
+    workflow_display_name,
+    workflow_spec_from_calculation_spec,
 )
 from backend.generated_inputs import preview_generated_inputs, preview_slurm_script
 from backend.monitoring import monitor_job
@@ -39,6 +52,7 @@ def page_context(
     fmt: str = "poscar",
     summary=None,
     selected_spec: CalculationSpec | None = None,
+    selected_workflow: WorkflowSpec | None = None,
     selected_resources: ExecutionResources | None = None,
     calculation_summary=None,
     generated_inputs=None,
@@ -51,13 +65,28 @@ def page_context(
     structure_error=None,
     calculation_error=None,
 ):
-    selected_spec = selected_spec or default_calculation_spec()
+    if selected_workflow is None:
+        selected_workflow = (
+            workflow_spec_from_calculation_spec(selected_spec)
+            if selected_spec is not None
+            else default_workflow_spec()
+        )
+    selected_workflow = validate_workflow_spec(selected_workflow)
+    selected_spec = (
+        selected_spec
+        or calculation_spec_from_workflow_spec(selected_workflow)
+        or default_calculation_spec()
+    )
     selected_resources = selected_resources or default_execution_resources()
     return {
         "structure_text": structure_text,
         "fmt": fmt,
         "summary": summary,
-        "selected_calculation": selected_calculation_context(selected_spec),
+        "selected_calculation": selected_calculation_context(
+            selected_spec,
+            selected_workflow=selected_workflow,
+        ),
+        "selected_workflow": selected_workflow_context(selected_workflow),
         "selected_resources": selected_resources_context(selected_resources),
         "calculation_options": calculation_form_options(),
         "calculation": calculation_summary,
@@ -88,6 +117,7 @@ def structure_error_response(
     fmt: str,
     exc: StructureValidationError,
     selected_spec: CalculationSpec | None = None,
+    selected_workflow: WorkflowSpec | None = None,
     selected_resources: ExecutionResources | None = None,
 ):
     return templates.TemplateResponse(
@@ -97,6 +127,7 @@ def structure_error_response(
             structure_text=structure_text,
             fmt=fmt,
             selected_spec=selected_spec,
+            selected_workflow=selected_workflow,
             selected_resources=selected_resources,
             structure_error=structure_error_context(exc),
         ),
@@ -118,6 +149,7 @@ def calculation_error_response(
     fmt: str,
     exc: CalculationValidationError,
     selected_spec: CalculationSpec | None = None,
+    selected_workflow: WorkflowSpec | None = None,
     selected_resources: ExecutionResources | None = None,
 ):
     summary = None
@@ -134,6 +166,7 @@ def calculation_error_response(
             fmt=fmt,
             summary=summary,
             selected_spec=selected_spec,
+            selected_workflow=selected_workflow,
             selected_resources=selected_resources,
             calculation_error=calculation_error_context(exc),
         ),
@@ -145,6 +178,10 @@ def default_calculation_spec() -> CalculationSpec:
     return CalculationSpec(Purpose.STATIC, Theory.PBE)
 
 
+def default_workflow_spec() -> WorkflowSpec:
+    return workflow_spec_from_calculation_spec(default_calculation_spec())
+
+
 def selected_resources_context(resources: ExecutionResources) -> dict:
     return {
         "nodes": resources.nodes,
@@ -153,19 +190,78 @@ def selected_resources_context(resources: ExecutionResources) -> dict:
         "memory_gb": resources.memory_gb,
         "walltime": resources.walltime,
         "queue": resources.queue,
-        "account": resources.account,
     }
 
 
-def selected_calculation_context(spec: CalculationSpec) -> dict:
-    modifiers = sorted(spec.modifiers, key=lambda modifier: modifier.value)
+def selected_calculation_context(
+    spec: CalculationSpec,
+    *,
+    selected_workflow: WorkflowSpec | None = None,
+) -> dict:
+    workflow_spec = (
+        validate_workflow_spec(selected_workflow)
+        if selected_workflow is not None
+        else workflow_spec_from_calculation_spec(spec)
+    )
+    compatible_spec = calculation_spec_from_workflow_spec(workflow_spec)
+    visible_spec = compatible_spec or spec
+    modifiers = sorted(
+        {
+            modifier
+            for stage in workflow_spec.stages
+            for modifier in stage.modifiers
+        }
+        or set(visible_spec.modifiers),
+        key=lambda modifier: modifier.value,
+    )
+    theories = {stage.theory for stage in workflow_spec.stages}
+    if len(theories) == 1:
+        theory = next(iter(theories))
+        theory_value = theory.value
+        theory_label = theory_display_name(theory)
+    else:
+        theory_value = "mixed"
+        theory_label = "Mixed"
     return {
-        "purpose": spec.purpose.value,
-        "theory": spec.theory.value,
+        "purpose": visible_spec.purpose.value if compatible_spec is not None else "custom",
+        "theory": theory_value,
         "modifiers": [modifier.value for modifier in modifiers],
         "modifier_labels": [modifier_display_name(modifier) for modifier in modifiers],
-        "purpose_label": calculation_display_name(spec),
-        "theory_label": theory_display_name(spec.theory),
+        "purpose_label": (
+            calculation_display_name(compatible_spec)
+            if compatible_spec is not None
+            else workflow_display_name(workflow_spec)
+        ),
+        "theory_label": theory_label,
+    }
+
+
+def selected_workflow_context(workflow_spec: WorkflowSpec) -> dict:
+    workflow = validate_workflow_spec(workflow_spec)
+    return {
+        "json": json.dumps(workflow.to_dict(), sort_keys=True),
+        "label": workflow_display_name(workflow),
+        "recipe": workflow.recipe,
+        "stages": [
+            {
+                "index": index + 1,
+                "stage_type": stage.stage_type.value,
+                "stage_type_label": stage_display_name(stage),
+                "theory": stage.theory.value,
+                "theory_label": theory_display_name(stage.theory),
+                "modifiers": sorted(
+                    modifier.value for modifier in stage.modifiers
+                ),
+                "modifier_labels": [
+                    modifier_display_name(modifier)
+                    for modifier in sorted(
+                        stage.modifiers,
+                        key=lambda modifier: modifier.value,
+                    )
+                ],
+            }
+            for index, stage in enumerate(workflow.stages)
+        ],
     }
 
 
@@ -187,13 +283,42 @@ def calculation_spec_from_form(
     return calculation_spec_from_legacy(workflow, method)
 
 
+def workflow_spec_from_form(
+    *,
+    workflow_spec_json: str | None = None,
+    purpose: str | None = None,
+    theory: str | None = None,
+    modifiers: list[str] | None = None,
+    workflow: str | None = None,
+    method: str | None = None,
+) -> WorkflowSpec:
+    if workflow_spec_json:
+        try:
+            data = json.loads(workflow_spec_json)
+        except json.JSONDecodeError as exc:
+            raise CalculationValidationError(
+                "The workflow stage configuration could not be read.",
+                suggestion="Rebuild the calculation, then try again.",
+            ) from exc
+        return validate_workflow_spec(WorkflowSpec.from_dict(data))
+
+    return workflow_spec_from_calculation_spec(
+        calculation_spec_from_form(
+            purpose=purpose,
+            theory=theory,
+            modifiers=modifiers,
+            workflow=workflow,
+            method=method,
+        )
+    )
+
+
 def execution_resources_from_form(
     *,
     cpus: str | None = None,
     memory_gb: str | None = None,
     walltime: str | None = None,
     queue: str | None = None,
-    account: str | None = None,
 ) -> ExecutionResources:
     defaults = default_execution_resources()
     return ExecutionResources(
@@ -201,7 +326,7 @@ def execution_resources_from_form(
         memory_gb=memory_gb or defaults.memory_gb,
         walltime=walltime or defaults.walltime,
         queue=queue or defaults.queue,
-        account=account or defaults.account,
+        account=defaults.account,
     )
 
 
@@ -209,30 +334,45 @@ def build_submission_state(
     *,
     structure_text: str,
     fmt: str,
-    calculation_spec: CalculationSpec,
+    calculation_spec: CalculationSpec | None = None,
+    workflow_spec: WorkflowSpec | None = None,
     execution_resources: ExecutionResources | None = None,
     timestamp: str | None = None,
 ):
     execution_resources = execution_resources or default_execution_resources()
+    if workflow_spec is None:
+        if calculation_spec is None:
+            calculation_spec = default_calculation_spec()
+        workflow_spec = workflow_spec_from_calculation_spec(calculation_spec)
+    workflow_spec = validate_workflow_spec(workflow_spec)
+    calculation_spec = calculation_spec_from_workflow_spec(workflow_spec)
     structure_obj = parse_structure(structure_text, fmt)
     summary = summarize_structure(structure_obj)
-    potcar_functional = legacy_potcar_functional_from_spec(calculation_spec)
-    legacy_workflow = legacy_workflow_from_spec(calculation_spec)
+    potcar_functional = (
+        legacy_potcar_functional_from_spec(calculation_spec)
+        if calculation_spec is not None
+        else "PBE_64"
+    )
+    legacy_workflow = (
+        legacy_workflow_from_spec(calculation_spec)
+        if calculation_spec is not None
+        else "custom_workflow"
+    )
     generated_inputs = preview_generated_inputs(
         structure_obj,
-        calculation_spec,
+        workflow_spec,
         resources=execution_resources,
         potcar_functional=potcar_functional,
     )
     flow = build_calculation_flow(
         structure=structure_obj,
-        spec=calculation_spec,
+        spec=workflow_spec,
         resources=execution_resources,
         potcar_functional=potcar_functional,
     )
-    calculation_summary = summarize_workflow(flow, calculation_spec)
+    calculation_summary = summarize_workflow(flow, workflow_spec)
     flow_spec = {
-        "calculation_spec": calculation_spec.to_dict(),
+        "workflow_spec": workflow_spec.to_dict(),
         "workflow": legacy_workflow,
         "potcar_functional": potcar_functional,
         "kpoints": None,
@@ -244,6 +384,8 @@ def build_submission_state(
             "text": structure_text,
         },
     }
+    if calculation_spec is not None:
+        flow_spec["calculation_spec"] = calculation_spec.to_dict()
     submission_spec = create_submission_spec(
         flow_spec,
         structure=structure_obj,
@@ -330,31 +472,36 @@ def build_workflow(
     memory_gb: str | None = Form(None),
     walltime: str | None = Form(None),
     queue: str | None = Form(None),
-    account: str | None = Form(None),
+    workflow_spec_json: str | None = Form(None),
     workflow: str | None = Form(None),
     method: str | None = Form(None),
 ):
     calculation_spec = default_calculation_spec()
+    workflow_spec = default_workflow_spec()
     execution_resources = default_execution_resources()
     try:
-        calculation_spec = calculation_spec_from_form(
+        workflow_spec = workflow_spec_from_form(
+            workflow_spec_json=workflow_spec_json,
             purpose=purpose,
             theory=theory,
             modifiers=modifiers,
             workflow=workflow,
             method=method,
         )
+        calculation_spec = (
+            calculation_spec_from_workflow_spec(workflow_spec)
+            or default_calculation_spec()
+        )
         execution_resources = execution_resources_from_form(
             cpus=cpus,
             memory_gb=memory_gb,
             walltime=walltime,
             queue=queue,
-            account=account,
         )
         summary, calculation_summary, generated_inputs, submission_spec = build_submission_state(
             structure_text=structure,
             fmt=fmt,
-            calculation_spec=calculation_spec,
+            workflow_spec=workflow_spec,
             execution_resources=execution_resources,
         )
     except StructureValidationError as exc:
@@ -363,6 +510,7 @@ def build_workflow(
             structure_text=structure,
             fmt=fmt,
             selected_spec=calculation_spec,
+            selected_workflow=workflow_spec,
             selected_resources=execution_resources,
             exc=exc,
         )
@@ -372,6 +520,7 @@ def build_workflow(
             structure_text=structure,
             fmt=fmt,
             selected_spec=calculation_spec,
+            selected_workflow=workflow_spec,
             selected_resources=execution_resources,
             exc=exc,
         )
@@ -384,6 +533,7 @@ def build_workflow(
             fmt=fmt,
             summary=summary,
             selected_spec=calculation_spec,
+            selected_workflow=workflow_spec,
             selected_resources=execution_resources,
             calculation_summary=calculation_summary,
             generated_inputs=generated_inputs,
@@ -404,32 +554,37 @@ def prepare_remote(
     memory_gb: str | None = Form(None),
     walltime: str | None = Form(None),
     queue: str | None = Form(None),
-    account: str | None = Form(None),
     created_at: str = Form(...),
+    workflow_spec_json: str | None = Form(None),
     workflow: str | None = Form(None),
     method: str | None = Form(None),
 ):
     calculation_spec = default_calculation_spec()
+    workflow_spec = default_workflow_spec()
     execution_resources = default_execution_resources()
     try:
-        calculation_spec = calculation_spec_from_form(
+        workflow_spec = workflow_spec_from_form(
+            workflow_spec_json=workflow_spec_json,
             purpose=purpose,
             theory=theory,
             modifiers=modifiers,
             workflow=workflow,
             method=method,
         )
+        calculation_spec = (
+            calculation_spec_from_workflow_spec(workflow_spec)
+            or default_calculation_spec()
+        )
         execution_resources = execution_resources_from_form(
             cpus=cpus,
             memory_gb=memory_gb,
             walltime=walltime,
             queue=queue,
-            account=account,
         )
         summary, calculation_summary, generated_inputs, submission_spec = build_submission_state(
             structure_text=structure,
             fmt=fmt,
-            calculation_spec=calculation_spec,
+            workflow_spec=workflow_spec,
             execution_resources=execution_resources,
             timestamp=created_at,
         )
@@ -439,6 +594,7 @@ def prepare_remote(
             structure_text=structure,
             fmt=fmt,
             selected_spec=calculation_spec,
+            selected_workflow=workflow_spec,
             selected_resources=execution_resources,
             exc=exc,
         )
@@ -448,6 +604,7 @@ def prepare_remote(
             structure_text=structure,
             fmt=fmt,
             selected_spec=calculation_spec,
+            selected_workflow=workflow_spec,
             selected_resources=execution_resources,
             exc=exc,
         )
@@ -461,6 +618,7 @@ def prepare_remote(
             fmt=fmt,
             summary=summary,
             selected_spec=calculation_spec,
+            selected_workflow=workflow_spec,
             selected_resources=execution_resources,
             calculation_summary=calculation_summary,
             generated_inputs=generated_inputs,
@@ -482,33 +640,38 @@ def submit_workflow(
     memory_gb: str | None = Form(None),
     walltime: str | None = Form(None),
     queue: str | None = Form(None),
-    account: str | None = Form(None),
     created_at: str = Form(...),
     remote_prepared: str = Form("false"),
+    workflow_spec_json: str | None = Form(None),
     workflow: str | None = Form(None),
     method: str | None = Form(None),
 ):
     calculation_spec = default_calculation_spec()
+    workflow_spec = default_workflow_spec()
     execution_resources = default_execution_resources()
     try:
-        calculation_spec = calculation_spec_from_form(
+        workflow_spec = workflow_spec_from_form(
+            workflow_spec_json=workflow_spec_json,
             purpose=purpose,
             theory=theory,
             modifiers=modifiers,
             workflow=workflow,
             method=method,
         )
+        calculation_spec = (
+            calculation_spec_from_workflow_spec(workflow_spec)
+            or default_calculation_spec()
+        )
         execution_resources = execution_resources_from_form(
             cpus=cpus,
             memory_gb=memory_gb,
             walltime=walltime,
             queue=queue,
-            account=account,
         )
         summary, calculation_summary, generated_inputs, submission_spec = build_submission_state(
             structure_text=structure,
             fmt=fmt,
-            calculation_spec=calculation_spec,
+            workflow_spec=workflow_spec,
             execution_resources=execution_resources,
             timestamp=created_at,
         )
@@ -518,6 +681,7 @@ def submit_workflow(
             structure_text=structure,
             fmt=fmt,
             selected_spec=calculation_spec,
+            selected_workflow=workflow_spec,
             selected_resources=execution_resources,
             exc=exc,
         )
@@ -527,6 +691,7 @@ def submit_workflow(
             structure_text=structure,
             fmt=fmt,
             selected_spec=calculation_spec,
+            selected_workflow=workflow_spec,
             selected_resources=execution_resources,
             exc=exc,
         )
@@ -559,6 +724,7 @@ def submit_workflow(
             fmt=fmt,
             summary=summary,
             selected_spec=calculation_spec,
+            selected_workflow=workflow_spec,
             selected_resources=execution_resources,
             calculation_summary=calculation_summary,
             generated_inputs=generated_inputs,
@@ -583,34 +749,39 @@ def refresh_monitoring(
     memory_gb: str | None = Form(None),
     walltime: str | None = Form(None),
     queue: str | None = Form(None),
-    account: str | None = Form(None),
     created_at: str = Form(...),
     job_id: str = Form(...),
     submitted_at: str = Form(""),
+    workflow_spec_json: str | None = Form(None),
     workflow: str | None = Form(None),
     method: str | None = Form(None),
 ):
     calculation_spec = default_calculation_spec()
+    workflow_spec = default_workflow_spec()
     execution_resources = default_execution_resources()
     try:
-        calculation_spec = calculation_spec_from_form(
+        workflow_spec = workflow_spec_from_form(
+            workflow_spec_json=workflow_spec_json,
             purpose=purpose,
             theory=theory,
             modifiers=modifiers,
             workflow=workflow,
             method=method,
         )
+        calculation_spec = (
+            calculation_spec_from_workflow_spec(workflow_spec)
+            or default_calculation_spec()
+        )
         execution_resources = execution_resources_from_form(
             cpus=cpus,
             memory_gb=memory_gb,
             walltime=walltime,
             queue=queue,
-            account=account,
         )
         summary, calculation_summary, generated_inputs, submission_spec = build_submission_state(
             structure_text=structure,
             fmt=fmt,
-            calculation_spec=calculation_spec,
+            workflow_spec=workflow_spec,
             execution_resources=execution_resources,
             timestamp=created_at,
         )
@@ -620,6 +791,7 @@ def refresh_monitoring(
             structure_text=structure,
             fmt=fmt,
             selected_spec=calculation_spec,
+            selected_workflow=workflow_spec,
             selected_resources=execution_resources,
             exc=exc,
         )
@@ -629,6 +801,7 @@ def refresh_monitoring(
             structure_text=structure,
             fmt=fmt,
             selected_spec=calculation_spec,
+            selected_workflow=workflow_spec,
             selected_resources=execution_resources,
             exc=exc,
         )
@@ -652,6 +825,7 @@ def refresh_monitoring(
             fmt=fmt,
             summary=summary,
             selected_spec=calculation_spec,
+            selected_workflow=workflow_spec,
             selected_resources=execution_resources,
             calculation_summary=calculation_summary,
             generated_inputs=generated_inputs,

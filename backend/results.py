@@ -9,10 +9,12 @@ import traceback
 from pathlib import Path
 from typing import Callable
 
-from backend.calculations.models import CalculationSpec
+from backend.calculations.models import CalculationSpec, WorkflowSpec
 from backend.calculations.registry import (
     calculation_result_stage_directory,
     calculation_spec_from_flow_spec,
+    workflow_result_stage_directory,
+    workflow_spec_from_flow_spec,
 )
 from backend.config import DEFAULT_LOGS_DIR
 from backend.remote import RemoteRunner
@@ -195,13 +197,17 @@ def resolve_results_location(
     if not run_dir:
         return _empty_results_location()
 
+    workflow_spec = workflow_spec_from_submission_spec(resolved_spec)
     calculation_spec = calculation_spec_from_submission_spec(resolved_spec)
     output_dir = result_output_dir_from_submission_spec(run_dir, resolved_spec)
     return {
         "run_dir": run_dir,
         "output_dir": output_dir,
         "calculation_spec": calculation_spec,
-        "workflow_result_file_keys": workflow_result_file_keys(calculation_spec),
+        "workflow_spec": workflow_spec,
+        "workflow_result_file_keys": workflow_result_file_keys(
+            workflow_spec or calculation_spec
+        ),
     }
 
 
@@ -233,6 +239,10 @@ def result_stage_directory_from_submission_spec(submission_spec: dict | None) ->
     if not submission_spec:
         return None
 
+    workflow_spec = workflow_spec_from_submission_spec(submission_spec)
+    if workflow_spec is not None:
+        return workflow_result_stage_directory(workflow_spec)
+
     calculation_spec = calculation_spec_from_submission_spec(submission_spec)
     if calculation_spec is None:
         return None
@@ -254,9 +264,24 @@ def calculation_spec_from_submission_spec(
         return None
 
 
+def workflow_spec_from_submission_spec(
+    submission_spec: dict | None,
+) -> WorkflowSpec | None:
+    if not submission_spec:
+        return None
+
+    try:
+        return workflow_spec_from_flow_spec(
+            submission_spec.get("flow_spec")
+        )
+    except Exception:
+        return None
+
+
 def result_includes_dos_from_submission_spec(submission_spec: dict | None) -> bool:
+    workflow_spec = workflow_spec_from_submission_spec(submission_spec)
     calculation_spec = calculation_spec_from_submission_spec(submission_spec)
-    return "doscar" in workflow_result_file_keys(calculation_spec)
+    return "doscar" in workflow_result_file_keys(workflow_spec or calculation_spec)
 
 
 def _empty_results_location() -> dict:
@@ -264,6 +289,7 @@ def _empty_results_location() -> dict:
         "run_dir": "",
         "output_dir": "",
         "calculation_spec": None,
+        "workflow_spec": None,
         "workflow_result_file_keys": (),
     }
 
@@ -346,13 +372,15 @@ def parse_vasp_result_files(files: dict, monitoring_result: dict) -> dict:
     with tempfile.TemporaryDirectory(prefix="bmd-results-") as tmpdir:
         _log_results("Write temporary VASP files")
         tmp = Path(tmpdir)
+        workflow_spec = _workflow_spec_from_results_context(monitoring_result)
         calculation_spec = _calculation_spec_from_results_context(monitoring_result)
+        result_spec = workflow_spec or calculation_spec
         parse_dos = workflow_result_parse_dos(
-            calculation_spec,
+            result_spec,
             available_file_keys=set(files),
         )
         parse_eigenvalues = workflow_result_parse_eigenvalues(
-            calculation_spec,
+            result_spec,
             available_file_keys=set(files),
         )
         local_paths = {
@@ -425,7 +453,7 @@ def parse_vasp_result_files(files: dict, monitoring_result: dict) -> dict:
         completion_status = _completion_status(monitoring_result)
         formula = final_structure.composition.reduced_formula
         workflow_payload = render_workflow_results(
-            calculation_spec,
+            result_spec,
             vasprun=vasprun,
             files=files,
             local_paths=local_paths,
@@ -500,10 +528,29 @@ def _vasprun_parse_kwargs(
 
 def _results_parse_context(monitoring_result: dict | None, location: dict) -> dict:
     context = dict(monitoring_result or {})
+    workflow_spec = location.get("workflow_spec")
+    if workflow_spec is not None:
+        context["workflow_spec"] = workflow_spec.to_dict()
     calculation_spec = location.get("calculation_spec")
     if calculation_spec is not None:
         context["calculation_spec"] = calculation_spec.to_dict()
     return context
+
+
+def _workflow_spec_from_results_context(context: dict | None) -> WorkflowSpec | None:
+    if not context:
+        return None
+
+    value = context.get("workflow_spec")
+    if isinstance(value, WorkflowSpec):
+        return value
+    if value:
+        try:
+            return WorkflowSpec.from_dict(value)
+        except Exception:
+            return None
+
+    return workflow_spec_from_submission_spec(context.get("submission_spec"))
 
 
 def _calculation_spec_from_results_context(context: dict | None) -> CalculationSpec | None:

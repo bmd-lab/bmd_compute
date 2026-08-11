@@ -187,7 +187,6 @@ response = build_workflow(
     memory_gb=None,
     walltime=None,
     queue=None,
-    account=None,
     workflow=None,
     method=None,
 )
@@ -217,7 +216,6 @@ resource_response = build_workflow(
     memory_gb="256",
     walltime="12:00:00",
     queue="debug",
-    account="debug-users",
     workflow=None,
     method=None,
 )
@@ -230,17 +228,16 @@ assert resource_response.context["selected_resources"] == {
     "memory_gb": 256,
     "walltime": "12:00:00",
     "queue": "debug",
-    "account": "debug-users",
 }
 assert resource_response.context["submission_spec"]["resources"]["ntasks"] == 48
 assert resource_response.context["submission_spec"]["resources"]["mem_gb"] == 256
 assert resource_response.context["submission_spec"]["cluster"]["partition"] == "debug"
-assert resource_response.context["submission_spec"]["cluster"]["account"] == "debug-users"
+assert resource_response.context["submission_spec"]["cluster"]["account"] == DEFAULT_ACCOUNT
 assert resource_response.context["generated_inputs"]["slurm_script"] == build_slurm_preview_script(
     resource_response.context["submission_spec"]
 )
 assert "#SBATCH -p debug" in resource_response.context["generated_inputs"]["slurm_script"]
-assert "#SBATCH --account=debug-users" in resource_response.context["generated_inputs"]["slurm_script"]
+assert f"#SBATCH --account={DEFAULT_ACCOUNT}" in resource_response.context["generated_inputs"]["slurm_script"]
 assert "#SBATCH -J Si-static" in resource_response.context["generated_inputs"]["slurm_script"]
 assert "#SBATCH --nodes=1" in resource_response.context["generated_inputs"]["slurm_script"]
 assert "#SBATCH --ntasks=48" in resource_response.context["generated_inputs"]["slurm_script"]
@@ -337,8 +334,18 @@ for heading in (
     assert heading in template_source
 assert "Computational Resources" not in template_source
 assert "Submission Preview" not in template_source
-for field_name in ("cpus", "memory_gb", "walltime", "queue", "account"):
+assert '<div class="advanced-options-field">' in template_source
+assert "<label>Advanced Options</label>" in template_source
+assert "<summary>Advanced Options</summary>" not in template_source
+assert '<summary aria-label="Toggle advanced options"></summary>' in template_source
+assert '<div class="callout-title">Calculation Plan</div>' in template_source
+assert '<div class="callout-title">Jobs</div>' not in template_source
+assert "calculation.job_names" not in template_source
+for field_name in ("cpus", "memory_gb", "walltime", "queue"):
     assert f'name="{field_name}"' in template_source
+assert 'name="account"' not in template_source
+assert "Account" not in template_source
+assert "submission_spec.cluster.account" not in template_source
 assert "input-tab-poscar" in template_source
 assert "tab-panel-poscar" in template_source
 assert "generated_inputs.poscar" in template_source

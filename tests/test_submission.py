@@ -208,6 +208,46 @@ assert band_spec["flow_spec"]["calculation_spec"] == {
     "label": None,
 }
 
+hse_relax_static_flow_spec = {
+    **flow_spec,
+    "workflow": "relax_static",
+    "calculation_spec": {
+        "purpose": "relax_static",
+        "theory": "hse06",
+        "modifiers": [],
+    },
+}
+hse_relax_static_spec = create_submission_spec(
+    hse_relax_static_flow_spec,
+    label="Si hse relax static!",
+    timestamp="20260629-120000",
+    env={},
+)
+hse_relax_static_run_dir = f"{DEFAULT_FLOWS_DIR}/Si-hse-relax-static-20260629-120000"
+assert hse_relax_static_spec["paths"]["run_dir"] == hse_relax_static_run_dir
+assert hse_relax_static_spec["paths"]["stage_dirs"] == {
+    "stage_01": f"{hse_relax_static_run_dir}/stage_01",
+    "stage_02": f"{hse_relax_static_run_dir}/stage_02",
+}
+assert hse_relax_static_spec["paths"]["result_dir"] == (
+    f"{hse_relax_static_run_dir}/stage_02"
+)
+assert f"{hse_relax_static_run_dir}/stage_01" in hse_relax_static_spec[
+    "paths"
+]["directories_to_prepare"]
+assert f"{hse_relax_static_run_dir}/stage_02" in hse_relax_static_spec[
+    "paths"
+]["directories_to_prepare"]
+assert hse_relax_static_spec["flow_spec"]["workflow"] == "relax_static"
+assert hse_relax_static_spec["flow_spec"]["calculation_spec"] == {
+    "purpose": "relax_static",
+    "theory": "hse06",
+    "modifiers": [],
+    "label": None,
+}
+assert hse_relax_static_spec["flow_spec"]["potcar_functional"] == "PBE_64"
+assert hse_relax_static_spec["potcar"]["functional"] == "PBE_64"
+
 advanced_flow_spec = {
     **flow_spec,
     "calculation_spec": {
@@ -228,6 +268,56 @@ assert advanced_spec["flow_spec"]["calculation_spec"] == {
     "modifiers": ["dft_u", "gamma_only", "soc", "spin_polarized"],
     "label": None,
 }
+
+hse_flow_spec = {
+    **flow_spec,
+    "calculation_spec": {
+        "purpose": "static",
+        "theory": "hse06",
+        "modifiers": [],
+    },
+}
+hse_spec = create_submission_spec(
+    hse_flow_spec,
+    label="Si hse!",
+    timestamp="20260629-120000",
+    env={},
+)
+assert hse_spec["flow_spec"]["calculation_spec"] == {
+    "purpose": "static",
+    "theory": "hse06",
+    "modifiers": [],
+    "label": None,
+}
+assert hse_spec["flow_spec"]["potcar_functional"] == "PBE_64"
+assert hse_spec["potcar"]["functional"] == "PBE_64"
+
+hse_relax_flow_spec = {
+    **flow_spec,
+    "workflow": "relax",
+    "calculation_spec": {
+        "purpose": "relax",
+        "theory": "hse06",
+        "modifiers": [],
+    },
+}
+hse_relax_spec = create_submission_spec(
+    hse_relax_flow_spec,
+    label="Si hse relax!",
+    timestamp="20260629-120000",
+    env={},
+)
+assert hse_relax_spec["paths"]["stage_dirs"] == {}
+assert hse_relax_spec["paths"]["result_dir"] == hse_relax_spec["paths"]["run_dir"]
+assert hse_relax_spec["flow_spec"]["workflow"] == "relax"
+assert hse_relax_spec["flow_spec"]["calculation_spec"] == {
+    "purpose": "relax",
+    "theory": "hse06",
+    "modifiers": [],
+    "label": None,
+}
+assert hse_relax_spec["flow_spec"]["potcar_functional"] == "PBE_64"
+assert hse_relax_spec["potcar"]["functional"] == "PBE_64"
 
 private_potcars_dir = "/private/bmd-potcars"
 private_potcars_spec = create_submission_spec(
@@ -367,6 +457,7 @@ assert set(backend_module_sources) == {
     "calculations/models.py",
     "calculations/resources.py",
     "calculations/registry.py",
+    "calculations/theory_policy.py",
     "execution.py",
     "parser.py",
     "workflows.py",
@@ -374,6 +465,7 @@ assert set(backend_module_sources) == {
 assert "class CalculationSpec" in backend_module_sources["calculations/models.py"]
 assert "def ncore_for_execution_resources" in backend_module_sources["calculations/resources.py"]
 assert "def calculation_spec_from_flow_spec" in backend_module_sources["calculations/registry.py"]
+assert "def theory_incar_settings" in backend_module_sources["calculations/theory_policy.py"]
 assert "def structure_from_spec" in backend_module_sources["parser.py"]
 assert "def build_atomate2_flow_from_spec" in backend_module_sources["workflows.py"]
 assert "RelaxMaker" in backend_module_sources["workflows.py"]

@@ -2,7 +2,19 @@ from __future__ import annotations
 
 from itertools import combinations
 
-from backend.calculations.models import CalculationSpec, Modifier, Purpose, Theory
+from backend.calculations.models import (
+    CalculationSpec,
+    Modifier,
+    Purpose,
+    StageSpec,
+    StageType,
+    Theory,
+    WorkflowSpec,
+)
+from backend.calculations.theory_policy import (
+    theory_default_potcar_functional,
+    theory_supported_purposes,
+)
 
 
 class CalculationValidationError(ValueError):
@@ -16,6 +28,11 @@ _ACTIVE_UI_MODIFIERS = (
     Modifier.SPIN_POLARIZED,
     Modifier.SOC,
     Modifier.DFT_U,
+    Modifier.GAMMA_ONLY,
+)
+
+_HSE06_SINGLE_STAGE_MODIFIERS = (
+    Modifier.SPIN_POLARIZED,
     Modifier.GAMMA_ONLY,
 )
 
@@ -39,6 +56,7 @@ def _build_supported_compatibility_workflows() -> dict[
     for modifiers in _modifier_subsets(_ACTIVE_UI_MODIFIERS):
         supported[(Purpose.STATIC, Theory.PBE, modifiers)] = "static"
         supported[(Purpose.RELAX, Theory.PBE, modifiers)] = "relax"
+        supported[(Purpose.RELAX_STATIC, Theory.PBE, modifiers)] = "relax_static"
         supported[(Purpose.DOUBLE_RELAX, Theory.PBE, modifiers)] = "double_relax"
         supported[(Purpose.DOS, Theory.PBE, modifiers)] = "dos"
         if Modifier.GAMMA_ONLY not in modifiers:
@@ -51,6 +69,11 @@ def _build_supported_compatibility_workflows() -> dict[
             )
         ] = "relax_ions"
 
+    for modifiers in _modifier_subsets(_HSE06_SINGLE_STAGE_MODIFIERS):
+        supported[(Purpose.RELAX, Theory.HSE06, modifiers)] = "relax"
+        supported[(Purpose.RELAX_STATIC, Theory.HSE06, modifiers)] = "relax_static"
+        supported[(Purpose.STATIC, Theory.HSE06, modifiers)] = "static"
+
     return supported
 
 
@@ -59,6 +82,7 @@ _SUPPORTED_COMPATIBILITY_WORKFLOWS = _build_supported_compatibility_workflows()
 _LEGACY_WORKFLOW_SPECS = {
     "static": CalculationSpec(Purpose.STATIC, Theory.PBE),
     "relax": CalculationSpec(Purpose.RELAX, Theory.PBE),
+    "relax_static": CalculationSpec(Purpose.RELAX_STATIC, Theory.PBE),
     "double_relax": CalculationSpec(Purpose.DOUBLE_RELAX, Theory.PBE),
     "dos": CalculationSpec(Purpose.DOS, Theory.PBE),
     "band_structure": CalculationSpec(Purpose.BAND_STRUCTURE, Theory.PBE),
@@ -72,12 +96,9 @@ _LEGACY_POTCAR_THEORIES = {
     "PBE_64": Theory.PBE,
 }
 
-_THEORY_DEFAULT_POTCAR_FUNCTIONAL = {
-    Theory.PBE: "PBE_64",
-}
-
 _PURPOSE_DISPLAY_NAMES = {
     Purpose.RELAX: "Geometry Optimisation",
+    Purpose.RELAX_STATIC: "Geometry Optimisation + Static Energy",
     Purpose.DOUBLE_RELAX: "Double Geometry Optimisation",
     Purpose.STATIC: "Static Energy",
     Purpose.DOS: "Density of States",
@@ -85,8 +106,48 @@ _PURPOSE_DISPLAY_NAMES = {
     Purpose.DIELECTRIC: "Dielectric Properties",
 }
 
+_STAGE_DISPLAY_NAMES = {
+    StageType.RELAX: "Geometry Optimisation",
+    StageType.STATIC: "Static Energy",
+    StageType.DOS: "Density of States",
+    StageType.BAND_STRUCTURE: "Band Structure",
+}
+
+_STAGE_DESCRIPTIONS = {
+    StageType.RELAX: "Optimise the atomic structure.",
+    StageType.STATIC: "Calculate a converged single-point total energy.",
+    StageType.DOS: "Calculate the electronic density of states after a static calculation.",
+    StageType.BAND_STRUCTURE: "Calculate the electronic band structure after a static calculation.",
+}
+
+_STAGE_PURPOSES = {
+    StageType.RELAX: Purpose.RELAX,
+    StageType.STATIC: Purpose.STATIC,
+    StageType.DOS: Purpose.DOS,
+    StageType.BAND_STRUCTURE: Purpose.BAND_STRUCTURE,
+}
+
+_PURPOSE_STAGE_TYPES = {
+    Purpose.RELAX: (StageType.RELAX,),
+    Purpose.STATIC: (StageType.STATIC,),
+    Purpose.RELAX_STATIC: (StageType.RELAX, StageType.STATIC),
+    Purpose.DOUBLE_RELAX: (StageType.RELAX, StageType.RELAX),
+    Purpose.DOS: (StageType.RELAX, StageType.STATIC, StageType.DOS),
+    Purpose.BAND_STRUCTURE: (
+        StageType.RELAX,
+        StageType.STATIC,
+        StageType.BAND_STRUCTURE,
+    ),
+}
+
+_TERMINAL_ANALYSIS_STAGES = {
+    StageType.DOS,
+    StageType.BAND_STRUCTURE,
+}
+
 _PURPOSE_DESCRIPTIONS = {
     Purpose.RELAX: "Optimise the atomic structure before analysis or follow-up calculations.",
+    Purpose.RELAX_STATIC: "Optimise the structure and then calculate a final static energy.",
     Purpose.DOUBLE_RELAX: "Run two consecutive geometry optimisations, using the first final structure as the second starting structure.",
     Purpose.STATIC: "Calculate a single-point total energy for the supplied structure.",
     Purpose.DOS: "Calculate the electronic density of states.",
@@ -95,6 +156,7 @@ _PURPOSE_DESCRIPTIONS = {
 }
 
 _PURPOSE_STAGE_DIRECTORIES = {
+    Purpose.RELAX_STATIC: ("stage_01", "stage_02"),
     Purpose.DOUBLE_RELAX: ("relax_01", "relax_02"),
     Purpose.DOS: ("stage_01", "stage_02", "stage_03"),
     Purpose.BAND_STRUCTURE: ("stage_01", "stage_02", "stage_03"),
@@ -128,6 +190,82 @@ _UI_MODIFIER_ORDER = (
 )
 
 
+def _recommended_workflow_recipes() -> tuple[dict, ...]:
+    recipes = (
+        (
+            "relax",
+            "Geometry Optimisation",
+            "Optimise the supplied structure.",
+            WorkflowSpec([StageSpec(StageType.RELAX)], recipe="relax"),
+        ),
+        (
+            "static",
+            "Static Energy",
+            "Calculate a single-point total energy.",
+            WorkflowSpec([StageSpec(StageType.STATIC)], recipe="static"),
+        ),
+        (
+            "relax_static",
+            "Geometry Optimisation + Static Energy",
+            "Optimise the structure, then calculate a final static energy.",
+            WorkflowSpec(
+                [
+                    StageSpec(StageType.RELAX),
+                    StageSpec(StageType.STATIC),
+                ],
+                recipe="relax_static",
+            ),
+        ),
+        (
+            "double_relax",
+            "Double Geometry Optimisation",
+            "Run two consecutive geometry optimisations.",
+            WorkflowSpec(
+                [
+                    StageSpec(StageType.RELAX),
+                    StageSpec(StageType.RELAX),
+                ],
+                recipe="double_relax",
+            ),
+        ),
+        (
+            "dos",
+            "Density of States",
+            "Optimise, run a static calculation, then calculate the density of states.",
+            WorkflowSpec(
+                [
+                    StageSpec(StageType.RELAX),
+                    StageSpec(StageType.STATIC),
+                    StageSpec(StageType.DOS),
+                ],
+                recipe="dos",
+            ),
+        ),
+        (
+            "band_structure",
+            "Band Structure",
+            "Optimise, run a static calculation, then calculate the band structure.",
+            WorkflowSpec(
+                [
+                    StageSpec(StageType.RELAX),
+                    StageSpec(StageType.STATIC),
+                    StageSpec(StageType.BAND_STRUCTURE),
+                ],
+                recipe="band_structure",
+            ),
+        ),
+    )
+    return tuple(
+        {
+            "value": value,
+            "label": label,
+            "description": description,
+            "workflow_spec": validate_workflow_spec(workflow_spec).to_dict(),
+        }
+        for value, label, description, workflow_spec in recipes
+    )
+
+
 def validate_calculation_spec(spec: CalculationSpec) -> CalculationSpec:
     normalized = CalculationSpec(
         purpose=spec.purpose,
@@ -138,14 +276,88 @@ def validate_calculation_spec(spec: CalculationSpec) -> CalculationSpec:
     key = _compatibility_key(normalized)
 
     if key not in _SUPPORTED_COMPATIBILITY_WORKFLOWS:
-        supported = ", ".join(
-            _format_combination(*combination)
-            for combination in _SUPPORTED_COMPATIBILITY_WORKFLOWS
+        raise _unsupported_combination_error(normalized, key)
+
+    return normalized
+
+
+def validate_stage_spec(stage: StageSpec) -> StageSpec:
+    normalized = StageSpec(
+        stage_type=stage.stage_type,
+        theory=stage.theory,
+        modifiers=stage.modifiers,
+        label=stage.label,
+        options=stage.options,
+    )
+    try:
+        validate_calculation_spec(
+            CalculationSpec(
+                purpose=_STAGE_PURPOSES[normalized.stage_type],
+                theory=normalized.theory,
+                modifiers=normalized.modifiers,
+                label=normalized.label,
+            )
         )
+    except CalculationValidationError as exc:
+        stage_label = stage_display_name(normalized)
+        theory_label = theory_display_name(normalized.theory)
         raise CalculationValidationError(
-            "Calculation combination is not implemented in the compatibility "
-            f"builder: {_format_combination(*key)}. Supported combinations: {supported}."
+            f"{stage_label} with {theory_label} is not available with the selected stage options.",
+            suggestion=exc.suggestion,
+        ) from exc
+
+    return normalized
+
+
+def validate_workflow_spec(workflow: WorkflowSpec) -> WorkflowSpec:
+    normalized = WorkflowSpec(
+        stages=[
+            validate_stage_spec(stage)
+            for stage in WorkflowSpec(
+                stages=workflow.stages,
+                label=workflow.label,
+                recipe=workflow.recipe,
+            ).stages
+        ],
+        label=workflow.label,
+        recipe=workflow.recipe,
+    )
+
+    if not normalized.stages:
+        raise CalculationValidationError(
+            "Add at least one calculation stage.",
+            suggestion="Choose a recommended workflow, or add a stage in Custom Workflow.",
         )
+
+    for index, stage in enumerate(normalized.stages):
+        stage_number = index + 1
+        if stage.stage_type in _TERMINAL_ANALYSIS_STAGES and index != len(normalized.stages) - 1:
+            raise CalculationValidationError(
+                f"{stage_display_name(stage)} must be the final workflow stage.",
+                suggestion="Move this stage to the end of the workflow.",
+            )
+
+        if stage.stage_type not in _TERMINAL_ANALYSIS_STAGES:
+            continue
+
+        if index == 0 or normalized.stages[index - 1].stage_type is not StageType.STATIC:
+            raise CalculationValidationError(
+                f"{stage_display_name(stage)} must follow a converged Static Energy stage.",
+                suggestion=(
+                    f"Add Static Energy immediately before stage {stage_number}, "
+                    "or choose the recommended workflow."
+                ),
+            )
+
+        previous_stage = normalized.stages[index - 1]
+        if previous_stage.theory is not stage.theory:
+            raise CalculationValidationError(
+                f"{stage_display_name(stage)} must use the same level of theory as the preceding Static Energy stage.",
+                suggestion=(
+                    "Use matching levels of theory for the static and analysis stages, "
+                    "or choose a validated recommended workflow."
+                ),
+            )
 
     return normalized
 
@@ -173,6 +385,17 @@ def calculation_spec_from_legacy(
 
 def calculation_spec_from_flow_spec(flow_spec: dict | None) -> CalculationSpec:
     values = dict(flow_spec or {})
+    if values.get("workflow_spec") or values.get("stages"):
+        calculation_spec = calculation_spec_from_workflow_spec(
+            workflow_spec_from_flow_spec(values)
+        )
+        if calculation_spec is None:
+            raise CalculationValidationError(
+                "This stage workflow cannot be represented as a legacy calculation.",
+                suggestion="Use the stage workflow specification for this calculation.",
+            )
+        return calculation_spec
+
     if values.get("calculation_spec"):
         return validate_calculation_spec(
             CalculationSpec.from_dict(values.get("calculation_spec"))
@@ -184,6 +407,134 @@ def calculation_spec_from_flow_spec(flow_spec: dict | None) -> CalculationSpec:
     )
 
 
+def workflow_spec_from_calculation_spec(spec: CalculationSpec) -> WorkflowSpec:
+    normalized = validate_calculation_spec(spec)
+    try:
+        stage_types = _PURPOSE_STAGE_TYPES[normalized.purpose]
+    except KeyError as exc:
+        raise CalculationValidationError(
+            f"{calculation_display_name(normalized)} is not available as a stage workflow yet.",
+            suggestion="Choose one of the supported scientific workflows.",
+        ) from exc
+
+    return validate_workflow_spec(
+        WorkflowSpec(
+            [
+                StageSpec(
+                    stage_type=stage_type,
+                    theory=normalized.theory,
+                    modifiers=normalized.modifiers,
+                )
+                for stage_type in stage_types
+            ],
+            label=normalized.label,
+            recipe=legacy_workflow_from_spec(normalized),
+        )
+    )
+
+
+def workflow_spec_from_legacy(
+    workflow: str | None,
+    potcar_functional: str | None = None,
+) -> WorkflowSpec:
+    return workflow_spec_from_calculation_spec(
+        calculation_spec_from_legacy(workflow, potcar_functional)
+    )
+
+
+def workflow_spec_from_flow_spec(flow_spec: dict | None) -> WorkflowSpec:
+    values = dict(flow_spec or {})
+    if values.get("workflow_spec"):
+        return validate_workflow_spec(
+            WorkflowSpec.from_dict(values.get("workflow_spec"))
+        )
+
+    if values.get("stages"):
+        return validate_workflow_spec(
+            WorkflowSpec(
+                stages=values.get("stages"),
+                label=values.get("label"),
+                recipe=values.get("workflow"),
+            )
+        )
+
+    return workflow_spec_from_calculation_spec(
+        calculation_spec_from_flow_spec(values)
+    )
+
+
+def calculation_spec_from_workflow_spec(workflow: WorkflowSpec) -> CalculationSpec | None:
+    normalized = validate_workflow_spec(workflow)
+    stages = normalized.stages
+    stage_types = tuple(stage.stage_type for stage in stages)
+
+    def same_stage_policy() -> tuple[Theory, frozenset[Modifier]] | None:
+        if not stages:
+            return None
+        theory = stages[0].theory
+        modifiers = stages[0].modifiers
+        if all(stage.theory is theory and stage.modifiers == modifiers for stage in stages):
+            return theory, modifiers
+        return None
+
+    shared_policy = same_stage_policy()
+    if stage_types == (StageType.RELAX,):
+        stage = stages[0]
+        return validate_calculation_spec(
+            CalculationSpec(Purpose.RELAX, stage.theory, stage.modifiers, normalized.label)
+        )
+
+    if stage_types == (StageType.STATIC,):
+        stage = stages[0]
+        return validate_calculation_spec(
+            CalculationSpec(Purpose.STATIC, stage.theory, stage.modifiers, normalized.label)
+        )
+
+    if stage_types == (StageType.RELAX, StageType.STATIC) and shared_policy:
+        theory, modifiers = shared_policy
+        return validate_calculation_spec(
+            CalculationSpec(Purpose.RELAX_STATIC, theory, modifiers, normalized.label)
+        )
+
+    if stage_types == (StageType.RELAX, StageType.RELAX) and shared_policy:
+        theory, modifiers = shared_policy
+        try:
+            return validate_calculation_spec(
+                CalculationSpec(Purpose.DOUBLE_RELAX, theory, modifiers, normalized.label)
+            )
+        except CalculationValidationError:
+            return None
+
+    if stage_types == (StageType.RELAX, StageType.STATIC, StageType.DOS) and shared_policy:
+        theory, modifiers = shared_policy
+        try:
+            return validate_calculation_spec(
+                CalculationSpec(Purpose.DOS, theory, modifiers, normalized.label)
+            )
+        except CalculationValidationError:
+            return None
+
+    if (
+        stage_types
+        == (StageType.RELAX, StageType.STATIC, StageType.BAND_STRUCTURE)
+        and shared_policy
+    ):
+        theory, modifiers = shared_policy
+        try:
+            return validate_calculation_spec(
+                CalculationSpec(
+                    Purpose.BAND_STRUCTURE,
+                    theory,
+                    modifiers,
+                    normalized.label,
+                )
+            )
+        except CalculationValidationError:
+            return None
+
+    return None
+
+
 def legacy_workflow_from_spec(spec: CalculationSpec) -> str:
     normalized = validate_calculation_spec(spec)
     return _SUPPORTED_COMPATIBILITY_WORKFLOWS[_compatibility_key(normalized)]
@@ -192,16 +543,15 @@ def legacy_workflow_from_spec(spec: CalculationSpec) -> str:
 def legacy_potcar_functional_from_spec(spec: CalculationSpec) -> str:
     normalized = validate_calculation_spec(spec)
     try:
-        return _THEORY_DEFAULT_POTCAR_FUNCTIONAL[normalized.theory]
-    except KeyError as exc:
+        return theory_default_potcar_functional(normalized.theory)
+    except ValueError as exc:
         raise CalculationValidationError(
             f"No legacy POTCAR functional for theory: {normalized.theory.value}"
         ) from exc
 
 
 def calculation_stage_directories(spec: CalculationSpec) -> tuple[str, ...]:
-    normalized = validate_calculation_spec(spec)
-    return _PURPOSE_STAGE_DIRECTORIES.get(normalized.purpose, ())
+    return workflow_stage_directories(workflow_spec_from_calculation_spec(spec))
 
 
 def calculation_result_stage_directory(spec: CalculationSpec) -> str | None:
@@ -209,6 +559,31 @@ def calculation_result_stage_directory(spec: CalculationSpec) -> str | None:
     if not stage_directories:
         return None
 
+    return stage_directories[-1]
+
+
+def workflow_stage_directories(workflow: WorkflowSpec) -> tuple[str, ...]:
+    normalized = validate_workflow_spec(workflow)
+    if len(normalized.stages) <= 1:
+        return ()
+
+    if (
+        len(normalized.stages) == 2
+        and all(stage.stage_type is StageType.RELAX for stage in normalized.stages)
+        and all(stage.theory is Theory.PBE for stage in normalized.stages)
+    ):
+        return ("relax_01", "relax_02")
+
+    return tuple(
+        f"stage_{index:02d}"
+        for index in range(1, len(normalized.stages) + 1)
+    )
+
+
+def workflow_result_stage_directory(workflow: WorkflowSpec) -> str | None:
+    stage_directories = workflow_stage_directories(workflow)
+    if not stage_directories:
+        return None
     return stage_directories[-1]
 
 
@@ -230,6 +605,30 @@ def calculation_display_name(spec: CalculationSpec) -> str:
         normalized.purpose,
         normalized.purpose.value.replace("_", " ").title(),
     )
+
+
+def stage_display_name(stage: StageSpec | StageType | str) -> str:
+    stage_type = stage.stage_type if isinstance(stage, StageSpec) else StageType.from_value(stage)
+    return _STAGE_DISPLAY_NAMES.get(
+        stage_type,
+        stage_type.value.replace("_", " ").title(),
+    )
+
+
+def workflow_display_name(workflow: WorkflowSpec) -> str:
+    normalized = validate_workflow_spec(workflow)
+    if normalized.label:
+        return normalized.label
+
+    compatible_spec = calculation_spec_from_workflow_spec(normalized)
+    if compatible_spec is not None:
+        return calculation_display_name(compatible_spec)
+
+    stage_names = [stage_display_name(stage) for stage in normalized.stages]
+    if len(stage_names) == 1:
+        return stage_names[0]
+
+    return " + ".join(stage_names)
 
 
 def theory_display_name(theory: Theory | str) -> str:
@@ -300,6 +699,15 @@ def calculation_form_options() -> dict:
             for modifier in _UI_MODIFIER_ORDER
             if modifier not in _UI_HIDDEN_MODIFIERS
         ],
+        "stage_types": [
+            {
+                "value": stage_type.value,
+                "label": stage_display_name(stage_type),
+                "description": _STAGE_DESCRIPTIONS.get(stage_type, ""),
+            }
+            for stage_type in StageType
+        ],
+        "recipes": list(_recommended_workflow_recipes()),
     }
 
 
@@ -320,6 +728,63 @@ def _compatibility_key(spec: CalculationSpec) -> tuple[Purpose, Theory, frozense
     return (spec.purpose, spec.theory, frozenset(spec.modifiers))
 
 
+def _unsupported_combination_error(
+    spec: CalculationSpec,
+    key: tuple[Purpose, Theory, frozenset[Modifier]],
+) -> CalculationValidationError:
+    purpose, theory, modifiers = key
+    theory_label = theory_display_name(theory)
+    purpose_label = calculation_display_name(spec)
+    supported_purposes = theory_supported_purposes(theory)
+    combination = _format_combination(*key)
+
+    if not supported_purposes:
+        return CalculationValidationError(
+            f"{theory_label} is not available in BMD Compute yet. Combination: {combination}.",
+            suggestion="Choose PBE for this calculation.",
+        )
+
+    if purpose not in supported_purposes:
+        supported_text = ", ".join(
+            _PURPOSE_DISPLAY_NAMES.get(item, item.value.replace("_", " ").title())
+            for item in sorted(supported_purposes, key=lambda item: item.value)
+        )
+        return CalculationValidationError(
+            f"{theory_label} is currently supported for {supported_text} only. "
+            f"{purpose_label} with {theory_label} is not available yet. "
+            f"Combination: {combination}.",
+            suggestion=(
+                f"Choose {supported_text} with {theory_label}, "
+                f"or choose PBE for {purpose_label}."
+            ),
+        )
+
+    supported_modifiers = {
+        candidate_modifier
+        for (
+            candidate_purpose,
+            candidate_theory,
+            candidate_modifiers,
+        ) in _SUPPORTED_COMPATIBILITY_WORKFLOWS
+        if candidate_purpose is purpose and candidate_theory is theory
+        for candidate_modifier in candidate_modifiers
+    }
+    unsupported_modifiers = sorted(
+        modifiers.difference(supported_modifiers),
+        key=lambda modifier: modifier.value,
+    )
+    modifier_text = (
+        ", ".join(modifier_display_name(modifier) for modifier in unsupported_modifiers)
+        if unsupported_modifiers
+        else "the selected advanced options"
+    )
+    return CalculationValidationError(
+        f"{purpose_label} with {theory_label} is not available with {modifier_text}. "
+        f"Combination: {combination}.",
+        suggestion="Adjust the advanced options, or choose PBE for this calculation.",
+    )
+
+
 def _format_combination(
     purpose: Purpose,
     theory: Theory,
@@ -337,10 +802,20 @@ __all__ = [
     "calculation_stage_directories",
     "calculation_spec_from_flow_spec",
     "calculation_spec_from_legacy",
+    "calculation_spec_from_workflow_spec",
     "legacy_potcar_functional_from_spec",
     "legacy_workflow_from_spec",
     "modifier_display_name",
+    "stage_display_name",
     "supported_combinations",
     "theory_display_name",
     "validate_calculation_spec",
+    "validate_stage_spec",
+    "validate_workflow_spec",
+    "workflow_display_name",
+    "workflow_result_stage_directory",
+    "workflow_spec_from_calculation_spec",
+    "workflow_spec_from_flow_spec",
+    "workflow_spec_from_legacy",
+    "workflow_stage_directories",
 ]

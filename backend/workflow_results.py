@@ -3,7 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from backend.calculations.models import CalculationSpec, Purpose
+from backend.calculations.models import CalculationSpec, Purpose, StageType, WorkflowSpec
+from backend.calculations.registry import workflow_spec_from_calculation_spec
 
 
 @dataclass(frozen=True)
@@ -80,13 +81,18 @@ _WORKFLOW_RESULT_RENDERERS: dict[Purpose, WorkflowResultRenderer] = {
 
 
 def workflow_result_renderers(
-    spec: CalculationSpec | None,
+    spec: CalculationSpec | WorkflowSpec | None,
     *,
     available_file_keys: set[str] | None = None,
 ) -> tuple[WorkflowResultRenderer, ...]:
-    if spec is not None:
-        renderer = _WORKFLOW_RESULT_RENDERERS.get(spec.purpose)
-        return (renderer,) if renderer is not None else ()
+    stage_types = _workflow_stage_types(spec)
+    if stage_types:
+        renderers = []
+        if StageType.DOS in stage_types:
+            renderers.append(_WORKFLOW_RESULT_RENDERERS[Purpose.DOS])
+        if StageType.BAND_STRUCTURE in stage_types:
+            renderers.append(_WORKFLOW_RESULT_RENDERERS[Purpose.BAND_STRUCTURE])
+        return tuple(renderers)
 
     if available_file_keys and "doscar" in available_file_keys:
         return (_WORKFLOW_RESULT_RENDERERS[Purpose.DOS],)
@@ -97,7 +103,9 @@ def workflow_result_renderers(
     return ()
 
 
-def workflow_result_file_keys(spec: CalculationSpec | None) -> tuple[str, ...]:
+def workflow_result_file_keys(
+    spec: CalculationSpec | WorkflowSpec | None,
+) -> tuple[str, ...]:
     keys: list[str] = []
     for renderer in workflow_result_renderers(spec):
         for key in renderer.required_file_keys:
@@ -108,7 +116,7 @@ def workflow_result_file_keys(spec: CalculationSpec | None) -> tuple[str, ...]:
 
 
 def workflow_result_parse_dos(
-    spec: CalculationSpec | None,
+    spec: CalculationSpec | WorkflowSpec | None,
     *,
     available_file_keys: set[str] | None = None,
 ) -> bool:
@@ -122,7 +130,7 @@ def workflow_result_parse_dos(
 
 
 def workflow_result_parse_eigenvalues(
-    spec: CalculationSpec | None,
+    spec: CalculationSpec | WorkflowSpec | None,
     *,
     available_file_keys: set[str] | None = None,
 ) -> bool:
@@ -136,7 +144,7 @@ def workflow_result_parse_eigenvalues(
 
 
 def render_workflow_results(
-    spec: CalculationSpec | None,
+    spec: CalculationSpec | WorkflowSpec | None,
     *,
     vasprun,
     files: dict,
@@ -162,6 +170,22 @@ def render_workflow_results(
         summaries=summaries,
         visualizations=visualizations,
     )
+
+
+def _workflow_stage_types(
+    spec: CalculationSpec | WorkflowSpec | None,
+) -> tuple[StageType, ...]:
+    if isinstance(spec, WorkflowSpec):
+        return tuple(stage.stage_type for stage in spec.stages)
+
+    if isinstance(spec, CalculationSpec):
+        try:
+            workflow_spec = workflow_spec_from_calculation_spec(spec)
+        except Exception:
+            return ()
+        return tuple(stage.stage_type for stage in workflow_spec.stages)
+
+    return ()
 
 
 def _dos_result_payload(vasprun, files: dict) -> tuple[dict, dict | None]:

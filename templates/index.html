@@ -161,6 +161,78 @@ h2 {
     margin-top: 18px;
 }
 
+.advanced-options-field {
+    grid-column: 1 / -1;
+}
+
+.workflow-picker {
+    grid-column: 1 / -1;
+}
+
+.workflow-stage-list {
+    display: grid;
+    gap: 12px;
+    grid-column: 1 / -1;
+}
+
+.workflow-stage-card {
+    background: #181818;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px;
+}
+
+.workflow-stage-card-header {
+    align-items: center;
+    display: flex;
+    gap: 12px;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+
+.workflow-stage-heading {
+    align-items: center;
+    color: var(--soft);
+    display: flex;
+    font-size: 13px;
+    font-weight: 700;
+    gap: 8px;
+}
+
+.workflow-stage-number {
+    align-items: center;
+    border: 1px solid var(--line-strong);
+    border-radius: 50%;
+    color: var(--accent-2);
+    display: inline-flex;
+    font-size: 12px;
+    height: 24px;
+    justify-content: center;
+    width: 24px;
+}
+
+.workflow-stage-grid {
+    display: grid;
+    gap: 14px;
+    grid-template-columns: 1fr 1fr;
+}
+
+.workflow-controls {
+    grid-column: 1 / -1;
+}
+
+button.secondary-button {
+    background: #2a2a2a;
+    border: 1px solid var(--line-strong);
+    color: var(--soft);
+    margin-top: 0;
+    width: auto;
+}
+
+button.secondary-button:hover {
+    background: #333333;
+}
+
 label {
     color: var(--soft);
     display: block;
@@ -427,7 +499,7 @@ ul {
     align-items: start;
     display: grid;
     gap: 18px;
-    grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
+    grid-template-columns: minmax(0, 1fr);
 }
 
 .configuration-panel {
@@ -447,7 +519,7 @@ ul {
 .resource-grid {
     display: grid;
     gap: 16px;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(4, minmax(140px, 1fr));
 }
 
 .resource-grid .wide {
@@ -470,9 +542,13 @@ ul {
 
 .settings-panel {
     align-self: flex-start;
-    margin-top: 16px;
+    margin-top: 0;
     max-width: 100%;
     min-width: min(360px, 100%);
+}
+
+.settings-panel > summary {
+    min-height: 20px;
 }
 
 .option-list {
@@ -965,58 +1041,6 @@ ul {
                 <div class="calculation-layout">
                     <div class="configuration-grid">
                         <div class="configuration-panel">
-                            <h3>Scientific Specification</h3>
-                            <div class="form-grid">
-                                <div>
-                                    <label>Calculation Type</label>
-                                    <select name="purpose">
-                                        {% for option in calculation_options.purposes %}
-                                        <option
-                                            value="{{ option.value }}"
-                                            {% if selected_calculation.purpose == option.value %}selected{% endif %}
-                                            {% if not option.enabled %}disabled{% endif %}>
-                                            {{ option.label }}
-                                        </option>
-                                        {% endfor %}
-                                    </select>
-                                </div>
-
-                                <div>
-                                    <label>Level of Theory</label>
-                                    <select name="theory">
-                                        {% for option in calculation_options.theories %}
-                                        <option
-                                            value="{{ option.value }}"
-                                            {% if selected_calculation.theory == option.value %}selected{% endif %}
-                                            {% if not option.enabled %}disabled{% endif %}>
-                                            {{ option.label }}
-                                        </option>
-                                        {% endfor %}
-                                    </select>
-                                </div>
-                            </div>
-
-                            <details class="disclosure settings-panel">
-                                <summary>Advanced Options</summary>
-                                <div class="option-list">
-                                    {% for option in calculation_options.modifiers %}
-                                    <label
-                                        class="modifier-option {% if not option.enabled %}unavailable{% endif %}"
-                                        {% if option.tooltip %}title="{{ option.tooltip }}"{% endif %}>
-                                        <input
-                                            type="checkbox"
-                                            name="modifiers"
-                                            value="{{ option.value }}"
-                                            {% if option.value in selected_calculation.modifiers %}checked{% endif %}
-                                            {% if not option.enabled %}disabled{% endif %}>
-                                        <span>{{ option.label }}</span>
-                                    </label>
-                                    {% endfor %}
-                                </div>
-                            </details>
-                        </div>
-
-                        <div class="configuration-panel">
                             <h3>Execution Resources</h3>
                             <div class="resource-grid">
                                 <div>
@@ -1048,14 +1072,101 @@ ul {
                                     <label>Queue</label>
                                     <input name="queue" value="{{ selected_resources.queue }}">
                                 </div>
-                                <div class="wide">
-                                    <label>Account</label>
-                                    <input name="account" value="{{ selected_resources.account }}">
-                                </div>
                                 <input
                                     type="hidden"
                                     name="nodes"
                                     value="{{ selected_resources.nodes }}">
+                            </div>
+                        </div>
+
+                        <div class="configuration-panel">
+                            <h3>Scientific Specification</h3>
+                            <input
+                                type="hidden"
+                                id="workflow-spec-json"
+                                name="workflow_spec_json"
+                                value="{{ selected_workflow.json }}">
+                            <script type="application/json" id="calculation-stage-options">{{ calculation_options | tojson }}</script>
+                            <div class="form-grid">
+                                <div class="workflow-picker">
+                                    <label>Recommended Workflow</label>
+                                    <select id="workflow-recipe-select" name="workflow">
+                                        <option value="" {% if not selected_workflow.recipe %}selected{% endif %}>Custom Workflow</option>
+                                        {% for option in calculation_options.recipes %}
+                                        <option
+                                            value="{{ option.value }}"
+                                            {% if selected_workflow.recipe == option.value %}selected{% endif %}>
+                                            {{ option.label }}
+                                        </option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+
+                                <div class="workflow-stage-list" id="workflow-stage-list">
+                                    {% for stage in selected_workflow.stages %}
+                                    <div class="workflow-stage-card" data-workflow-stage>
+                                        <div class="workflow-stage-card-header">
+                                            <div class="workflow-stage-heading">
+                                                <span class="workflow-stage-number" data-stage-number>{{ stage.index }}</span>
+                                                <span>Custom Workflow</span>
+                                            </div>
+                                            <button type="button" class="secondary-button" data-remove-stage>Remove</button>
+                                        </div>
+                                        <div class="workflow-stage-grid">
+                                            <div>
+                                                <label>Calculation Type</label>
+                                                <select data-stage-type>
+                                                    {% for option in calculation_options.stage_types %}
+                                                    <option
+                                                        value="{{ option.value }}"
+                                                        {% if stage.stage_type == option.value %}selected{% endif %}>
+                                                        {{ option.label }}
+                                                    </option>
+                                                    {% endfor %}
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label>Level of Theory</label>
+                                                <select data-stage-theory>
+                                                    {% for option in calculation_options.theories %}
+                                                    <option
+                                                        value="{{ option.value }}"
+                                                        {% if stage.theory == option.value %}selected{% endif %}
+                                                        {% if not option.enabled %}disabled{% endif %}>
+                                                        {{ option.label }}
+                                                    </option>
+                                                    {% endfor %}
+                                                </select>
+                                            </div>
+                                            <div class="advanced-options-field">
+                                                <label>Advanced Options</label>
+                                                <details class="disclosure settings-panel">
+                                                    <summary aria-label="Toggle advanced options"></summary>
+                                                    <div class="option-list">
+                                                        {% for option in calculation_options.modifiers %}
+                                                        <label
+                                                            class="modifier-option {% if not option.enabled %}unavailable{% endif %}"
+                                                            {% if option.tooltip %}title="{{ option.tooltip }}"{% endif %}>
+                                                            <input
+                                                                type="checkbox"
+                                                                data-stage-modifier
+                                                                value="{{ option.value }}"
+                                                                {% if option.value in stage.modifiers %}checked{% endif %}
+                                                                {% if not option.enabled %}disabled{% endif %}>
+                                                            <span>{{ option.label }}</span>
+                                                        </label>
+                                                        {% endfor %}
+                                                    </div>
+                                                </details>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+
+                                <div class="workflow-controls">
+                                    <button type="button" class="secondary-button" id="add-workflow-stage">Add Stage</button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1140,16 +1251,6 @@ ul {
                         {% endfor %}
                         {% else %}
                         {{ calculation.calculation_type }}
-                        {% endif %}
-                    </div>
-                </div>
-                <div class="callout">
-                    <div class="callout-title">Jobs</div>
-                    <div class="callout-value mono">
-                        {% if calculation.job_names %}
-                        {{ calculation.job_names | join(", ") }}
-                        {% else %}
-                        None
                         {% endif %}
                     </div>
                 </div>
@@ -1292,8 +1393,7 @@ ul {
                             <td class="mono">
                                 {{ submission_spec.cluster.remote_host }}<br>
                                 {{ submission_spec.cluster.username }}<br>
-                                partition={{ submission_spec.cluster.partition }}<br>
-                                account={{ submission_spec.cluster.account }}
+                                partition={{ submission_spec.cluster.partition }}
                             </td>
                         </tr>
                         <tr>
@@ -1435,6 +1535,7 @@ ul {
                 <form action="/prepare-remote" method="post">
                     <textarea class="hidden-field" name="structure">{{ structure_text }}</textarea>
                     <input type="hidden" name="fmt" value="{{ fmt }}">
+                    <input type="hidden" name="workflow_spec_json" value="{{ selected_workflow.json }}">
                     <input type="hidden" name="purpose" value="{{ selected_calculation.purpose }}">
                     <input type="hidden" name="theory" value="{{ selected_calculation.theory }}">
                     {% for modifier in selected_calculation.modifiers %}
@@ -1444,7 +1545,6 @@ ul {
                     <input type="hidden" name="memory_gb" value="{{ selected_resources.memory_gb }}">
                     <input type="hidden" name="walltime" value="{{ selected_resources.walltime }}">
                     <input type="hidden" name="queue" value="{{ selected_resources.queue }}">
-                    <input type="hidden" name="account" value="{{ selected_resources.account }}">
                     <input type="hidden" name="created_at" value="{{ submission_spec.created_at }}">
                     <button type="submit" data-current-calculation-action>Prepare Remote</button>
                 </form>
@@ -1452,6 +1552,7 @@ ul {
                 <form action="/submit" method="post">
                     <textarea class="hidden-field" name="structure">{{ structure_text }}</textarea>
                     <input type="hidden" name="fmt" value="{{ fmt }}">
+                    <input type="hidden" name="workflow_spec_json" value="{{ selected_workflow.json }}">
                     <input type="hidden" name="purpose" value="{{ selected_calculation.purpose }}">
                     <input type="hidden" name="theory" value="{{ selected_calculation.theory }}">
                     {% for modifier in selected_calculation.modifiers %}
@@ -1461,7 +1562,6 @@ ul {
                     <input type="hidden" name="memory_gb" value="{{ selected_resources.memory_gb }}">
                     <input type="hidden" name="walltime" value="{{ selected_resources.walltime }}">
                     <input type="hidden" name="queue" value="{{ selected_resources.queue }}">
-                    <input type="hidden" name="account" value="{{ selected_resources.account }}">
                     <input type="hidden" name="created_at" value="{{ submission_spec.created_at }}">
                     <input
                         type="hidden"
@@ -1636,6 +1736,7 @@ ul {
             <form action="/monitor" method="post">
                 <textarea class="hidden-field" name="structure">{{ structure_text }}</textarea>
                 <input type="hidden" name="fmt" value="{{ fmt }}">
+                <input type="hidden" name="workflow_spec_json" value="{{ selected_workflow.json }}">
                 <input type="hidden" name="purpose" value="{{ selected_calculation.purpose }}">
                 <input type="hidden" name="theory" value="{{ selected_calculation.theory }}">
                 {% for modifier in selected_calculation.modifiers %}
@@ -1645,7 +1746,6 @@ ul {
                 <input type="hidden" name="memory_gb" value="{{ selected_resources.memory_gb }}">
                 <input type="hidden" name="walltime" value="{{ selected_resources.walltime }}">
                 <input type="hidden" name="queue" value="{{ selected_resources.queue }}">
-                <input type="hidden" name="account" value="{{ selected_resources.account }}">
                 <input type="hidden" name="created_at" value="{{ submission_spec.created_at }}">
                 <input type="hidden" name="job_id" value="{{ submission_result.job_id if submission_result else monitoring_result.job_id }}">
                 <input type="hidden" name="submitted_at" value="{{ submission_result.job_record.submitted_at if submission_result else '' }}">
@@ -2101,6 +2201,187 @@ document.addEventListener("DOMContentLoaded", function () {
 });
 </script>
 {% endif %}
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    var form = document.getElementById("calculation-review-form");
+    var hiddenWorkflow = document.getElementById("workflow-spec-json");
+    var optionsElement = document.getElementById("calculation-stage-options");
+    var stageList = document.getElementById("workflow-stage-list");
+    var recipeSelect = document.getElementById("workflow-recipe-select");
+    var addStageButton = document.getElementById("add-workflow-stage");
+    if (!form || !hiddenWorkflow || !optionsElement || !stageList) {
+        return;
+    }
+
+    var options = {};
+    try {
+        options = JSON.parse(optionsElement.textContent);
+    } catch (err) {
+        options = {};
+    }
+
+    var stageTypes = options.stage_types || [];
+    var theories = options.theories || [];
+    var modifiers = options.modifiers || [];
+    var recipes = options.recipes || [];
+
+    function escapeHtml(value) {
+        return String(value || "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;");
+    }
+
+    function optionMarkup(items, selectedValue) {
+        return items.map(function (item) {
+            var selected = item.value === selectedValue ? " selected" : "";
+            var disabled = item.enabled === false ? " disabled" : "";
+            return '<option value="' + escapeHtml(item.value) + '"' + selected + disabled + '>' +
+                escapeHtml(item.label) +
+                '</option>';
+        }).join("");
+    }
+
+    function modifierMarkup(selectedValues) {
+        var selected = {};
+        (selectedValues || []).forEach(function (value) {
+            selected[value] = true;
+        });
+        return modifiers.map(function (modifier) {
+            var checked = selected[modifier.value] ? " checked" : "";
+            var disabled = modifier.enabled === false ? " disabled" : "";
+            var unavailable = modifier.enabled === false ? " unavailable" : "";
+            var title = modifier.tooltip ? ' title="' + escapeHtml(modifier.tooltip) + '"' : "";
+            return '<label class="modifier-option' + unavailable + '"' + title + '>' +
+                '<input type="checkbox" data-stage-modifier value="' + escapeHtml(modifier.value) + '"' + checked + disabled + '>' +
+                '<span>' + escapeHtml(modifier.label) + '</span>' +
+                '</label>';
+        }).join("");
+    }
+
+    function stageMarkup(stage, index) {
+        var stageType = stage.stage_type || "static";
+        var theory = stage.theory || "pbe";
+        var selectedModifiers = stage.modifiers || [];
+        return '<div class="workflow-stage-card" data-workflow-stage>' +
+            '<div class="workflow-stage-card-header">' +
+                '<div class="workflow-stage-heading">' +
+                    '<span class="workflow-stage-number" data-stage-number>' + String(index + 1) + '</span>' +
+                    '<span>Custom Workflow</span>' +
+                '</div>' +
+                '<button type="button" class="secondary-button" data-remove-stage>Remove</button>' +
+            '</div>' +
+            '<div class="workflow-stage-grid">' +
+                '<div>' +
+                    '<label>Calculation Type</label>' +
+                    '<select data-stage-type>' + optionMarkup(stageTypes, stageType) + '</select>' +
+                '</div>' +
+                '<div>' +
+                    '<label>Level of Theory</label>' +
+                    '<select data-stage-theory>' + optionMarkup(theories, theory) + '</select>' +
+                '</div>' +
+                '<div class="advanced-options-field">' +
+                    '<label>Advanced Options</label>' +
+                    '<details class="disclosure settings-panel">' +
+                        '<summary aria-label="Toggle advanced options"></summary>' +
+                        '<div class="option-list">' + modifierMarkup(selectedModifiers) + '</div>' +
+                    '</details>' +
+                '</div>' +
+            '</div>' +
+        '</div>';
+    }
+
+    function readStages() {
+        return Array.prototype.map.call(
+            stageList.querySelectorAll("[data-workflow-stage]"),
+            function (card) {
+                var stageType = card.querySelector("[data-stage-type]");
+                var theory = card.querySelector("[data-stage-theory]");
+                var selectedModifiers = Array.prototype.filter.call(
+                    card.querySelectorAll("[data-stage-modifier]"),
+                    function (input) {
+                        return input.checked && !input.disabled;
+                    }
+                ).map(function (input) {
+                    return input.value;
+                });
+                return {
+                    stage_type: stageType ? stageType.value : "static",
+                    theory: theory ? theory.value : "pbe",
+                    modifiers: selectedModifiers,
+                    label: null,
+                    options: {}
+                };
+            }
+        );
+    }
+
+    function updateStageNumbers() {
+        Array.prototype.forEach.call(
+            stageList.querySelectorAll("[data-stage-number]"),
+            function (numberElement, index) {
+                numberElement.textContent = String(index + 1);
+            }
+        );
+    }
+
+    function updateHiddenWorkflow() {
+        updateStageNumbers();
+        hiddenWorkflow.value = JSON.stringify({
+            stages: readStages(),
+            label: null,
+            recipe: recipeSelect ? recipeSelect.value || null : null
+        });
+    }
+
+    function renderStages(stages) {
+        stageList.innerHTML = (stages || []).map(stageMarkup).join("");
+        updateHiddenWorkflow();
+    }
+
+    stageList.addEventListener("change", updateHiddenWorkflow);
+    stageList.addEventListener("click", function (event) {
+        var button = event.target.closest("[data-remove-stage]");
+        if (!button) {
+            return;
+        }
+        var card = button.closest("[data-workflow-stage]");
+        if (card) {
+            card.remove();
+            if (!stageList.querySelector("[data-workflow-stage]")) {
+                renderStages([{ stage_type: "static", theory: "pbe", modifiers: [], label: null, options: {} }]);
+            } else {
+                updateHiddenWorkflow();
+            }
+        }
+    });
+
+    if (recipeSelect) {
+        recipeSelect.addEventListener("change", function () {
+            for (var index = 0; index < recipes.length; index += 1) {
+                if (recipes[index].value === recipeSelect.value) {
+                    renderStages((recipes[index].workflow_spec || {}).stages || []);
+                    return;
+                }
+            }
+            updateHiddenWorkflow();
+        });
+    }
+
+    if (addStageButton) {
+        addStageButton.addEventListener("click", function () {
+            var stages = readStages();
+            stages.push({ stage_type: "static", theory: "pbe", modifiers: [], label: null, options: {} });
+            renderStages(stages);
+        });
+    }
+
+    form.addEventListener("submit", updateHiddenWorkflow);
+    updateHiddenWorkflow();
+});
+</script>
 
 {% if results_summary and results_summary.status == "success" and results_summary.visualizations %}
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>

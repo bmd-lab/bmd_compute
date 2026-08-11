@@ -114,14 +114,18 @@ class FakeNonSpinBandVasprun:
 dos_spec = CalculationSpec(Purpose.DOS, Theory.PBE)
 band_spec = CalculationSpec(Purpose.BAND_STRUCTURE, Theory.PBE)
 static_spec = CalculationSpec(Purpose.STATIC, Theory.PBE)
+relax_static_spec = CalculationSpec(Purpose.RELAX_STATIC, Theory.HSE06)
 
 assert workflow_result_file_keys(static_spec) == ()
+assert workflow_result_file_keys(relax_static_spec) == ()
 assert workflow_result_file_keys(dos_spec) == ("doscar",)
 assert workflow_result_file_keys(band_spec) == ("kpoints",)
 assert not workflow_result_parse_dos(static_spec)
+assert not workflow_result_parse_dos(relax_static_spec)
 assert workflow_result_parse_dos(dos_spec)
 assert not workflow_result_parse_dos(band_spec)
 assert not workflow_result_parse_eigenvalues(static_spec)
+assert not workflow_result_parse_eigenvalues(relax_static_spec)
 assert workflow_result_parse_eigenvalues(band_spec)
 
 payload = render_workflow_results(
@@ -229,5 +233,13 @@ static_payload = render_workflow_results(
 )
 assert static_payload.summaries == {}
 assert static_payload.visualizations == []
+
+relax_static_payload = render_workflow_results(
+    relax_static_spec,
+    vasprun=FakeVasprun(),
+    files={},
+)
+assert relax_static_payload.summaries == {}
+assert relax_static_payload.visualizations == []
 
 print("workflow results smoke test passed")

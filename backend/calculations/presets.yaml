@@ -7,6 +7,10 @@ purposes:
     display_name: Geometry Optimisation
     enabled: true
     description: Relax atomic positions and, by default, the cell.
+  relax_static:
+    display_name: Geometry Optimisation + Static Energy
+    enabled: true
+    description: Optimise the structure and then calculate a final static energy.
   double_relax:
     display_name: Double Geometry Optimisation
     enabled: true
@@ -38,7 +42,8 @@ theories:
     enabled: false
   hse06:
     display_name: HSE06
-    enabled: false
+    enabled: true
+    default_potcar_functional: PBE_64
 
 modifiers:
   soc:

@@ -2,11 +2,18 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+import shlex
 import shutil
 import sys
 from collections import defaultdict
 from contextlib import contextmanager
 from pathlib import Path
+
+
+_SHELL_VARIABLE_RE = re.compile(
+    r"\$(?:{(?P<braced>[A-Za-z_][A-Za-z0-9_]*)}|(?P<plain>[A-Za-z_][A-Za-z0-9_]*))"
+)
 
 
 def print_runtime_info() -> None:
@@ -48,6 +55,60 @@ def print_vasp_launch_environment() -> None:
     )
 
 
+def resolve_vasp_cmd_argv(
+    spec: dict | None = None,
+    *,
+    environ: dict | None = None,
+) -> list[str]:
+    """
+    Resolve the VASP launch argv that atomate2/Custodian should execute.
+
+    The sbatch layer exports VASP_CMD with shell variables such as
+    ``$SLURM_NTASKS`` still present. Custodian receives an argv list from
+    Python, so those variables must be expanded before atomate2 constructs the
+    VaspJob.
+    """
+
+    runtime_env = dict(os.environ if environ is None else environ)
+    if "SLURM_NTASKS" not in runtime_env:
+        ntasks = (spec or {}).get("resources", {}).get("ntasks")
+        if ntasks is not None:
+            runtime_env["SLURM_NTASKS"] = str(ntasks)
+
+    command = (
+        (spec or {}).get("environment", {}).get("VASP_CMD")
+        or runtime_env.get("VASP_CMD")
+        or ""
+    )
+    expanded = _expand_shell_variables(str(command), runtime_env)
+    return shlex.split(expanded)
+
+
+def configure_atomate2_vasp_command(
+    spec: dict | None = None,
+    *,
+    environ: dict | None = None,
+) -> list[str]:
+    argv = resolve_vasp_cmd_argv(spec, environ=environ)
+    if not argv:
+        return []
+
+    from atomate2 import SETTINGS
+
+    expanded_command = shlex.join(argv)
+    SETTINGS.VASP_CMD = expanded_command
+    os.environ["VASP_CMD"] = expanded_command
+    return argv
+
+
+def _expand_shell_variables(command: str, environ: dict) -> str:
+    def replace(match: re.Match) -> str:
+        name = match.group("braced") or match.group("plain")
+        return str(environ.get(name, match.group(0)))
+
+    return _SHELL_VARIABLE_RE.sub(replace, command)
+
+
 def run_submission(spec: dict) -> None:
     print_runtime_info()
 
@@ -55,6 +116,7 @@ def run_submission(spec: dict) -> None:
     from backend.workflows import build_atomate2_flow_from_spec
     from jobflow.managers.local import run_locally
 
+    resolved_vasp_cmd = configure_atomate2_vasp_command(spec)
     flow_spec = spec["flow_spec"]
     structure = structure_from_spec(flow_spec["structure"])
     flow = build_atomate2_flow_from_spec(
@@ -65,6 +127,12 @@ def run_submission(spec: dict) -> None:
     )
 
     print_vasp_launch_environment()
+    print(
+        "[runner diagnostics] atomate2 VASP_CMD argv:",
+        resolved_vasp_cmd,
+        file=sys.stderr,
+        flush=True,
+    )
 
     with _jobflow_failure_tracebacks_to_stderr():
         stage_directories = _flow_stage_directories(flow)
@@ -275,7 +343,9 @@ class _JobflowFailureTracebackFilter(logging.Filter):
 __all__ = [
     "_flow_stage_directories",
     "_run_locally_with_stage_directories",
+    "configure_atomate2_vasp_command",
     "print_runtime_info",
     "print_vasp_launch_environment",
+    "resolve_vasp_cmd_argv",
     "run_submission",
 ]

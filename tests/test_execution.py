@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import shlex
 import sys
 import tempfile
 from contextlib import redirect_stderr
@@ -12,6 +14,8 @@ from backend.execution import (
     _flow_stage_directories,
     _jobflow_failure_tracebacks_to_stderr,
     _run_locally_with_stage_directories,
+    configure_atomate2_vasp_command,
+    resolve_vasp_cmd_argv,
 )
 
 
@@ -33,6 +37,75 @@ assert "Started executing jobs locally" not in output
 assert "Static failed with exception:" in output
 assert "Traceback (most recent call last):" in output
 assert "RuntimeError: underlying atomate2 failure" in output
+
+
+vasp_command_spec = {
+    "environment": {
+        "VASP_CMD": "mpirun -n $SLURM_NTASKS vasp_std",
+    },
+    "resources": {
+        "ntasks": 24,
+    },
+}
+assert resolve_vasp_cmd_argv(
+    vasp_command_spec,
+    environ={"SLURM_NTASKS": "24"},
+) == ["mpirun", "-n", "24", "vasp_std"]
+assert resolve_vasp_cmd_argv(
+    {
+        **vasp_command_spec,
+        "resources": {"ntasks": 36},
+    },
+    environ={"SLURM_NTASKS": "36"},
+) == ["mpirun", "-n", "36", "vasp_std"]
+assert resolve_vasp_cmd_argv(
+    vasp_command_spec,
+    environ={},
+) == ["mpirun", "-n", "24", "vasp_std"]
+
+saved_atomate2 = sys.modules.get("atomate2")
+saved_vasp_cmd = os.environ.get("VASP_CMD")
+fake_atomate2 = ModuleType("atomate2")
+fake_atomate2.SETTINGS = SimpleNamespace(VASP_CMD="vasp_std")
+sys.modules["atomate2"] = fake_atomate2
+try:
+    configured = configure_atomate2_vasp_command(
+        vasp_command_spec,
+        environ={"SLURM_NTASKS": "24"},
+    )
+    assert configured == ["mpirun", "-n", "24", "vasp_std"]
+    assert fake_atomate2.SETTINGS.VASP_CMD == "mpirun -n 24 vasp_std"
+    assert shlex.split(fake_atomate2.SETTINGS.VASP_CMD) == [
+        "mpirun",
+        "-n",
+        "24",
+        "vasp_std",
+    ]
+
+    configured = configure_atomate2_vasp_command(
+        {
+            **vasp_command_spec,
+            "resources": {"ntasks": 48},
+        },
+        environ={"SLURM_NTASKS": "48"},
+    )
+    assert configured == ["mpirun", "-n", "48", "vasp_std"]
+    assert fake_atomate2.SETTINGS.VASP_CMD == "mpirun -n 48 vasp_std"
+    assert shlex.split(fake_atomate2.SETTINGS.VASP_CMD) == [
+        "mpirun",
+        "-n",
+        "48",
+        "vasp_std",
+    ]
+finally:
+    if saved_vasp_cmd is None:
+        os.environ.pop("VASP_CMD", None)
+    else:
+        os.environ["VASP_CMD"] = saved_vasp_cmd
+    if saved_atomate2 is None:
+        sys.modules.pop("atomate2", None)
+    else:
+        sys.modules["atomate2"] = saved_atomate2
 
 
 class FakeStore:

@@ -8,12 +8,15 @@ import time
 from copy import deepcopy
 from pathlib import Path
 
-from backend.calculations.models import CalculationSpec
+from backend.calculations.models import CalculationSpec, WorkflowSpec
 from backend.calculations.registry import (
-    calculation_result_stage_directory,
-    calculation_stage_directories,
-    calculation_spec_from_flow_spec,
+    calculation_spec_from_workflow_spec,
+    legacy_workflow_from_spec,
     validate_calculation_spec,
+    validate_workflow_spec,
+    workflow_result_stage_directory,
+    workflow_spec_from_flow_spec,
+    workflow_stage_directories,
 )
 from backend.config import (
     DEFAULT_ACCOUNT,
@@ -43,6 +46,7 @@ REMOTE_BACKEND_MODULE_FILENAMES = (
     "calculations/models.py",
     "calculations/resources.py",
     "calculations/registry.py",
+    "calculations/theory_policy.py",
     "parser.py",
     "workflows.py",
 )
@@ -151,6 +155,13 @@ def default_resources_for_workflow(workflow: str | None = None) -> dict:
 def default_resources_for_calculation_spec(spec: CalculationSpec | None = None) -> dict:
     if spec is not None:
         validate_calculation_spec(spec)
+
+    return dict(DEFAULT_RESOURCES)
+
+
+def default_resources_for_workflow_spec(spec: WorkflowSpec | None = None) -> dict:
+    if spec is not None:
+        validate_workflow_spec(spec)
 
     return dict(DEFAULT_RESOURCES)
 
@@ -791,15 +802,22 @@ def create_submission_spec(
 
     env_values = env if env is not None else os.environ
     flow_spec_copy = deepcopy(flow_spec)
-    calculation_spec = calculation_spec_from_flow_spec(flow_spec_copy)
-    flow_spec_copy["calculation_spec"] = calculation_spec.to_dict()
-    resource_defaults = default_resources_for_calculation_spec(calculation_spec)
+    workflow_spec = workflow_spec_from_flow_spec(flow_spec_copy)
+    calculation_spec = calculation_spec_from_workflow_spec(workflow_spec)
+    flow_spec_copy["workflow_spec"] = workflow_spec.to_dict()
+    if calculation_spec is not None:
+        flow_spec_copy["calculation_spec"] = calculation_spec.to_dict()
+        flow_spec_copy["workflow"] = legacy_workflow_from_spec(calculation_spec)
+    else:
+        flow_spec_copy.pop("calculation_spec", None)
+        flow_spec_copy["workflow"] = flow_spec_copy.get("workflow") or "custom_workflow"
+    resource_defaults = default_resources_for_workflow_spec(workflow_spec)
 
     sanitized_label = sanitize_label(label)
     run_timestamp = timestamp or time.strftime("%Y%m%d-%H%M%S")
     run_name = f"{sanitized_label}-{run_timestamp}"
-    stage_directories = calculation_stage_directories(calculation_spec)
-    result_stage_directory = calculation_result_stage_directory(calculation_spec)
+    stage_directories = workflow_stage_directories(workflow_spec)
+    result_stage_directory = workflow_result_stage_directory(workflow_spec)
 
     resolved_username = username or NOTEBOOK_DEFAULTS["username"]
     resolved_flows_dir = flows_dir or NOTEBOOK_DEFAULTS["flows_dir"]
@@ -978,6 +996,7 @@ __all__ = [
     "build_submission_command",
     "create_submission_spec",
     "default_resources_for_calculation_spec",
+    "default_resources_for_workflow_spec",
     "default_resources_for_workflow",
     "parse_sbatch_job_id",
     "sanitize_label",

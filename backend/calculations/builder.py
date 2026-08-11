@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from backend.calculations.models import CalculationSpec, Theory
+from backend.calculations.models import CalculationSpec, WorkflowSpec
 from backend.calculations.registry import (
     calculation_spec_from_legacy,
     legacy_potcar_functional_from_spec,
@@ -10,7 +10,7 @@ from backend.calculations.registry import (
 
 def build_calculation_flow(
     structure,
-    spec: CalculationSpec,
+    spec: CalculationSpec | WorkflowSpec,
     *,
     label: str = "vasp_run",
     incar: dict | None = None,
@@ -26,6 +26,19 @@ def build_calculation_flow(
     not change atomate2 makers, pymatgen input sets, or Burton Lab overrides.
     """
 
+    if isinstance(spec, WorkflowSpec):
+        from backend.workflows import build_atomate2_flow_for_workflow_spec
+
+        return build_atomate2_flow_for_workflow_spec(
+            structure=structure,
+            workflow_spec=spec,
+            label=label,
+            incar=incar,
+            kpoints=kpoints,
+            resources=resources,
+            potcar_functional=potcar_functional or "PBE_64",
+        )
+
     normalized = CalculationSpec(
         purpose=spec.purpose,
         theory=spec.theory,
@@ -33,34 +46,7 @@ def build_calculation_flow(
         label=spec.label,
     )
 
-    if normalized.theory is Theory.PBE:
-        return _build_pbe_calculation_flow(
-            structure=structure,
-            spec=normalized,
-            label=label,
-            incar=incar,
-            kpoints=kpoints,
-            resources=resources,
-            potcar_functional=potcar_functional,
-        )
-
-    raise NotImplementedError(
-        f"Theory '{normalized.theory.value}' is not implemented in the native "
-        "CalculationSpec builder yet."
-    )
-
-
-def _build_pbe_calculation_flow(
-    structure,
-    spec: CalculationSpec,
-    *,
-    label: str,
-    incar: dict | None,
-    kpoints: dict | None,
-    resources,
-    potcar_functional: str | None,
-):
-    normalized = validate_calculation_spec(spec)
+    normalized = validate_calculation_spec(normalized)
     legacy_potcar_functional = potcar_functional or legacy_potcar_functional_from_spec(
         normalized
     )

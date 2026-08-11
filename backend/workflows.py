@@ -12,16 +12,34 @@ DFT_U_INCAR_KEYS = (
     "LMAXMIX",
 )
 
-from backend.calculations.models import CalculationSpec, Modifier, Purpose
+from backend.calculations.models import (
+    CalculationSpec,
+    Modifier,
+    Purpose,
+    StageSpec,
+    StageType,
+    Theory,
+    WorkflowSpec,
+)
 from backend.calculations.resources import (
     ncore_for_execution_resources,
 )
 from backend.calculations.registry import (
     CalculationValidationError,
     calculation_stage_directories,
+    calculation_spec_from_workflow_spec,
     calculation_spec_from_flow_spec,
     calculation_spec_from_legacy,
+    legacy_workflow_from_spec,
     validate_calculation_spec,
+    validate_workflow_spec,
+    workflow_stage_directories,
+    workflow_spec_from_flow_spec,
+)
+from backend.calculations.theory_policy import (
+    CalculationStage,
+    apply_theory_incar_settings,
+    theory_uses_hybrid_functional,
 )
 
 
@@ -303,6 +321,7 @@ def build_relax_input_set_generator(
     structure,
     *,
     isif=None,
+    theory=Theory.PBE,
     spin_polarized=False,
     modifiers=None,
     resources=None,
@@ -327,10 +346,16 @@ def build_relax_input_set_generator(
     user_incar.setdefault("EDIFFG", -0.01)
     if isif is not None:
         user_incar["ISIF"] = isif
+    policy_theory = Theory.from_value(theory)
+    user_incar = apply_theory_incar_settings(
+        user_incar,
+        theory=policy_theory,
+        stage=CalculationStage.RELAX,
+    )
     user_incar = apply_resource_incar_settings(
         user_incar,
         resources=resources,
-        allow_ncore=not _is_hse_incar(user_incar),
+        allow_ncore=True,
     )
 
     return RelaxSetGenerator(
@@ -350,6 +375,7 @@ def build_relax_flow(
     label="vasp_run",
     name=".",
     isif=None,
+    theory=Theory.PBE,
     spin_polarized=False,
     modifiers=None,
     resources=None,
@@ -363,6 +389,7 @@ def build_relax_flow(
     generator = build_relax_input_set_generator(
         structure,
         isif=isif,
+        theory=theory,
         spin_polarized=spin_polarized,
         modifiers=modifiers,
         resources=resources,
@@ -442,11 +469,84 @@ def build_double_relax_flow(
         return flow
 
 
+def build_relax_static_flow(
+    structure,
+    *,
+    label="vasp_run",
+    theory=Theory.PBE,
+    spin_polarized=False,
+    modifiers=None,
+    resources=None,
+    incar=None,
+    kpoints=None,
+    potcar_functional="PBE_64",
+):
+    from atomate2.vasp.jobs.core import RelaxMaker, StaticMaker
+    from jobflow import Flow
+
+    calculation_theory = Theory.from_value(theory)
+    stage_directories = calculation_stage_directories(
+        CalculationSpec(
+            Purpose.RELAX_STATIC,
+            theory=calculation_theory,
+            modifiers=modifiers or (),
+        )
+    )
+    relax_stage_dir, static_stage_dir = stage_directories
+
+    relax_generator = build_relax_input_set_generator(
+        structure,
+        theory=calculation_theory,
+        spin_polarized=spin_polarized,
+        modifiers=modifiers,
+        resources=resources,
+        incar=incar,
+        kpoints=kpoints,
+        potcar_functional=potcar_functional,
+    )
+    relax_job = RelaxMaker(
+        input_set_generator=relax_generator,
+        name=relax_stage_dir,
+    ).make(structure)
+
+    static_generator = build_static_input_set_generator(
+        relax_job.output.structure,
+        hse=_is_hse_incar(incar or {}),
+        intent="final",
+        theory=calculation_theory,
+        spin_polarized=spin_polarized,
+        modifiers=modifiers,
+        resources=resources,
+        incar=incar,
+        kpoints=kpoints,
+        potcar_functional=potcar_functional,
+    )
+    static_job = StaticMaker(
+        input_set_generator=static_generator,
+        name=static_stage_dir,
+    ).make(
+        relax_job.output.structure,
+        prev_dir=relax_job.output.dir_name,
+    )
+
+    try:
+        return Flow(
+            [relax_job, static_job],
+            name=f"{label}_relax_static",
+            metadata={"bmd_stage_directories": stage_directories},
+        )
+    except TypeError:
+        flow = Flow([relax_job, static_job], name=f"{label}_relax_static")
+        flow.bmd_stage_directories = stage_directories
+        return flow
+
+
 def _static_user_incar_settings(
     *,
     hse=False,
     prep_for_gw=False,
     intent="final",
+    theory=Theory.PBE,
     spin_polarized=False,
     modifiers=None,
     resources=None,
@@ -462,10 +562,15 @@ def _static_user_incar_settings(
         modifiers=calculation_modifiers,
     )
 
-    if hse:
-        for key, value in {"LHFCALC": True, "AEXX": 0.25, "HFSCREEN": 0.2, "ALGO": "Damped"}.items():
-            user_incar.setdefault(key, value)
-        for key in ("NCORE", "KPAR", "NPAR"):
+    policy_theory = Theory.HSE06 if hse else Theory.from_value(theory)
+    user_incar = apply_theory_incar_settings(
+        user_incar,
+        theory=policy_theory,
+        stage=CalculationStage.STATIC,
+    )
+    hybrid = theory_uses_hybrid_functional(policy_theory) or _is_hse_incar(user_incar)
+    if hybrid:
+        for key in ("KPAR", "NPAR"):
             user_incar.pop(key, None)
 
     if intent == "prep":
@@ -501,10 +606,10 @@ def _static_user_incar_settings(
     user_incar = apply_resource_incar_settings(
         user_incar,
         resources=resources,
-        allow_ncore=not (hse or prep_for_gw),
+        allow_ncore=not prep_for_gw,
     )
 
-    return incar_static(user_incar, allow_ncore=not (hse or prep_for_gw))
+    return incar_static(user_incar, allow_ncore=not prep_for_gw)
 
 
 def _static_restart_incar_settings(
@@ -517,6 +622,7 @@ def _static_restart_incar_settings(
     settings = _static_user_incar_settings(
         hse=_is_hse_incar(incar or {}),
         intent="final",
+        theory=Theory.HSE06 if _is_hse_incar(incar or {}) else Theory.PBE,
         spin_polarized=spin_polarized,
         modifiers=modifiers,
         resources=resources,
@@ -532,6 +638,7 @@ def build_static_input_set_generator(
     hse=False,
     prep_for_gw=False,
     intent="final",
+    theory=Theory.PBE,
     spin_polarized=False,
     modifiers=None,
     resources=None,
@@ -549,6 +656,7 @@ def build_static_input_set_generator(
         hse=hse,
         prep_for_gw=prep_for_gw,
         intent=intent,
+        theory=theory,
         modifiers=calculation_modifiers,
         resources=resources,
         incar=incar,
@@ -572,6 +680,7 @@ def build_static_flow(
     hse=False,
     prep_for_gw=False,
     intent="final",
+    theory=Theory.PBE,
     spin_polarized=False,
     modifiers=None,
     resources=None,
@@ -582,11 +691,17 @@ def build_static_flow(
     from atomate2.vasp.jobs.core import StaticMaker
     from jobflow import Flow
 
+    hybrid_static = (
+        hse
+        or theory_uses_hybrid_functional(theory)
+        or _is_hse_incar(incar or {})
+    )
     generator = build_static_input_set_generator(
         structure,
         hse=hse,
         prep_for_gw=prep_for_gw,
         intent=intent,
+        theory=theory,
         spin_polarized=spin_polarized,
         modifiers=modifiers,
         resources=resources,
@@ -596,10 +711,13 @@ def build_static_flow(
     )
     maker = StaticMaker(
         input_set_generator=generator,
-        name=("hse_static" if hse else "static"),
+        name=("hse_static" if hybrid_static else "static"),
     )
 
-    return Flow([maker.make(structure)], name=label + ("_hse_static" if hse else "_static"))
+    return Flow(
+        [maker.make(structure)],
+        name=label + ("_hse_static" if hybrid_static else "_static"),
+    )
 
 
 def build_dos_input_set_generator(
@@ -843,6 +961,201 @@ def build_band_structure_flow(
         return flow
 
 
+def _stage_options(stage: StageSpec) -> dict:
+    return dict(stage.options or {})
+
+
+def _stage_incar(stage: StageSpec, global_incar: dict | None) -> dict:
+    user_incar = dict(global_incar or {})
+    user_incar.update(_stage_options(stage).get("incar") or {})
+    return user_incar
+
+
+def _stage_kpoints(stage: StageSpec, global_kpoints):
+    return _stage_options(stage).get("kpoints", global_kpoints)
+
+
+def _single_stage_job_name(stage: StageSpec, user_incar: dict | None = None) -> str:
+    if stage.stage_type is StageType.RELAX:
+        return "relax_ions" if Modifier.IONS_ONLY in stage.modifiers else "relax"
+
+    if stage.stage_type is StageType.STATIC:
+        return "hse_static" if theory_uses_hybrid_functional(stage.theory) or _is_hse_incar(user_incar or {}) else "static"
+
+    if stage.stage_type is StageType.DOS:
+        return "dos"
+
+    if stage.stage_type is StageType.BAND_STRUCTURE:
+        return "band_structure"
+
+    return stage.stage_type.value
+
+
+def _workflow_flow_suffix(workflow: WorkflowSpec) -> str:
+    compatible_spec = calculation_spec_from_workflow_spec(workflow)
+    if compatible_spec is not None:
+        if (
+            compatible_spec.purpose is Purpose.RELAX
+            and Modifier.IONS_ONLY not in compatible_spec.modifiers
+        ):
+            return ""
+        if (
+            compatible_spec.purpose is Purpose.STATIC
+            and theory_uses_hybrid_functional(compatible_spec.theory)
+        ):
+            return "hse_static"
+        return legacy_workflow_from_spec(compatible_spec)
+
+    return "custom_workflow"
+
+
+def _flow_with_stage_metadata(jobs, *, name: str, stage_directories: tuple[str, ...]):
+    from jobflow import Flow
+
+    if stage_directories:
+        try:
+            return Flow(
+                jobs,
+                name=name,
+                metadata={"bmd_stage_directories": stage_directories},
+            )
+        except TypeError:
+            flow = Flow(jobs, name=name)
+            flow.bmd_stage_directories = stage_directories
+            return flow
+
+    return Flow(jobs, name=name)
+
+
+def build_atomate2_flow_for_workflow_spec(
+    structure,
+    workflow_spec: WorkflowSpec,
+    *,
+    label="vasp_run",
+    incar=None,
+    kpoints=None,
+    resources=None,
+    potcar_functional="PBE_64",
+):
+    from atomate2.vasp.jobs.core import NonSCFMaker, RelaxMaker, StaticMaker
+
+    workflow = validate_workflow_spec(workflow_spec)
+    stage_directories = workflow_stage_directories(workflow)
+    jobs = []
+    previous_job = None
+
+    for index, stage in enumerate(workflow.stages):
+        user_incar = _stage_incar(stage, incar)
+        stage_kpoints = _stage_kpoints(stage, kpoints)
+        stage_structure = (
+            previous_job.output.structure
+            if previous_job is not None
+            else structure
+        )
+        stage_name = (
+            stage_directories[index]
+            if stage_directories
+            else _single_stage_job_name(stage, user_incar)
+        )
+        spin_polarized = Modifier.SPIN_POLARIZED in stage.modifiers
+
+        if stage.stage_type is StageType.RELAX:
+            generator = build_relax_input_set_generator(
+                stage_structure,
+                isif=2 if Modifier.IONS_ONLY in stage.modifiers else None,
+                theory=stage.theory,
+                spin_polarized=spin_polarized,
+                modifiers=stage.modifiers,
+                resources=resources,
+                incar=user_incar,
+                kpoints=stage_kpoints,
+                potcar_functional=potcar_functional,
+            )
+            job = RelaxMaker(
+                input_set_generator=generator,
+                name=stage_name,
+            ).make(stage_structure)
+
+        elif stage.stage_type is StageType.STATIC:
+            generator = build_static_input_set_generator(
+                stage_structure,
+                hse=_is_hse_incar(user_incar),
+                intent="final",
+                theory=stage.theory,
+                spin_polarized=spin_polarized,
+                modifiers=stage.modifiers,
+                resources=resources,
+                incar=user_incar,
+                kpoints=stage_kpoints,
+                potcar_functional=potcar_functional,
+            )
+            maker = StaticMaker(
+                input_set_generator=generator,
+                name=stage_name,
+            )
+            if previous_job is None:
+                job = maker.make(stage_structure)
+            else:
+                job = maker.make(
+                    stage_structure,
+                    prev_dir=previous_job.output.dir_name,
+                )
+
+        elif stage.stage_type is StageType.DOS:
+            generator = build_dos_input_set_generator(
+                stage_structure,
+                spin_polarized=spin_polarized,
+                modifiers=stage.modifiers,
+                resources=resources,
+                incar=user_incar,
+                kpoints=stage_kpoints,
+                potcar_functional=potcar_functional,
+            )
+            job = NonSCFMaker(
+                input_set_generator=generator,
+                name=stage_name,
+            ).make(
+                stage_structure,
+                prev_dir=previous_job.output.dir_name,
+                mode="uniform",
+            )
+
+        elif stage.stage_type is StageType.BAND_STRUCTURE:
+            generator = build_band_structure_input_set_generator(
+                stage_structure,
+                spin_polarized=spin_polarized,
+                modifiers=stage.modifiers,
+                resources=resources,
+                incar=user_incar,
+                kpoints=stage_kpoints,
+                potcar_functional=potcar_functional,
+            )
+            job = NonSCFMaker(
+                input_set_generator=generator,
+                name=stage_name,
+            ).make(
+                stage_structure,
+                prev_dir=previous_job.output.dir_name,
+                mode="line",
+            )
+
+        else:
+            raise CalculationValidationError(
+                f"Unsupported stage type: {stage.stage_type.value}"
+            )
+
+        jobs.append(job)
+        previous_job = job
+
+    suffix = _workflow_flow_suffix(workflow)
+    flow_name = label if not suffix else f"{label}_{suffix}"
+    return _flow_with_stage_metadata(
+        jobs,
+        name=flow_name,
+        stage_directories=stage_directories,
+    )
+
+
 def build_vasp_input_set_generator_for_spec(
     structure,
     spec: CalculationSpec,
@@ -862,6 +1175,7 @@ def build_vasp_input_set_generator_for_spec(
             structure,
             hse=_is_hse_incar(user_incar),
             intent="final",
+            theory=calculation_spec.theory,
             spin_polarized=spin_polarized,
             modifiers=calculation_modifiers,
             resources=resources,
@@ -874,6 +1188,21 @@ def build_vasp_input_set_generator_for_spec(
         return build_relax_input_set_generator(
             structure,
             isif=2 if Modifier.IONS_ONLY in calculation_spec.modifiers else None,
+            theory=calculation_spec.theory,
+            spin_polarized=spin_polarized,
+            modifiers=calculation_modifiers,
+            resources=resources,
+            incar=user_incar,
+            kpoints=kpoints,
+            potcar_functional=potcar_functional,
+        )
+
+    if calculation_spec.purpose is Purpose.RELAX_STATIC:
+        return build_static_input_set_generator(
+            structure,
+            hse=_is_hse_incar(user_incar),
+            intent="final",
+            theory=calculation_spec.theory,
             spin_polarized=spin_polarized,
             modifiers=calculation_modifiers,
             resources=resources,
@@ -954,6 +1283,7 @@ def build_atomate2_flow_for_spec(
             label=label,
             hse=_is_hse_incar(user_incar),
             intent="final",
+            theory=calculation_spec.theory,
             spin_polarized=spin_polarized,
             modifiers=calculation_modifiers,
             resources=resources,
@@ -967,6 +1297,20 @@ def build_atomate2_flow_for_spec(
             structure,
             label=label,
             isif=2 if Modifier.IONS_ONLY in calculation_spec.modifiers else None,
+            theory=calculation_spec.theory,
+            spin_polarized=spin_polarized,
+            modifiers=calculation_modifiers,
+            resources=resources,
+            incar=user_incar,
+            kpoints=kpoints,
+            potcar_functional=potcar_functional,
+        )
+
+    if calculation_spec.purpose is Purpose.RELAX_STATIC:
+        return build_relax_static_flow(
+            structure,
+            label=label,
+            theory=calculation_spec.theory,
             spin_polarized=spin_polarized,
             modifiers=calculation_modifiers,
             resources=resources,
@@ -1056,14 +1400,14 @@ def build_atomate2_flow_from_spec(
     workflow construction used by the browser preview.
     """
 
-    calculation_spec = calculation_spec_from_flow_spec(flow_spec)
+    workflow_spec = workflow_spec_from_flow_spec(flow_spec)
     potcar_functional = flow_spec.get("potcar_functional") or "PBE_64"
     execution_resources = resources or flow_spec.get("execution_resources")
     from backend.calculations.builder import build_calculation_flow
 
     flow = build_calculation_flow(
         structure=structure,
-        spec=calculation_spec,
+        spec=workflow_spec,
         label=run_name,
         incar=flow_spec.get("incar") or flow_spec.get("incar_overrides") or {},
         kpoints=flow_spec.get("kpoints"),
@@ -1087,11 +1431,13 @@ __all__ = [
     "build_atomate2_flow",
     "build_atomate2_flow_from_spec",
     "build_atomate2_flow_for_spec",
+    "build_atomate2_flow_for_workflow_spec",
     "build_band_structure_flow",
     "build_band_structure_input_set_generator",
     "build_dos_flow",
     "build_dos_input_set_generator",
     "build_double_relax_flow",
+    "build_relax_static_flow",
     "build_relax_flow",
     "build_relax_input_set_generator",
     "build_static_flow",
