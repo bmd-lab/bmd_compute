@@ -246,9 +246,20 @@ with fake_atomate2_and_jobflow():
         label="Si-dos",
         resources={"ntasks": 24},
     )
+    band_flow = build_atomate2_flow_for_workflow_spec(
+        "initial_structure",
+        band_workflow,
+        label="Si-bands",
+        resources={"ntasks": 24},
+    )
     generated_inputs = preview_generated_inputs(
         "initial_structure",
         mixed_relax_static,
+        resources={"ntasks": 24},
+    )
+    band_generated_inputs = preview_generated_inputs(
+        "initial_structure",
+        band_workflow,
         resources={"ntasks": 24},
     )
 
@@ -271,6 +282,19 @@ assert static_incar["NCORE"] == relax_incar["NCORE"] == 8
 assert [job.name for job in dos_flow.jobs] == ["stage_01", "stage_02", "stage_03"]
 assert dos_flow.jobs[2].prev_dir == dos_flow.jobs[1].output.dir_name
 assert dos_flow.jobs[2].mode == "uniform"
+dos_static_incar = dos_flow.jobs[1].input_set_generator.kwargs["user_incar_settings"]
+dos_incar = dos_flow.jobs[2].input_set_generator.kwargs["user_incar_settings"]
+assert dos_incar["NCORE"] == dos_static_incar["NCORE"] == 8
+
+assert [job.name for job in band_flow.jobs] == ["stage_01", "stage_02", "stage_03"]
+assert band_flow.jobs[2].prev_dir == band_flow.jobs[1].output.dir_name
+assert band_flow.jobs[2].mode == "line"
+band_relax_incar = band_flow.jobs[0].input_set_generator.kwargs["user_incar_settings"]
+band_static_incar = band_flow.jobs[1].input_set_generator.kwargs["user_incar_settings"]
+band_incar = band_flow.jobs[2].input_set_generator.kwargs["user_incar_settings"]
+assert band_relax_incar["NCORE"] == 8
+assert band_static_incar["NCORE"] == 8
+assert "NCORE" not in band_incar
 
 relax_section, static_section = generated_inputs["incar"].split("\n\n", 1)
 assert "# Stage 1 - Geometry Optimisation (PBE)" in relax_section
@@ -281,6 +305,15 @@ assert "ISMEAR = 0" in static_section
 assert "ISMEAR = -5" not in static_section
 assert "ISPIN = 2" in static_section
 assert "NCORE = 8" in static_section
+
+band_relax_section, band_static_and_path = band_generated_inputs["incar"].split("\n\n", 1)
+band_static_section, band_section = band_static_and_path.split("\n\n", 1)
+assert "# Stage 1 - Geometry Optimisation (PBE)" in band_relax_section
+assert "# Stage 2 - Static Energy (PBE)" in band_static_section
+assert "# Stage 3 - Band Structure (PBE)" in band_section
+assert "NCORE = 8" in band_relax_section
+assert "NCORE = 8" in band_static_section
+assert "NCORE" not in band_section
 
 summary = summarize_workflow(mixed_flow, mixed_relax_static)
 assert summary["calculation_type"] == "Geometry Optimisation + Static Energy"

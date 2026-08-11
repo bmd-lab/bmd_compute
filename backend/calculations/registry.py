@@ -12,8 +12,10 @@ from backend.calculations.models import (
     WorkflowSpec,
 )
 from backend.calculations.theory_policy import (
+    CalculationStage,
     theory_default_potcar_functional,
     theory_supported_purposes,
+    theory_supported_stages,
 )
 
 
@@ -289,22 +291,7 @@ def validate_stage_spec(stage: StageSpec) -> StageSpec:
         label=stage.label,
         options=stage.options,
     )
-    try:
-        validate_calculation_spec(
-            CalculationSpec(
-                purpose=_STAGE_PURPOSES[normalized.stage_type],
-                theory=normalized.theory,
-                modifiers=normalized.modifiers,
-                label=normalized.label,
-            )
-        )
-    except CalculationValidationError as exc:
-        stage_label = stage_display_name(normalized)
-        theory_label = theory_display_name(normalized.theory)
-        raise CalculationValidationError(
-            f"{stage_label} with {theory_label} is not available with the selected stage options.",
-            suggestion=exc.suggestion,
-        ) from exc
+    _validate_stage_support(normalized)
 
     return normalized
 
@@ -578,6 +565,64 @@ def workflow_stage_directories(workflow: WorkflowSpec) -> tuple[str, ...]:
         f"stage_{index:02d}"
         for index in range(1, len(normalized.stages) + 1)
     )
+
+
+def _validate_stage_support(stage: StageSpec) -> None:
+    calculation_stage = CalculationStage(stage.stage_type.value)
+    theory_label = theory_display_name(stage.theory)
+    stage_label = stage_display_name(stage)
+
+    if calculation_stage not in theory_supported_stages(stage.theory):
+        supported_stages = theory_supported_stages(stage.theory)
+        if supported_stages:
+            supported_text = ", ".join(
+                stage_display_name(StageType.from_value(item.value))
+                for item in sorted(supported_stages, key=lambda candidate: candidate.value)
+            )
+            suggestion = (
+                f"Choose {supported_text} with {theory_label}, "
+                f"or choose PBE for {stage_label}."
+            )
+        else:
+            suggestion = "Choose PBE for this stage."
+
+        raise CalculationValidationError(
+            f"{theory_label} is not available for {stage_label} stages yet.",
+            suggestion=suggestion,
+        )
+
+    unsupported_modifiers = stage.modifiers.difference(
+        _supported_modifiers_for_stage(stage.stage_type, stage.theory)
+    )
+    if unsupported_modifiers:
+        modifier_text = ", ".join(
+            modifier_display_name(modifier)
+            for modifier in sorted(unsupported_modifiers, key=lambda item: item.value)
+        )
+        raise CalculationValidationError(
+            f"{stage_label} with {theory_label} is not available with {modifier_text}.",
+            suggestion="Adjust the advanced options, or choose PBE for this stage.",
+        )
+
+
+def _supported_modifiers_for_stage(
+    stage_type: StageType,
+    theory: Theory,
+) -> frozenset[Modifier]:
+    if theory is Theory.PBE:
+        supported = set(_ACTIVE_UI_MODIFIERS)
+        if stage_type is StageType.RELAX:
+            supported.add(Modifier.IONS_ONLY)
+        if stage_type is StageType.BAND_STRUCTURE:
+            supported.discard(Modifier.GAMMA_ONLY)
+        return frozenset(supported)
+
+    if theory is Theory.HSE06:
+        if stage_type is StageType.BAND_STRUCTURE:
+            return frozenset({Modifier.SPIN_POLARIZED})
+        return frozenset(_HSE06_SINGLE_STAGE_MODIFIERS)
+
+    return frozenset()
 
 
 def workflow_result_stage_directory(workflow: WorkflowSpec) -> str | None:

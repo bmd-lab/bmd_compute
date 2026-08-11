@@ -154,6 +154,15 @@ assert hse_relax_policy["HFSCREEN"] == 0.2
 assert hse_relax_policy["PRECFOCK"] == "Fast"
 assert theory_stage_from_purpose(Purpose.RELAX) is CalculationStage.RELAX
 
+hse_band_policy = theory_incar_settings(Theory.HSE06, CalculationStage.BAND_STRUCTURE)
+assert hse_band_policy["LHFCALC"] is True
+assert hse_band_policy["AEXX"] == 0.25
+assert hse_band_policy["HFSCREEN"] == 0.2
+assert hse_band_policy["ALGO"] == "Normal"
+assert hse_band_policy["PRECFOCK"] == "Fast"
+assert hse_band_policy["ISMEAR"] == 0
+assert hse_band_policy["SIGMA"] == 0.01
+
 assert theory_incar_settings(Theory.PBE, CalculationStage.STATIC) == {}
 hse_applied = apply_theory_incar_settings(
     {"NCORE": 8, "KPAR": 2, "NPAR": 3, "ENCUT": 700},

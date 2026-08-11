@@ -31,7 +31,7 @@ from backend.remote import (
     RemoteTransferResult,
     RemoteTunnel,
 )
-from backend.submission import build_submission_command, parse_sbatch_job_id
+from backend.submission import parse_sbatch_job_id, remote_preparation_file_groups
 
 
 LOGGER = logging.getLogger(__name__)
@@ -696,27 +696,142 @@ class ParamikoRemoteRunner(RemoteRunner):
         self.ensure_available()
         self._preflight(submission_spec)
 
-        command = build_submission_command(submission_spec, dry_run=dry_run)
-        result = self.run(command, check=False, modules=False, export_env=False)
-        if not result.ok:
-            if not dry_run:
-                _print_sbatch_result(result.stdout or "", result.stderr or "", None)
-            raise RemoteExecutionError(result)
-
-        output = result.stdout or ""
+        output = self._prepare_submission_files(submission_spec)
         if dry_run:
-            return self._job_record(submission_spec, None, output, status="dry_run")
+            return self._job_record(
+                submission_spec,
+                None,
+                output + "DRY RUN\n",
+                status="dry_run",
+            )
 
-        try:
-            job_id = parse_sbatch_job_id(output)
-        except Exception:
-            _print_sbatch_result(output, result.stderr or "", None)
-            raise
+        batch_result = self.submit_batch(_batch_request_from_submission_spec(submission_spec))
+        sbatch_raw = (batch_result.raw_output or "").strip() or batch_result.job_id
+        output += f"Submitting with: {batch_result.command}\n"
+        output += f"SBATCH_RAW_OUT={sbatch_raw}\n"
 
-        _print_sbatch_result(output, result.stderr or "", job_id)
+        job_id = batch_result.job_id
         record = self._job_record(submission_spec, job_id, output)
         self._write_remote_job_record(record)
         return record
+
+    def _prepare_submission_files(self, submission_spec: dict) -> str:
+        output_lines = []
+
+        self._prepare_remote_directories(submission_spec)
+        output_lines.append("PREP_OK=Remote directories prepared")
+
+        self._prepare_remote_directory(
+            submission_spec["paths"]["run_dir"],
+            "Working directory created",
+        )
+        output_lines.append("PREP_OK=Working directory created")
+
+        script_group = None
+        for group in remote_preparation_file_groups(submission_spec):
+            if group["step"] == "Submission script written":
+                script_group = group
+                continue
+
+            self._upload_preparation_file_group(group)
+            output_lines.append(f"PREP_OK={group['step']}")
+
+        if submission_spec.get("potcar", {}).get("symlink_targets"):
+            self._prepare_potcar_symlinks(submission_spec)
+            output_lines.append("PREP_OK=POTCAR links prepared")
+
+        if script_group is not None:
+            self._upload_preparation_file_group(script_group)
+            output_lines.append("PREP_OK=Submission script written")
+
+        output_lines.append("PREP_OK=Ready for submission")
+        return "\n".join(output_lines) + "\n"
+
+    def _prepare_remote_directories(self, submission_spec: dict) -> None:
+        def action() -> None:
+            for path in submission_spec["paths"].get("directories_to_prepare", []):
+                self.ensure_directory(path)
+                if not self.is_dir(path):
+                    self._raise_preparation_failure(
+                        "Remote directories prepared",
+                        f"Expected directory does not exist: {path}",
+                        f"test -d {shlex.quote(path)}",
+                    )
+
+        self._run_preparation_step("Remote directories prepared", action)
+
+    def _prepare_remote_directory(self, path: str, stage: str) -> None:
+        def action() -> None:
+            self.ensure_directory(path)
+            if not self.is_dir(path):
+                self._raise_preparation_failure(
+                    stage,
+                    f"Expected directory does not exist: {path}",
+                    f"test -d {shlex.quote(path)}",
+                )
+
+        self._run_preparation_step(stage, action)
+
+    def _upload_preparation_file_group(self, group: Mapping[str, Any]) -> None:
+        stage = str(group["step"])
+
+        def action() -> None:
+            for item in group.get("files", []):
+                remote_path = str(item["path"])
+                self.put_text(
+                    remote_path,
+                    str(item.get("text", "")),
+                    mode=int(item.get("mode", 0o640)),
+                )
+                if not self.is_file(remote_path):
+                    self._raise_preparation_failure(
+                        stage,
+                        f"Expected file does not exist: {remote_path}",
+                        f"test -f {shlex.quote(remote_path)}",
+                    )
+
+        self._run_preparation_step(stage, action)
+
+    def _prepare_potcar_symlinks(self, submission_spec: dict) -> None:
+        potcar = submission_spec.get("potcar", {})
+        target = str(potcar["target"])
+
+        def action() -> None:
+            for link in potcar.get("symlink_targets", []):
+                self.symlink(target, str(link), overwrite=True)
+                verify_command = (
+                    f"test -L {shlex.quote(str(link))} "
+                    f"&& test \"$(readlink {shlex.quote(str(link))} 2>/dev/null)\" "
+                    f"= {shlex.quote(target)}"
+                )
+                result = self.run(verify_command, check=False)
+                if not result.ok:
+                    self._raise_preparation_failure(
+                        "POTCAR links prepared",
+                        f"Expected POTCAR symlink does not point to {target}: {link}",
+                        verify_command,
+                    )
+
+        self._run_preparation_step("POTCAR links prepared", action)
+
+    def _run_preparation_step(self, stage: str, action) -> None:
+        try:
+            action()
+        except RemoteExecutionError as exc:
+            if _has_preparation_failure_marker(exc):
+                raise
+            reason = str(exc).strip() or f"Unable to complete remote preparation stage: {stage}"
+            raise RemoteExecutionError(
+                _preparation_failure_result(stage, reason, exc.result.command)
+            ) from exc
+        except Exception as exc:
+            reason = str(exc).strip() or f"Unable to complete remote preparation stage: {stage}"
+            raise RemoteExecutionError(
+                _preparation_failure_result(stage, reason, stage)
+            ) from exc
+
+    def _raise_preparation_failure(self, stage: str, reason: str, command: str) -> None:
+        raise RemoteExecutionError(_preparation_failure_result(stage, reason, command))
 
     def query_job(self, job_id: str) -> RemoteJobStatus:
         self.ensure_available()
@@ -880,6 +995,46 @@ class ParamikoRemoteRunner(RemoteRunner):
         except Exception:
             # The notebook treated remote state persistence as best-effort.
             return
+
+
+def _batch_request_from_submission_spec(submission_spec: dict) -> BatchSubmissionRequest:
+    cluster = submission_spec["cluster"]
+    resources = submission_spec["resources"]
+    paths = submission_spec["paths"]
+    return BatchSubmissionRequest(
+        script_path=paths["remote_script"],
+        partition=str(cluster["partition"]),
+        account=str(cluster["account"]),
+        nodes=int(resources["nodes"]),
+        ntasks=int(resources["ntasks"]),
+        mem_gb=int(resources["mem_gb"]),
+        walltime=str(resources["walltime"]),
+        parsable=True,
+    )
+
+
+def _preparation_failure_result(stage: str, reason: str, command: str) -> RemoteCommandResult:
+    return RemoteCommandResult(
+        command=command,
+        returncode=42,
+        stdout=(
+            f"PREP_FAILED_STAGE={stage}\n"
+            f"PREP_FAILED_REASON={reason}\n"
+        ),
+    )
+
+
+def _has_preparation_failure_marker(exc: RemoteExecutionError) -> bool:
+    result = exc.result
+    combined = "\n".join(
+        item
+        for item in (
+            result.stdout or "",
+            result.stderr or "",
+        )
+        if item
+    )
+    return "PREP_FAILED_STAGE=" in combined
 
 
 def _print_sbatch_result(stdout: str, stderr: str, job_id: str | None) -> None:

@@ -2,6 +2,7 @@ ENCUT_STATIC_PREP_DEFAULT = 520
 ENCUT_RELAX_DEFAULT = 580
 ENCUT_STATIC_FINAL_DEFAULT = 620
 BAND_STRUCTURE_LINE_DENSITY_DEFAULT = 40
+HSE_BAND_STRUCTURE_RECIPROCAL_DENSITY_DEFAULT = 64
 DFT_U_INCAR_KEYS = (
     "LDAU",
     "LDAUTYPE",
@@ -23,7 +24,9 @@ from backend.calculations.models import (
 )
 from backend.calculations.resources import (
     ncore_for_execution_resources,
+    stage_allows_automatic_ncore,
 )
+from backend.calculations.custodian_policy import hse_band_structure_run_vasp_kwargs
 from backend.calculations.registry import (
     CalculationValidationError,
     calculation_stage_directories,
@@ -250,6 +253,19 @@ def apply_resource_incar_settings(user_incar, *, resources=None, allow_ncore=Tru
     return settings
 
 
+def apply_stage_resource_incar_settings(
+    user_incar,
+    *,
+    stage_type: StageType | str,
+    resources=None,
+    allow_ncore=True,
+) -> dict:
+    settings = dict(user_incar or {})
+    if allow_ncore and stage_allows_automatic_ncore(stage_type):
+        settings["NCORE"] = ncore_for_execution_resources(resources)
+    return settings
+
+
 def ksettings_for_modifiers(structure, kpoints_config, *, modifiers):
     normalized_modifiers = calculation_modifiers_from_options(modifiers=modifiers)
     if Modifier.GAMMA_ONLY in normalized_modifiers:
@@ -258,17 +274,21 @@ def ksettings_for_modifiers(structure, kpoints_config, *, modifiers):
     return ksettings(structure, kpoints_config)
 
 
-def line_mode_ksettings(kpoints_config=None):
+def line_mode_density(kpoints_config=None):
     if kpoints_config:
         mode = str(kpoints_config.get("mode") or "").strip().lower()
         value = kpoints_config.get("value")
         if mode in ("line", "line_density"):
-            return {"line_density": int(float(value))}
+            return int(float(value))
 
         if "line_density" in kpoints_config:
-            return {"line_density": int(float(kpoints_config["line_density"]))}
+            return int(float(kpoints_config["line_density"]))
 
-    return {"line_density": BAND_STRUCTURE_LINE_DENSITY_DEFAULT}
+    return BAND_STRUCTURE_LINE_DENSITY_DEFAULT
+
+
+def line_mode_ksettings(kpoints_config=None):
+    return {"line_density": line_mode_density(kpoints_config)}
 
 
 def validate_input_set_for_modifiers(input_set, *, spec: CalculationSpec) -> None:
@@ -352,10 +372,10 @@ def build_relax_input_set_generator(
         theory=policy_theory,
         stage=CalculationStage.RELAX,
     )
-    user_incar = apply_resource_incar_settings(
+    user_incar = apply_stage_resource_incar_settings(
         user_incar,
+        stage_type=StageType.RELAX,
         resources=resources,
-        allow_ncore=True,
     )
 
     return RelaxSetGenerator(
@@ -551,6 +571,7 @@ def _static_user_incar_settings(
     modifiers=None,
     resources=None,
     incar=None,
+    resource_stage_type=StageType.STATIC,
 ):
     calculation_modifiers = calculation_modifiers_from_options(
         modifiers=modifiers,
@@ -603,11 +624,18 @@ def _static_user_incar_settings(
         user_incar["LWAVE"] = True
         user_incar["LCHARG"] = True
 
-    user_incar = apply_resource_incar_settings(
-        user_incar,
-        resources=resources,
-        allow_ncore=not prep_for_gw,
-    )
+    if prep_for_gw:
+        user_incar = apply_resource_incar_settings(
+            user_incar,
+            resources=resources,
+            allow_ncore=False,
+        )
+    else:
+        user_incar = apply_stage_resource_incar_settings(
+            user_incar,
+            stage_type=resource_stage_type,
+            resources=resources,
+        )
 
     return incar_static(user_incar, allow_ncore=not prep_for_gw)
 
@@ -618,6 +646,7 @@ def _static_restart_incar_settings(
     modifiers=None,
     resources=None,
     incar=None,
+    resource_stage_type=StageType.STATIC,
 ):
     settings = _static_user_incar_settings(
         hse=_is_hse_incar(incar or {}),
@@ -627,9 +656,54 @@ def _static_restart_incar_settings(
         modifiers=modifiers,
         resources=resources,
         incar=incar,
+        resource_stage_type=resource_stage_type,
     )
     settings["ICHARG"] = 11
     return settings
+
+
+def _hse_band_structure_incar_settings(
+    *,
+    spin_polarized=False,
+    modifiers=None,
+    resources=None,
+    incar=None,
+):
+    calculation_modifiers = calculation_modifiers_from_options(
+        modifiers=modifiers,
+        spin_polarized=spin_polarized,
+    )
+    user_incar = dict(incar or {})
+    user_incar = apply_modifier_incar_settings(
+        user_incar,
+        modifiers=calculation_modifiers,
+    )
+
+    for key in ("ENAUG", "LMIXTAU"):
+        user_incar.setdefault(key, None)
+
+    user_incar.setdefault("ADDGRID", True)
+    user_incar.setdefault("EDIFF", 1e-6)
+    user_incar.setdefault("LORBIT", 11)
+    user_incar.setdefault("LREAL", False)
+    user_incar.setdefault("PREC", "Accurate")
+    try:
+        encut_now = int(float(user_incar.get("ENCUT", 0)))
+    except Exception:
+        encut_now = 0
+    user_incar["ENCUT"] = max(encut_now, ENCUT_STATIC_FINAL_DEFAULT)
+
+    user_incar = apply_theory_incar_settings(
+        user_incar,
+        theory=Theory.HSE06,
+        stage=CalculationStage.BAND_STRUCTURE,
+    )
+    user_incar = apply_stage_resource_incar_settings(
+        user_incar,
+        stage_type=StageType.BAND_STRUCTURE,
+        resources=resources,
+    )
+    return user_incar
 
 
 def build_static_input_set_generator(
@@ -742,6 +816,7 @@ def build_dos_input_set_generator(
         modifiers=calculation_modifiers,
         resources=resources,
         incar=incar,
+        resource_stage_type=StageType.DOS,
     )
 
     return NonSCFSetGenerator(
@@ -841,6 +916,7 @@ def build_dos_flow(
 def build_band_structure_input_set_generator(
     structure,
     *,
+    theory=Theory.PBE,
     spin_polarized=False,
     modifiers=None,
     resources=None,
@@ -848,8 +924,6 @@ def build_band_structure_input_set_generator(
     kpoints=None,
     potcar_functional="PBE_64",
 ):
-    from atomate2.vasp.sets.core import NonSCFSetGenerator
-
     calculation_modifiers = calculation_modifiers_from_options(
         modifiers=modifiers,
         spin_polarized=spin_polarized,
@@ -863,12 +937,33 @@ def build_band_structure_input_set_generator(
             ),
         )
 
+    policy_theory = Theory.from_value(theory)
+    if theory_uses_hybrid_functional(policy_theory):
+        from atomate2.vasp.sets.core import HSEBSSetGenerator
+
+        band_incar = _hse_band_structure_incar_settings(
+            spin_polarized=spin_polarized,
+            modifiers=calculation_modifiers,
+            resources=resources,
+            incar=incar,
+        )
+        return HSEBSSetGenerator(
+            mode="line",
+            line_density=line_mode_density(kpoints),
+            reciprocal_density=HSE_BAND_STRUCTURE_RECIPROCAL_DENSITY_DEFAULT,
+            user_potcar_functional=potcar_functional,
+            user_incar_settings=band_incar,
+        )
+
+    from atomate2.vasp.sets.core import NonSCFSetGenerator
+
     # Keep the band path grid and basis compatible with the preceding static CHGCAR.
     band_incar = _static_restart_incar_settings(
         spin_polarized=spin_polarized,
         modifiers=calculation_modifiers,
         resources=resources,
         incar=incar,
+        resource_stage_type=StageType.BAND_STRUCTURE,
     )
 
     return NonSCFSetGenerator(
@@ -933,6 +1028,7 @@ def build_band_structure_flow(
 
     band_generator = build_band_structure_input_set_generator(
         static_job.output.structure,
+        theory=Theory.PBE,
         spin_polarized=spin_polarized,
         modifiers=modifiers,
         resources=resources,
@@ -1123,6 +1219,7 @@ def build_atomate2_flow_for_workflow_spec(
         elif stage.stage_type is StageType.BAND_STRUCTURE:
             generator = build_band_structure_input_set_generator(
                 stage_structure,
+                theory=stage.theory,
                 spin_polarized=spin_polarized,
                 modifiers=stage.modifiers,
                 resources=resources,
@@ -1130,14 +1227,27 @@ def build_atomate2_flow_for_workflow_spec(
                 kpoints=stage_kpoints,
                 potcar_functional=potcar_functional,
             )
-            job = NonSCFMaker(
-                input_set_generator=generator,
-                name=stage_name,
-            ).make(
-                stage_structure,
-                prev_dir=previous_job.output.dir_name,
-                mode="line",
-            )
+            if theory_uses_hybrid_functional(stage.theory):
+                from atomate2.vasp.jobs.core import HSEBSMaker
+
+                job = HSEBSMaker(
+                    input_set_generator=generator,
+                    name=stage_name,
+                    run_vasp_kwargs=hse_band_structure_run_vasp_kwargs(),
+                ).make(
+                    stage_structure,
+                    prev_dir=previous_job.output.dir_name,
+                    mode="line",
+                )
+            else:
+                job = NonSCFMaker(
+                    input_set_generator=generator,
+                    name=stage_name,
+                ).make(
+                    stage_structure,
+                    prev_dir=previous_job.output.dir_name,
+                    mode="line",
+                )
 
         else:
             raise CalculationValidationError(
@@ -1225,6 +1335,7 @@ def build_vasp_input_set_generator_for_spec(
     if calculation_spec.purpose is Purpose.BAND_STRUCTURE:
         return build_band_structure_input_set_generator(
             structure,
+            theory=calculation_spec.theory,
             spin_polarized=spin_polarized,
             modifiers=calculation_modifiers,
             resources=resources,
@@ -1444,9 +1555,11 @@ __all__ = [
     "build_static_input_set_generator",
     "build_vasp_input_set_for_spec",
     "build_vasp_input_set_generator_for_spec",
+    "apply_stage_resource_incar_settings",
     "apply_spin_settings",
     "incar_relax",
     "incar_static",
     "ksettings",
+    "line_mode_density",
     "line_mode_ksettings",
 ]

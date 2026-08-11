@@ -1,3 +1,5 @@
+import json
+
 from backend.config import (
     DEFAULT_ACCOUNT,
     DEFAULT_FLOWS_DIR,
@@ -16,7 +18,12 @@ from backend.paramiko_remote import (
     _parse_openssh_config_output,
     _paramiko_connect_details_from_ssh_options,
 )
-from backend.remote import RemoteCommandResult, RemoteConnectionProfile
+from backend.remote import (
+    BatchSubmissionResult,
+    RemoteCommandResult,
+    RemoteConnectionProfile,
+    RemotePathInfo,
+)
 from backend.submission import create_submission_spec, parse_sbatch_job_id
 
 
@@ -157,7 +164,10 @@ class RecordingRunner(ParamikoRemoteRunner):
     def __init__(self):
         super().__init__(client=object())
         self.commands = []
+        self.batch_requests = []
+        self.directories = []
         self.remote_writes = []
+        self.symlinks = []
 
     def ensure_available(self):
         return None
@@ -174,16 +184,115 @@ class RecordingRunner(ParamikoRemoteRunner):
         self.commands.append(command)
         if command.startswith("test -f"):
             return RemoteCommandResult(command=command, returncode=0)
-        if "echo DRY RUN" in command:
-            return RemoteCommandResult(command=command, returncode=0, stdout="DRY RUN\n")
-        return RemoteCommandResult(
-            command=command,
-            returncode=0,
-            stdout="Submitting with: sbatch ...\nSBATCH_RAW_OUT=123456\n",
-        )
+        return RemoteCommandResult(command=command, returncode=0)
+
+    def ensure_directory(self, remote_path):
+        self.directories.append(remote_path)
+        return RemotePathInfo(path=remote_path, exists=True, kind="dir")
+
+    def is_dir(self, remote_path):
+        return True
+
+    def is_file(self, remote_path):
+        return True
+
+    def symlink(self, target, link_name, *, overwrite=True):
+        self.symlinks.append((target, link_name, overwrite))
+        return RemotePathInfo(path=link_name, exists=True, kind="dir")
 
     def put_text(self, remote_path, text, *, mode=0o640):
         self.remote_writes.append((remote_path, text, mode))
+
+    def submit_batch(self, request):
+        self.batch_requests.append(request)
+        return BatchSubmissionResult(
+            job_id="123456",
+            raw_output="123456\n",
+            command=(
+                f"sbatch -p {request.partition} -A {request.account} "
+                f"-N {request.nodes} -n {request.ntasks} "
+                f"--mem={request.mem_gb}G -t {request.walltime} --parsable "
+                f"{request.script_path}"
+            ),
+        )
+
+
+class FakeSftpFile:
+    def __init__(self, sftp, remote_path):
+        self.sftp = sftp
+        self.remote_path = remote_path
+        self.parts = []
+
+    def write(self, data):
+        self.parts.append(data.decode("utf-8") if isinstance(data, bytes) else data)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        if exc_type is None:
+            self.sftp.files[self.remote_path] = "".join(self.parts)
+
+
+class FakeSftp:
+    def __init__(self):
+        self.files = {}
+        self.modes = {}
+        self.close_count = 0
+
+    def file(self, remote_path, mode):
+        assert mode == "w"
+        return FakeSftpFile(self, remote_path)
+
+    def chmod(self, remote_path, mode):
+        self.modes[remote_path] = mode
+
+    def close(self):
+        self.close_count += 1
+
+
+class FakeSftpClient:
+    def __init__(self):
+        self.sftp = FakeSftp()
+
+    def open_sftp(self):
+        return self.sftp
+
+
+class SftpPreparationRunner(ParamikoRemoteRunner):
+    def __init__(self):
+        self.fake_client = FakeSftpClient()
+        super().__init__(client=self.fake_client)
+        self.commands = []
+        self.directories = []
+
+    def ensure_available(self):
+        return None
+
+    def run(
+        self,
+        command,
+        *,
+        check=False,
+        modules=False,
+        export_env=False,
+        timeout_s=None,
+    ):
+        self.commands.append(command)
+        return RemoteCommandResult(command=command, returncode=0)
+
+    def ensure_directory(self, remote_path):
+        self.directories.append(remote_path)
+        return RemotePathInfo(path=remote_path, exists=True, kind="dir")
+
+    def is_dir(self, remote_path):
+        return True
+
+    def is_file(self, remote_path):
+        return remote_path in self.fake_client.sftp.files
+
+    def submit_batch(self, request):
+        raise AssertionError("large dry-run regression should not submit a batch job")
 
 
 flow_spec = {
@@ -215,44 +324,41 @@ assert record.log_paths["slurm_out"] == SLURM_OUT
 assert record.remote_state_path == f"{DEFAULT_LOGS_DIR}/job_123456.json"
 
 assert runner.commands[0] == "test -f /remote/POSCAR || test -d /remote/POSCAR"
-submit_command = runner.commands[1]
-assert "mkdir -p" in submit_command
-assert f"ln -sfn {POTCAR_TARGET}" not in submit_command
-assert f"cat > {SUBMISSION_JSON} <<'JSON'" in submit_command
-assert f"test -f {SUBMISSION_JSON}" in submit_command
-assert f"mkdir -p {BACKEND_DIR}" in submit_command
-assert f"cat > {BACKEND_DIR}/execution.py <<'PY'" in submit_command
-assert f"test -f {BACKEND_DIR}/execution.py" in submit_command
-assert f"cat > {BACKEND_DIR}/parser.py <<'PY'" in submit_command
-assert f"test -f {BACKEND_DIR}/parser.py" in submit_command
-assert f"cat > {BACKEND_DIR}/workflows.py <<'PY'" in submit_command
-assert f"test -f {BACKEND_DIR}/workflows.py" in submit_command
-assert f"cat > {RUN_JOB} <<'PY'" in submit_command
-assert f"test -f {RUN_JOB}" in submit_command
-assert f"cat > {REMOTE_SCRIPT}" in submit_command
-assert f"test -f {REMOTE_SCRIPT}" in submit_command
-assert f"SBATCH_SCRIPT_PATH={REMOTE_SCRIPT}" in submit_command
-assert f"rm -f {REMOTE_SCRIPT}" not in submit_command
-assert "cat > run_job.py <<'PY'" not in submit_command
-assert "__SPEC_JSON__" not in submit_command
-assert "json.load(handle)" in submit_command
-assert "from backend.execution import run_submission" in submit_command
-assert f"export BMD_SUBMISSION_SPEC={SUBMISSION_JSON}" in submit_command
-assert f"Missing submission.json at {SUBMISSION_JSON}" in submit_command
-assert f"Missing execution module at {BACKEND_DIR}/execution.py" in submit_command
-assert f"Missing backend module parser.py at {BACKEND_DIR}/parser.py" in submit_command
-assert f"Missing backend module workflows.py at {BACKEND_DIR}/workflows.py" in submit_command
-assert f"Missing run_job.py at {RUN_JOB}" in submit_command
-assert f"sbatch -p {DEFAULT_PARTITION} -A {DEFAULT_ACCOUNT}" in submit_command
+assert runner.batch_requests
+batch_request = runner.batch_requests[0]
+assert batch_request.script_path == REMOTE_SCRIPT
+assert batch_request.partition == DEFAULT_PARTITION
+assert batch_request.account == DEFAULT_ACCOUNT
+assert batch_request.nodes == DEFAULT_RESOURCES["nodes"]
+assert batch_request.ntasks == DEFAULT_RESOURCES["ntasks"]
+assert batch_request.mem_gb == DEFAULT_RESOURCES["mem_gb"]
+assert batch_request.walltime == DEFAULT_RESOURCES["walltime"]
 assert (
     f"-N {DEFAULT_RESOURCES['nodes']} "
     f"-n {DEFAULT_RESOURCES['ntasks']} "
     f"--mem={DEFAULT_RESOURCES['mem_gb']}G "
     f"-t {DEFAULT_RESOURCES['walltime']} --parsable"
-) in submit_command
+) in record.raw_output
 
 assert runner.remote_writes
-assert runner.remote_writes[0][0] == f"{DEFAULT_LOGS_DIR}/job_123456.json"
+writes = {path: text for path, text, _mode in runner.remote_writes}
+assert SUBMISSION_JSON in writes
+assert f"{BACKEND_DIR}/execution.py" in writes
+assert f"{BACKEND_DIR}/parser.py" in writes
+assert f"{BACKEND_DIR}/workflows.py" in writes
+assert RUN_JOB in writes
+assert REMOTE_SCRIPT in writes
+assert f"{DEFAULT_LOGS_DIR}/job_123456.json" in writes
+assert "__SPEC_JSON__" not in writes[RUN_JOB]
+assert "json.load(handle)" in writes[RUN_JOB]
+assert "from backend.execution import run_submission" in writes[RUN_JOB]
+assert f"export BMD_SUBMISSION_SPEC={SUBMISSION_JSON}" in writes[REMOTE_SCRIPT]
+assert f"Missing submission.json at {SUBMISSION_JSON}" in writes[REMOTE_SCRIPT]
+assert f"Missing execution module at {BACKEND_DIR}/execution.py" in writes[REMOTE_SCRIPT]
+assert f"Missing backend module parser.py at {BACKEND_DIR}/parser.py" in writes[REMOTE_SCRIPT]
+assert f"Missing backend module workflows.py at {BACKEND_DIR}/workflows.py" in writes[REMOTE_SCRIPT]
+assert f"Missing run_job.py at {RUN_JOB}" in writes[REMOTE_SCRIPT]
+assert all("cat >" not in command for command in runner.commands)
 
 dry_runner = RecordingRunner()
 dry_record = dry_runner.submit(submission_spec, dry_run=True)
@@ -264,37 +370,50 @@ assert dry_record.run_name == RUN_NAME
 assert dry_record.run_dir == RUN_DIR
 assert dry_record.remote_script == REMOTE_SCRIPT
 assert dry_record.remote_state_path is None
-assert dry_record.raw_output == "DRY RUN\n"
+assert dry_record.raw_output.endswith("DRY RUN\n")
+assert "PREP_OK=Remote directories prepared" in dry_record.raw_output
+assert "PREP_OK=Working directory created" in dry_record.raw_output
+assert "PREP_OK=submission.json uploaded" in dry_record.raw_output
+assert "PREP_OK=Execution module uploaded" in dry_record.raw_output
+assert "PREP_OK=run_job.py uploaded" in dry_record.raw_output
+assert "PREP_OK=Submission script written" in dry_record.raw_output
+assert "PREP_OK=Ready for submission" in dry_record.raw_output
 
 assert dry_runner.commands[0] == "test -f /remote/POSCAR || test -d /remote/POSCAR"
-dry_command = dry_runner.commands[1]
-assert "mkdir -p" in dry_command
-assert f"ln -sfn {POTCAR_TARGET}" not in dry_command
-assert f"cat > {REMOTE_SCRIPT}" in dry_command
-assert "PREP_FAILED_STAGE=$1" in dry_command
-assert f"verify_dir 'Working directory created' {RUN_DIR}" in dry_command
-assert f"cat > {SUBMISSION_JSON} <<'JSON'" in dry_command
-assert f"verify_file \"submission.json uploaded\" {SUBMISSION_JSON}" in dry_command
-assert 'prep_ok "submission.json uploaded"' in dry_command
-assert f"cat > {BACKEND_DIR}/execution.py <<'PY'" in dry_command
-assert f"verify_file 'Execution module uploaded' {BACKEND_DIR}/execution.py" in dry_command
-assert f"cat > {BACKEND_DIR}/parser.py <<'PY'" in dry_command
-assert f"verify_file 'Execution module uploaded' {BACKEND_DIR}/parser.py" in dry_command
-assert f"cat > {BACKEND_DIR}/workflows.py <<'PY'" in dry_command
-assert f"verify_file 'Execution module uploaded' {BACKEND_DIR}/workflows.py" in dry_command
-assert 'prep_ok "Execution module uploaded"' in dry_command
-assert f"cat > {RUN_JOB} <<'PY'" in dry_command
-assert f"verify_file \"run_job.py uploaded\" {RUN_JOB}" in dry_command
-assert 'prep_ok "run_job.py uploaded"' in dry_command
-assert "__SPEC_JSON__" not in dry_command
-assert f"verify_symlink 'POTCAR links prepared' {POTCAR_TARGET}" not in dry_command
-assert 'prep_ok "POTCAR links prepared"' not in dry_command
-assert f"verify_file \"Submission script written\" {REMOTE_SCRIPT}" in dry_command
-assert 'prep_ok "Ready for submission"' in dry_command
-assert "echo DRY RUN" in dry_command
-assert "Submitting with: sbatch" not in dry_command
-assert "out=$(sbatch" not in dry_command
-assert not dry_runner.remote_writes
+assert not dry_runner.batch_requests
+dry_writes = {path: text for path, text, _mode in dry_runner.remote_writes}
+assert SUBMISSION_JSON in dry_writes
+assert RUN_JOB in dry_writes
+assert REMOTE_SCRIPT in dry_writes
+assert "__SPEC_JSON__" not in dry_writes[RUN_JOB]
+assert all("cat >" not in command for command in dry_runner.commands)
+assert "Submitting with: sbatch" not in dry_record.raw_output
+
+large_payload = "KPOINTS\n" + (
+    "0.0000000000 0.0000000000 0.0000000000 0 ! Gamma\n" * 15000
+)
+large_flow_spec = {
+    **flow_spec,
+    "generated_input_regression_payload": large_payload,
+}
+large_submission_spec = create_submission_spec(
+    large_flow_spec,
+    label="TiO2 large static",
+    timestamp="20260629-120000",
+    env={},
+)
+large_runner = SftpPreparationRunner()
+large_record = large_runner.submit(large_submission_spec, dry_run=True)
+large_submission_json = f"{large_submission_spec['paths']['run_dir']}/submission.json"
+large_files = large_runner.fake_client.sftp.files
+assert large_record.status == "dry_run"
+assert "PREP_OK=Ready for submission" in large_record.raw_output
+large_uploaded_spec = json.loads(large_files[large_submission_json])
+assert large_uploaded_spec["flow_spec"]["generated_input_regression_payload"] == large_payload
+assert large_runner.fake_client.sftp.modes[large_submission_json] == 0o640
+assert all("cat >" not in command for command in large_runner.commands)
+assert all(large_payload[:200] not in command for command in large_runner.commands)
+assert max((len(command) for command in large_runner.commands), default=0) < 4096
 
 private_potcars_dir = "/private/bmd-potcars"
 private_target = f"{private_potcars_dir}/PBE_64"
@@ -309,17 +428,14 @@ private_submission_spec = create_submission_spec(
 
 private_runner = RecordingRunner()
 private_runner.submit(private_submission_spec)
-private_submit_command = private_runner.commands[1]
-assert f"ln -sfn {private_target}" in private_submit_command
-assert private_link in private_submit_command
+assert (private_target, private_link, True) in private_runner.symlinks
+assert any(private_link in command for command in private_runner.commands)
 
 private_dry_runner = RecordingRunner()
-private_dry_runner.submit(private_submission_spec, dry_run=True)
-private_dry_command = private_dry_runner.commands[1]
-assert f"ln -sfn {private_target}" in private_dry_command
-assert f"verify_symlink 'POTCAR links prepared' {private_target}" in private_dry_command
-assert private_link in private_dry_command
-assert 'prep_ok "POTCAR links prepared"' in private_dry_command
+private_dry_record = private_dry_runner.submit(private_submission_spec, dry_run=True)
+assert (private_target, private_link, True) in private_dry_runner.symlinks
+assert any(private_link in command for command in private_dry_runner.commands)
+assert "PREP_OK=POTCAR links prepared" in private_dry_record.raw_output
 
 assert parse_sbatch_job_id("Submitted batch job 42") == "42"
 assert parse_sbatch_job_id("SBATCH_RAW_OUT=77") == "77"

@@ -2,12 +2,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from backend.calculations.models import StageType
 from backend.calculations.registry import CalculationValidationError
 from backend.config import DEFAULT_ACCOUNT, DEFAULT_PARTITION, DEFAULT_RESOURCES
 
 
 ALLOWED_CPU_COUNTS = (24, 48, 72, 96, 120, 144, 168, 192)
 DEFAULT_NCORE = 8
+AUTOMATIC_NCORE_STAGE_TYPES = frozenset(
+    {
+        StageType.RELAX,
+        StageType.STATIC,
+        StageType.DOS,
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -90,6 +98,10 @@ def ncore_for_execution_resources(resources=None) -> int:
     return DEFAULT_NCORE
 
 
+def stage_allows_automatic_ncore(stage_type: StageType | str) -> bool:
+    return StageType.from_value(stage_type) in AUTOMATIC_NCORE_STAGE_TYPES
+
+
 def _positive_int(value, label: str) -> int:
     try:
         number = int(value)
@@ -133,9 +145,11 @@ def _nonempty_text(value, label: str) -> str:
 
 __all__ = [
     "ALLOWED_CPU_COUNTS",
+    "AUTOMATIC_NCORE_STAGE_TYPES",
     "DEFAULT_NCORE",
     "ExecutionResources",
     "default_execution_resources",
     "ncore_for_execution_resources",
     "normalize_execution_resources",
+    "stage_allows_automatic_ncore",
 ]

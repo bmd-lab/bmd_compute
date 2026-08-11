@@ -1,14 +1,16 @@
-from backend.calculations.models import CalculationSpec, Modifier, Purpose, Theory
+from backend.calculations.models import CalculationSpec, Modifier, Purpose, StageType, Theory
 from backend.calculations.resources import (
     ALLOWED_CPU_COUNTS,
     ExecutionResources,
     ncore_for_execution_resources,
+    stage_allows_automatic_ncore,
 )
 from backend.calculations.registry import CalculationValidationError
 from backend.workflows import (
     apply_modifier_incar_settings,
     apply_dft_u_settings,
     apply_resource_incar_settings,
+    apply_stage_resource_incar_settings,
     apply_spin_settings,
     build_atomate2_flow_for_spec,
     incar_relax,
@@ -103,6 +105,32 @@ assert apply_resource_incar_settings(
     resources=ExecutionResources(cpus=24),
     allow_ncore=False,
 ) == {}
+assert stage_allows_automatic_ncore(StageType.RELAX)
+assert stage_allows_automatic_ncore(StageType.STATIC)
+assert stage_allows_automatic_ncore(StageType.DOS)
+assert not stage_allows_automatic_ncore(StageType.BAND_STRUCTURE)
+assert apply_stage_resource_incar_settings(
+    {"ENCUT": 520},
+    stage_type=StageType.STATIC,
+    resources=ExecutionResources(cpus=24),
+) == {
+    "ENCUT": 520,
+    "NCORE": 8,
+}
+assert apply_stage_resource_incar_settings(
+    {"ENCUT": 520},
+    stage_type=StageType.BAND_STRUCTURE,
+    resources=ExecutionResources(cpus=24),
+) == {
+    "ENCUT": 520,
+}
+assert apply_stage_resource_incar_settings(
+    {"NCORE": 4},
+    stage_type=StageType.BAND_STRUCTURE,
+    resources=ExecutionResources(cpus=24),
+) == {
+    "NCORE": 4,
+}
 assert apply_modifier_incar_settings(
     {"MAGMOM": {"Fe": 5}},
     modifiers={Modifier.SOC},

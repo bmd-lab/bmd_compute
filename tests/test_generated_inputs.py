@@ -127,6 +127,21 @@ assert "ISIF = 3" in relax_preview["incar"]
 assert "ISPIN = 1" in relax_preview["incar"]
 assert "MAGMOM" not in relax_preview["incar"]
 
+band_preview = preview_generated_inputs(
+    structure,
+    CalculationSpec(Purpose.BAND_STRUCTURE, Theory.PBE),
+    resources=ExecutionResources(cpus=24),
+    potcar_functional="PBE_64",
+)
+band_relax_section, band_static_and_path = band_preview["incar"].split("\n\n", 1)
+band_static_section, band_section = band_static_and_path.split("\n\n", 1)
+assert "# Stage 1 - Geometry Optimisation" in band_relax_section
+assert "# Stage 2 - Static Energy" in band_static_section
+assert "# Stage 3 - Band Structure" in band_section
+assert "NCORE = 8" in band_relax_section
+assert "NCORE = 8" in band_static_section
+assert "NCORE" not in band_section
+
 summary, calculation, generated_inputs, submission_spec = build_submission_state(
     structure_text=poscar,
     fmt="poscar",

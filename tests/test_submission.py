@@ -454,6 +454,7 @@ assert set(backend_module_sources) == {
     "config.py",
     "calculations/__init__.py",
     "calculations/builder.py",
+    "calculations/custodian_policy.py",
     "calculations/models.py",
     "calculations/resources.py",
     "calculations/registry.py",
@@ -463,6 +464,10 @@ assert set(backend_module_sources) == {
     "workflows.py",
 }
 assert "class CalculationSpec" in backend_module_sources["calculations/models.py"]
+assert (
+    "def hse_band_structure_run_vasp_kwargs"
+    in backend_module_sources["calculations/custodian_policy.py"]
+)
 assert "def ncore_for_execution_resources" in backend_module_sources["calculations/resources.py"]
 assert "def calculation_spec_from_flow_spec" in backend_module_sources["calculations/registry.py"]
 assert "def theory_incar_settings" in backend_module_sources["calculations/theory_policy.py"]

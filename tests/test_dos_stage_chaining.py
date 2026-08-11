@@ -118,7 +118,11 @@ def fake_atomate2_and_jobflow():
 
 
 with fake_atomate2_and_jobflow():
-    flow = build_dos_flow("initial_structure", label="Si-dos")
+    flow = build_dos_flow(
+        "initial_structure",
+        label="Si-dos",
+        resources={"ntasks": 24},
+    )
 
 assert flow.name == "Si-dos_dos"
 assert flow.metadata["bmd_stage_directories"] == ("stage_01", "stage_02", "stage_03")
@@ -144,6 +148,7 @@ assert static_incar["ENCUT"] == 620
 assert static_incar["ADDGRID"] is True
 assert static_incar["ENAUG"] is None
 assert static_incar["GGA"] is None
+assert dos_incar["NCORE"] == static_incar["NCORE"] == 8
 assert dos_incar["ICHARG"] == 11
 assert dos_incar["NEDOS"] == static_incar["NEDOS"] == 4001
 assert dos_incar["LORBIT"] == static_incar["LORBIT"] == 11

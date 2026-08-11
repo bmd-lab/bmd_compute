@@ -20,6 +20,15 @@ class CalculationStage(str, Enum):
     DOS = "dos"
     BAND_STRUCTURE = "band_structure"
 
+
+HSE06_SUPPORTED_STAGES = frozenset(
+    {
+        CalculationStage.RELAX,
+        CalculationStage.STATIC,
+        CalculationStage.BAND_STRUCTURE,
+    }
+)
+
 _THEORY_DEFAULT_POTCAR_FUNCTIONAL = {
     Theory.PBE: "PBE_64",
     Theory.HSE06: "PBE_64",
@@ -51,6 +60,12 @@ _HSE06_STAGE_INCAR = {
         "PRECFOCK": "Accurate",
         "ISMEAR": 0,
     },
+    CalculationStage.BAND_STRUCTURE: {
+        "ALGO": "Normal",
+        "PRECFOCK": "Fast",
+        "ISMEAR": 0,
+        "SIGMA": 0.01,
+    },
 }
 
 _HYBRID_PARALLEL_KEYS = ("KPAR", "NPAR")
@@ -81,6 +96,16 @@ def theory_supported_purposes(theory: Theory | str) -> frozenset[Purpose]:
         )
     if normalized is Theory.HSE06:
         return HSE06_SUPPORTED_PURPOSES
+
+    return frozenset()
+
+
+def theory_supported_stages(theory: Theory | str) -> frozenset[CalculationStage]:
+    normalized = Theory.from_value(theory)
+    if normalized is Theory.PBE:
+        return frozenset(CalculationStage)
+    if normalized is Theory.HSE06:
+        return HSE06_SUPPORTED_STAGES
 
     return frozenset()
 
@@ -160,10 +185,12 @@ def apply_theory_incar_settings(
 __all__ = [
     "CalculationStage",
     "HSE06_SUPPORTED_PURPOSES",
+    "HSE06_SUPPORTED_STAGES",
     "apply_theory_incar_settings",
     "theory_default_potcar_functional",
     "theory_incar_settings",
     "theory_stage_from_purpose",
     "theory_supported_purposes",
+    "theory_supported_stages",
     "theory_uses_hybrid_functional",
 ]

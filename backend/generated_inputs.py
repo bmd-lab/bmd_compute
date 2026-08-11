@@ -192,6 +192,7 @@ def _input_set_for_stage(
     elif stage.stage_type is StageType.BAND_STRUCTURE:
         generator = build_band_structure_input_set_generator(
             structure,
+            theory=stage.theory,
             spin_polarized=spin_polarized,
             modifiers=stage.modifiers,
             resources=resources,

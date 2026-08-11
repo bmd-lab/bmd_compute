@@ -43,6 +43,7 @@ REMOTE_BACKEND_MODULE_FILENAMES = (
     REMOTE_EXECUTION_MODULE_FILENAME,
     "calculations/__init__.py",
     "calculations/builder.py",
+    "calculations/custodian_policy.py",
     "calculations/models.py",
     "calculations/resources.py",
     "calculations/registry.py",
@@ -490,6 +491,69 @@ ls -ld "$PMG_VASP_PSP_DIR"/POT_* >/dev/null 2>&1 || echo "[warn] No POT_* dir fo
 {job_body.strip()}
 """
     return body.rstrip() + "\n"
+
+
+def remote_preparation_file_groups(submission_spec: dict) -> list[dict]:
+    """Return the remote files that must be uploaded before sbatch submission.
+
+    File contents are intentionally kept as data for RemoteRunner file-transfer
+    methods. Do not embed these payloads into shell command strings; generated
+    inputs can be large for workflows such as hybrid band structures.
+    """
+
+    backend_module_sources = build_backend_module_sources()
+    backend_module_paths = _backend_module_paths(submission_spec)
+
+    return [
+        {
+            "step": "submission.json uploaded",
+            "files": [
+                {
+                    "path": _submission_json_path(submission_spec),
+                    "text": json_dumps_for_remote_file(submission_spec),
+                    "mode": 0o640,
+                },
+            ],
+        },
+        {
+            "step": "Execution module uploaded",
+            "files": [
+                {
+                    "path": _backend_init_path(submission_spec),
+                    "text": "",
+                    "mode": 0o640,
+                },
+                *[
+                    {
+                        "path": backend_module_paths[filename],
+                        "text": backend_module_sources[filename],
+                        "mode": 0o640,
+                    }
+                    for filename in REMOTE_BACKEND_MODULE_FILENAMES
+                ],
+            ],
+        },
+        {
+            "step": "run_job.py uploaded",
+            "files": [
+                {
+                    "path": _run_job_path(submission_spec),
+                    "text": build_run_job_script(submission_spec),
+                    "mode": 0o640,
+                },
+            ],
+        },
+        {
+            "step": "Submission script written",
+            "files": [
+                {
+                    "path": submission_spec["paths"]["remote_script"],
+                    "text": build_sbatch_script(submission_spec),
+                    "mode": 0o640,
+                },
+            ],
+        },
+    ]
 
 
 def build_slurm_preview_script(submission_spec: dict) -> str:
@@ -999,6 +1063,7 @@ __all__ = [
     "default_resources_for_workflow_spec",
     "default_resources_for_workflow",
     "parse_sbatch_job_id",
+    "remote_preparation_file_groups",
     "sanitize_label",
     "summarize_potcar_species",
 ]
