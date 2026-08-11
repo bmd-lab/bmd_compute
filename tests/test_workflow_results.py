@@ -250,10 +250,12 @@ assert band_visualization["plot"]["ticktext"] == ["Γ", "K|Γ", "X"]
 assert band_visualization["plot"]["vertical_lines"] == [0.0, 1.25, 2.5]
 assert band_visualization["plot"]["traces"][0]["name"] == "Spin up"
 assert band_visualization["plot"]["traces"][0]["showlegend"] is True
+assert band_visualization["plot"]["traces"][0]["color"] == "#1a6aff"
 assert band_visualization["plot"]["traces"][0]["y"] == [-0.5, 0.5, 1.5]
 assert band_visualization["plot"]["traces"][1]["name"] == "Spin up"
 assert band_visualization["plot"]["traces"][1]["showlegend"] is False
 assert band_visualization["plot"]["traces"][2]["name"] == "Spin down"
+assert band_visualization["plot"]["traces"][2]["color"] == "#c94001"
 assert band_visualization["plot"]["traces"][2]["dash"] == "dash"
 assert band_visualization["plot"]["traces"][2]["y"] == [-0.25, 0.75, 1.75]
 json.dumps(band_payload.visualizations)

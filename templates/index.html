@@ -8,23 +8,35 @@
 <style>
 
 :root {
-    --bg: #111111;
-    --panel: #202020;
-    --line: #3a3a3a;
-    --line-strong: #555555;
-    --text: #f2f2f2;
-    --muted: #a8a8a8;
-    --soft: #d6d6d6;
-    --accent: #4FC3F7;
-    --accent-2: #B2EBF2;
-    --ok: #7ED957;
-    --bad: #FF8A80;
+    --bmd-page-bg: #ffffff;
+    --bmd-surface: #ffffff;
+    --bmd-surface-secondary: #f7f9fc;
+    --bmd-surface-tertiary: #f0f0f0;
+    --bmd-text: #000000;
+    --bmd-text-muted: #6e6e6e;
+    --bmd-text-soft: #2f3337;
+    --bmd-border: #cbdce9;
+    --bmd-border-strong: #b0bdc8;
+    --bmd-accent: #1a126e;
+    --bmd-accent-hover: #1a6aff;
+    --bmd-accent-soft: #edf3ff;
+    --bmd-success: #39641d;
+    --bmd-warning: #ea6020;
+    --bmd-danger: #c94001;
+    --bmd-code-bg: #f7f9fc;
+    --bmd-code-text: #101418;
+    --bmd-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    --bmd-plot-grid: #e3eaf0;
+    --bmd-plot-trace-primary: #1a6aff;
+    --bmd-plot-trace-secondary: #c94001;
+    --bmd-plot-trace-tertiary: #1a126e;
+    --bmd-plot-trace-quaternary: #618741;
 }
 
 body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: Arial, sans-serif;
+    background: var(--bmd-page-bg);
+    color: var(--bmd-text);
+    font-family: madefor-text, Helvetica Neue, Arial, sans-serif;
     margin: 0;
 }
 
@@ -36,7 +48,7 @@ body {
 
 .header {
     align-items: baseline;
-    border-bottom: 1px solid var(--line);
+    border-bottom: 1px solid var(--bmd-border);
     display: flex;
     justify-content: space-between;
     margin-bottom: 22px;
@@ -51,25 +63,26 @@ h1 {
 }
 
 h2 {
-    color: var(--text);
+    color: var(--bmd-text);
     font-size: 20px;
     letter-spacing: 0;
     margin: 0;
 }
 
 .subtitle {
-    color: var(--muted);
+    color: var(--bmd-text-muted);
     font-size: 14px;
 }
 
 .panel {
-    background: var(--panel);
-    border: 1px solid var(--line);
+    background: var(--bmd-surface);
+    border: 1px solid var(--bmd-border);
     border-radius: 8px;
+    box-shadow: var(--bmd-shadow);
 }
 
 .stage {
-    border-top: 1px solid var(--line);
+    border-top: 1px solid var(--bmd-border);
     padding: 26px 30px 30px;
 }
 
@@ -93,10 +106,10 @@ h2 {
 
 .stage-number {
     align-items: center;
-    background: #181818;
-    border: 1px solid var(--line-strong);
+    background: var(--bmd-accent-soft);
+    border: 1px solid var(--bmd-border-strong);
     border-radius: 50%;
-    color: var(--accent-2);
+    color: var(--bmd-accent);
     display: inline-flex;
     font-size: 13px;
     font-weight: 700;
@@ -106,7 +119,7 @@ h2 {
 }
 
 .stage-status {
-    color: var(--muted);
+    color: var(--bmd-text-muted);
     font-size: 13px;
     line-height: 1.5;
     margin-top: 3px;
@@ -114,14 +127,14 @@ h2 {
 }
 
 .summary-line {
-    color: var(--soft);
+    color: var(--bmd-text-soft);
     font-size: 14px;
     line-height: 1.5;
 }
 
 .metric-strip {
-    border-bottom: 1px solid var(--line);
-    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--bmd-border);
+    border-top: 1px solid var(--bmd-border);
     display: grid;
     gap: 0;
     grid-template-columns: repeat(5, 1fr);
@@ -129,7 +142,7 @@ h2 {
 }
 
 .metric {
-    border-left: 1px solid var(--line);
+    border-left: 1px solid var(--bmd-border);
     min-width: 0;
     padding: 14px 16px;
 }
@@ -139,13 +152,13 @@ h2 {
 }
 
 .metric-label {
-    color: var(--muted);
+    color: var(--bmd-text-muted);
     font-size: 12px;
     margin-bottom: 6px;
 }
 
 .metric-value {
-    color: var(--text);
+    color: var(--bmd-text);
     font-size: 17px;
     font-weight: 700;
     overflow-wrap: anywhere;
@@ -176,8 +189,8 @@ h2 {
 }
 
 .workflow-stage-card {
-    background: #181818;
-    border: 1px solid var(--line);
+    background: var(--bmd-surface-secondary);
+    border: 1px solid var(--bmd-border);
     border-radius: 8px;
     padding: 14px;
 }
@@ -192,7 +205,7 @@ h2 {
 
 .workflow-stage-heading {
     align-items: center;
-    color: var(--soft);
+    color: var(--bmd-text-soft);
     display: flex;
     font-size: 13px;
     font-weight: 700;
@@ -201,9 +214,10 @@ h2 {
 
 .workflow-stage-number {
     align-items: center;
-    border: 1px solid var(--line-strong);
+    background: var(--bmd-surface);
+    border: 1px solid var(--bmd-border-strong);
     border-radius: 50%;
-    color: var(--accent-2);
+    color: var(--bmd-accent);
     display: inline-flex;
     font-size: 12px;
     height: 24px;
@@ -222,19 +236,21 @@ h2 {
 }
 
 button.secondary-button {
-    background: #2a2a2a;
-    border: 1px solid var(--line-strong);
-    color: var(--soft);
+    background: var(--bmd-surface);
+    border: 1px solid var(--bmd-border-strong);
+    color: var(--bmd-text-soft);
     margin-top: 0;
     width: auto;
 }
 
 button.secondary-button:hover {
-    background: #333333;
+    background: var(--bmd-surface-secondary);
+    border-color: var(--bmd-accent-hover);
+    color: var(--bmd-accent);
 }
 
 label {
-    color: var(--soft);
+    color: var(--bmd-text-soft);
     display: block;
     font-size: 13px;
     font-weight: 700;
@@ -244,14 +260,22 @@ label {
 input,
 select,
 textarea {
-    background: #171717;
-    border: 1px solid var(--line-strong);
+    background: var(--bmd-surface);
+    border: 1px solid var(--bmd-border-strong);
     border-radius: 6px;
     box-sizing: border-box;
-    color: var(--text);
+    color: var(--bmd-text);
     font-size: 15px;
     padding: 11px;
     width: 100%;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+    border-color: var(--bmd-accent-hover);
+    outline: 2px solid var(--bmd-accent-soft);
+    outline-offset: 0;
 }
 
 textarea {
@@ -262,11 +286,11 @@ textarea {
 
 button,
 a.button {
-    background: var(--accent);
+    background: var(--bmd-accent);
     border: none;
     border-radius: 6px;
     box-sizing: border-box;
-    color: #081014;
+    color: #ffffff;
     cursor: pointer;
     display: inline-block;
     font-size: 15px;
@@ -280,12 +304,12 @@ a.button {
 
 button:hover,
 a.button:hover {
-    background: #81D4FA;
+    background: var(--bmd-accent-hover);
 }
 
 button:disabled {
-    background: #555555;
-    color: #bbbbbb;
+    background: var(--bmd-surface-tertiary);
+    color: var(--bmd-text-muted);
     cursor: not-allowed;
 }
 
@@ -305,14 +329,14 @@ button:disabled {
 }
 
 details.disclosure {
-    background: #1b1b1b;
-    border: 1px solid var(--line);
+    background: var(--bmd-surface);
+    border: 1px solid var(--bmd-border);
     border-radius: 8px;
     overflow: hidden;
 }
 
 details.disclosure > summary {
-    color: var(--soft);
+    color: var(--bmd-text-soft);
     cursor: pointer;
     font-size: 14px;
     font-weight: 700;
@@ -321,7 +345,7 @@ details.disclosure > summary {
 }
 
 details.disclosure[open] > summary {
-    border-bottom: 1px solid var(--line);
+    border-bottom: 1px solid var(--bmd-border);
 }
 
 table {
@@ -330,7 +354,7 @@ table {
 }
 
 td {
-    border-bottom: 1px solid var(--line);
+    border-bottom: 1px solid var(--bmd-border);
     padding: 11px 14px;
     vertical-align: top;
 }
@@ -340,7 +364,7 @@ tr:last-child td {
 }
 
 td:first-child {
-    color: var(--muted);
+    color: var(--bmd-text-muted);
     width: 210px;
 }
 
@@ -365,8 +389,8 @@ ul {
 }
 
 .input-tabs {
-    background: #1b1b1b;
-    border: 1px solid var(--line);
+    background: var(--bmd-surface);
+    border: 1px solid var(--bmd-border);
     border-radius: 8px;
     overflow: hidden;
 }
@@ -378,14 +402,14 @@ ul {
 }
 
 .tab-labels {
-    border-bottom: 1px solid var(--line);
+    border-bottom: 1px solid var(--bmd-border);
     display: flex;
     gap: 0;
 }
 
 .tab-labels label {
-    border-right: 1px solid var(--line);
-    color: var(--soft);
+    border-right: 1px solid var(--bmd-border);
+    color: var(--bmd-text-soft);
     cursor: pointer;
     font-size: 13px;
     font-weight: 700;
@@ -402,10 +426,10 @@ ul {
 }
 
 .input-copy-button {
-    background: #2a2a2a;
-    border: 1px solid var(--line-strong);
+    background: var(--bmd-surface);
+    border: 1px solid var(--bmd-border-strong);
     border-radius: 6px;
-    color: var(--soft);
+    color: var(--bmd-text-soft);
     font-size: 12px;
     margin: 0;
     padding: 7px 10px;
@@ -417,18 +441,18 @@ ul {
 }
 
 .input-copy-button:hover {
-    background: #333333;
-    color: var(--text);
+    background: var(--bmd-surface-secondary);
+    color: var(--bmd-text);
 }
 
 .input-copy-button.copied {
-    border-color: var(--ok);
-    color: var(--ok);
+    border-color: var(--bmd-success);
+    color: var(--bmd-success);
 }
 
 .input-copy-button.unsupported {
-    border-color: var(--bad);
-    color: var(--bad);
+    border-color: var(--bmd-danger);
+    color: var(--bmd-danger);
 }
 
 .workflow-visualization {
@@ -444,8 +468,8 @@ ul {
 #input-tab-kpoints:checked ~ .tab-labels label[for="input-tab-kpoints"],
 #input-tab-poscar:checked ~ .tab-labels label[for="input-tab-poscar"],
 #input-tab-slurm:checked ~ .tab-labels label[for="input-tab-slurm"] {
-    background: #242424;
-    color: var(--accent-2);
+    background: var(--bmd-accent-soft);
+    color: var(--bmd-accent);
 }
 
 #input-tab-incar:checked ~ .tab-panel-incar,
@@ -456,8 +480,8 @@ ul {
 }
 
 .input-preview {
-    background: #121212;
-    color: var(--text);
+    background: var(--bmd-code-bg);
+    color: var(--bmd-code-text);
     font-family: Consolas, monospace;
     font-size: 13px;
     line-height: 1.45;
@@ -468,9 +492,9 @@ ul {
 }
 
 .pill {
-    border: 1px solid var(--line-strong);
+    border: 1px solid var(--bmd-border-strong);
     border-radius: 999px;
-    color: var(--soft);
+    color: var(--bmd-text-soft);
     display: inline-block;
     font-size: 12px;
     font-weight: 700;
@@ -479,13 +503,13 @@ ul {
 }
 
 .pill.ready {
-    border-color: rgba(126, 217, 87, 0.75);
-    color: var(--ok);
+    border-color: var(--bmd-success);
+    color: var(--bmd-success);
 }
 
 .pill.failed {
-    border-color: rgba(255, 138, 128, 0.75);
-    color: var(--bad);
+    border-color: var(--bmd-danger);
+    color: var(--bmd-danger);
 }
 
 .calculation-layout {
@@ -503,14 +527,14 @@ ul {
 }
 
 .configuration-panel {
-    background: #1b1b1b;
-    border: 1px solid var(--line);
+    background: var(--bmd-surface);
+    border: 1px solid var(--bmd-border);
     border-radius: 8px;
     padding: 16px;
 }
 
 .configuration-panel h3 {
-    color: var(--text);
+    color: var(--bmd-text);
     font-size: 16px;
     letter-spacing: 0;
     margin: 0 0 14px;
@@ -560,7 +584,7 @@ ul {
 
 .modifier-option {
     align-items: center;
-    color: var(--soft);
+    color: var(--bmd-text-soft);
     display: flex;
     font-size: 14px;
     gap: 10px;
@@ -570,7 +594,7 @@ ul {
 }
 
 .modifier-option.unavailable {
-    color: var(--muted);
+    color: var(--bmd-text-muted);
     cursor: not-allowed;
 }
 
@@ -586,20 +610,20 @@ ul {
 }
 
 .callout {
-    background: #1b1b1b;
-    border: 1px solid var(--line);
+    background: var(--bmd-surface-secondary);
+    border: 1px solid var(--bmd-border);
     border-radius: 8px;
     padding: 14px;
 }
 
 .callout-title {
-    color: var(--muted);
+    color: var(--bmd-text-muted);
     font-size: 12px;
     margin-bottom: 8px;
 }
 
 .callout-value {
-    color: var(--text);
+    color: var(--bmd-text);
     font-size: 16px;
     font-weight: 700;
     overflow-wrap: anywhere;
@@ -625,23 +649,23 @@ ul {
 }
 
 .prep-panel {
-    background: #1b1b1b;
-    border: 1px solid var(--line);
+    background: var(--bmd-surface);
+    border: 1px solid var(--bmd-border);
     border-radius: 8px;
     margin-top: 18px;
     padding: 16px;
 }
 
 .prep-panel.success {
-    border-color: rgba(126, 217, 87, 0.55);
+    border-color: var(--bmd-success);
 }
 
 .prep-panel.failed {
-    border-color: rgba(255, 138, 128, 0.65);
+    border-color: var(--bmd-danger);
 }
 
 .prep-title {
-    color: var(--text);
+    color: var(--bmd-text);
     font-size: 16px;
     font-weight: 700;
     margin-bottom: 12px;
@@ -656,16 +680,16 @@ ul {
 
 .prep-list li {
     align-items: center;
-    color: var(--soft);
+    color: var(--bmd-text-soft);
     display: flex;
     gap: 10px;
 }
 
 .step-mark {
     align-items: center;
-    border: 1px solid var(--line-strong);
+    border: 1px solid var(--bmd-border-strong);
     border-radius: 50%;
-    color: var(--muted);
+    color: var(--bmd-text-muted);
     display: inline-flex;
     flex: 0 0 auto;
     font-size: 12px;
@@ -676,13 +700,13 @@ ul {
 }
 
 .complete .step-mark {
-    border-color: rgba(126, 217, 87, 0.75);
-    color: var(--ok);
+    border-color: var(--bmd-success);
+    color: var(--bmd-success);
 }
 
 .failed .step-mark {
-    border-color: rgba(255, 138, 128, 0.75);
-    color: var(--bad);
+    border-color: var(--bmd-danger);
+    color: var(--bmd-danger);
 }
 
 .failure-table {
@@ -691,7 +715,7 @@ ul {
 
 .entry-divider {
     align-items: center;
-    color: var(--muted);
+    color: var(--bmd-text-muted);
     display: flex;
     font-size: 12px;
     font-weight: 700;
@@ -701,22 +725,22 @@ ul {
 
 .entry-divider::before,
 .entry-divider::after {
-    background: var(--line);
+    background: var(--bmd-border);
     content: "";
     flex: 1;
     height: 1px;
 }
 
 .entry-label {
-    color: var(--muted);
+    color: var(--bmd-text-muted);
     font-size: 13px;
     font-weight: 700;
     margin-bottom: 4px;
 }
 
 .structure-viewer {
-    background: #f7f7f7;
-    border: 1px solid var(--line);
+    background: var(--bmd-surface-secondary);
+    border: 1px solid var(--bmd-border);
     border-radius: 8px;
     height: 460px;
     margin-top: 18px;
@@ -726,8 +750,8 @@ ul {
 }
 
 .result-plot {
-    background: #121212;
-    border: 1px solid var(--line);
+    background: var(--bmd-surface);
+    border: 1px solid var(--bmd-border);
     border-radius: 8px;
     height: 420px;
     margin-top: 14px;
@@ -738,13 +762,13 @@ ul {
 }
 
 .viewer-message {
-    color: #333333;
+    color: var(--bmd-text-soft);
     font-size: 14px;
     padding: 18px;
 }
 
 .plot-message {
-    color: var(--soft);
+    color: var(--bmd-text-soft);
     font-size: 14px;
     padding: 18px;
 }
@@ -790,7 +814,7 @@ ul {
     .metric,
     .metric:first-child {
         border-left: none;
-        border-top: 1px solid var(--line);
+        border-top: 1px solid var(--bmd-border);
     }
 
     .metric:first-child {
@@ -2439,6 +2463,30 @@ document.addEventListener("DOMContentLoaded", function () {
         link.remove();
     }
 
+    function bmdThemeColor(name, fallback) {
+        var value = window.getComputedStyle(document.documentElement)
+            .getPropertyValue(name)
+            .trim();
+        return value || fallback;
+    }
+
+    function workflowPlotTheme() {
+        return {
+            surface: bmdThemeColor("--bmd-surface", "#ffffff"),
+            text: bmdThemeColor("--bmd-text", "#000000"),
+            border: bmdThemeColor("--bmd-border", "#cbdce9"),
+            borderStrong: bmdThemeColor("--bmd-border-strong", "#b0bdc8"),
+            accent: bmdThemeColor("--bmd-accent", "#1a126e"),
+            grid: bmdThemeColor("--bmd-plot-grid", "#e3eaf0"),
+            traces: [
+                bmdThemeColor("--bmd-plot-trace-primary", "#1a6aff"),
+                bmdThemeColor("--bmd-plot-trace-secondary", "#c94001"),
+                bmdThemeColor("--bmd-plot-trace-tertiary", "#1a126e"),
+                bmdThemeColor("--bmd-plot-trace-quaternary", "#618741")
+            ]
+        };
+    }
+
     function markPlotDownloadUnavailable(button, label) {
         if (!button) {
             return;
@@ -2592,7 +2640,8 @@ document.addEventListener("DOMContentLoaded", function () {
 
         var plot = visualization.plot || {};
         var xValues = plot.x || [];
-        var colors = ["#4FC3F7", "#FF8A80", "#B2EBF2", "#7ED957"];
+        var plotTheme = workflowPlotTheme();
+        var colors = plotTheme.traces;
         var traces = (plot.traces || []).map(function (trace, index) {
             var name = trace.name || ("Trace " + (index + 1));
             var xUnit = plot.x_hover_unit || "";
@@ -2633,7 +2682,7 @@ document.addEventListener("DOMContentLoaded", function () {
                     xref: "paper",
                     yref: "y",
                     line: {
-                        color: "#B2EBF2",
+                        color: plotTheme.accent,
                         dash: "dot",
                         width: 1
                     }
@@ -2648,7 +2697,7 @@ document.addEventListener("DOMContentLoaded", function () {
                     xref: "x",
                     yref: "paper",
                     line: {
-                        color: "#B2EBF2",
+                        color: plotTheme.accent,
                         dash: "dot",
                         width: 1
                     }
@@ -2665,7 +2714,7 @@ document.addEventListener("DOMContentLoaded", function () {
                 xref: "x",
                 yref: "paper",
                 line: {
-                    color: "#3a3a3a",
+                    color: plotTheme.border,
                     width: 1
                 }
             });
@@ -2677,10 +2726,10 @@ document.addEventListener("DOMContentLoaded", function () {
         ) ? plot.yaxis_range : undefined;
         var layout = {
             autosize: true,
-            paper_bgcolor: "#1b1b1b",
-            plot_bgcolor: "#121212",
+            paper_bgcolor: plotTheme.surface,
+            plot_bgcolor: plotTheme.surface,
             font: {
-                color: "#f2f2f2",
+                color: plotTheme.text,
                 family: "Arial, sans-serif"
             },
             margin: {
@@ -2691,19 +2740,22 @@ document.addEventListener("DOMContentLoaded", function () {
             },
             xaxis: {
                 title: plot.xaxis_title || "Energy (eV)",
-                gridcolor: "#333333",
-                zerolinecolor: "#555555",
+                linecolor: plotTheme.borderStrong,
+                gridcolor: plotTheme.grid,
+                zerolinecolor: plotTheme.borderStrong,
                 tickmode: hasTicks ? "array" : "auto",
                 tickvals: hasTicks ? plot.tickvals : undefined,
                 ticktext: hasTicks ? plot.ticktext : undefined
             },
             yaxis: {
                 title: plot.yaxis_title || "Value",
-                gridcolor: "#333333",
-                zerolinecolor: "#555555",
+                linecolor: plotTheme.borderStrong,
+                gridcolor: plotTheme.grid,
+                zerolinecolor: plotTheme.borderStrong,
                 range: yaxisRange
             },
             legend: {
+                bgcolor: plotTheme.surface,
                 orientation: "h",
                 x: 0,
                 y: 1.12

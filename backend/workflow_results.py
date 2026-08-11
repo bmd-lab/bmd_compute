@@ -306,7 +306,7 @@ def _band_structure_result_payload(
                     "name": spin_label,
                     "legendgroup": spin_label,
                     "showlegend": spin_polarized and band_index == 1,
-                    "color": "#FF8A80" if spin_down else "#4FC3F7",
+                    "color": "#c94001" if spin_down else "#1a6aff",
                     "dash": "dash" if spin_down else "solid",
                     "y": y_values,
                 }
