@@ -7,6 +7,9 @@ from backend.calculations.models import CalculationSpec, Purpose, StageType, Wor
 from backend.calculations.registry import workflow_spec_from_calculation_spec
 
 
+BAND_STRUCTURE_INITIAL_YAXIS_RANGE = [-10, 10]
+
+
 @dataclass(frozen=True)
 class WorkflowResultPayload:
     summaries: dict[str, dict]
@@ -324,6 +327,7 @@ def _band_structure_result_payload(
             "traces": traces,
             "xaxis_title": "K-point path",
             "yaxis_title": "Energy - E_F (eV)" if efermi is not None else "Energy (eV)",
+            "yaxis_range": BAND_STRUCTURE_INITIAL_YAXIS_RANGE,
             "x_hover_unit": "",
             "y_hover_unit": " eV",
             "tickvals": ticks["tickvals"],

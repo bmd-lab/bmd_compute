@@ -2,7 +2,14 @@ from __future__ import annotations
 
 import json
 
-from backend.calculations.models import CalculationSpec, Purpose, Theory
+from backend.calculations.models import (
+    CalculationSpec,
+    Purpose,
+    StageSpec,
+    StageType,
+    Theory,
+    WorkflowSpec,
+)
 from backend.workflow_results import (
     render_workflow_results,
     workflow_result_file_keys,
@@ -111,8 +118,48 @@ class FakeNonSpinBandVasprun:
         return FakeNonSpinBandStructure()
 
 
+class FakeWideBandStructure:
+    efermi = 0.0
+    distance = [0.0, 1.0, 2.0]
+    kpoints = [
+        FakeKpoint("\\Gamma"),
+        FakeKpoint("X"),
+        FakeKpoint("L"),
+    ]
+    bands = {
+        FakeSpin("up", 1): [
+            [-12.0, 0.0, 12.0],
+            [-4.0, 2.0, 31.0],
+        ],
+    }
+
+    def get_band_gap(self):
+        return {
+            "energy": 1.0,
+            "direct": True,
+        }
+
+    def is_metal(self):
+        return False
+
+
+class FakeWideBandVasprun:
+    efermi = 0.0
+
+    def get_band_structure(self, **kwargs):
+        return FakeWideBandStructure()
+
+
 dos_spec = CalculationSpec(Purpose.DOS, Theory.PBE)
 band_spec = CalculationSpec(Purpose.BAND_STRUCTURE, Theory.PBE)
+hse_band_workflow = WorkflowSpec(
+    [
+        StageSpec(StageType.RELAX, Theory.PBE),
+        StageSpec(StageType.STATIC, Theory.HSE06),
+        StageSpec(StageType.BAND_STRUCTURE, Theory.HSE06),
+    ],
+    recipe="custom",
+)
 static_spec = CalculationSpec(Purpose.STATIC, Theory.PBE)
 relax_static_spec = CalculationSpec(Purpose.RELAX_STATIC, Theory.HSE06)
 
@@ -153,6 +200,7 @@ assert visualization["title"] == "Density of States"
 assert visualization["download_filename"] == "density_of_states.png"
 assert visualization["plot"]["source"] == "vasprun.xml"
 assert visualization["plot"]["xaxis_title"] == "Energy - E_F (eV)"
+assert "yaxis_range" not in visualization["plot"]
 assert visualization["plot"]["x"] == [-1.5, -0.5, 0.5, 1.5]
 assert visualization["plot"]["reference_axis"] == "x"
 assert visualization["plot"]["traces"][0]["name"] == "Spin up"
@@ -194,6 +242,7 @@ assert band_visualization["download_filename"] == "band_structure.png"
 assert band_visualization["plot"]["source"] == "vasprun.xml"
 assert band_visualization["plot"]["xaxis_title"] == "K-point path"
 assert band_visualization["plot"]["yaxis_title"] == "Energy - E_F (eV)"
+assert band_visualization["plot"]["yaxis_range"] == [-10, 10]
 assert band_visualization["plot"]["reference_axis"] == "y"
 assert band_visualization["plot"]["x"] == [0.0, 1.25, 2.5]
 assert band_visualization["plot"]["tickvals"] == [0.0, 1.25, 2.5]
@@ -225,6 +274,32 @@ assert non_spin_plot["traces"][1]["name"] == "Bands"
 assert non_spin_plot["traces"][1]["showlegend"] is False
 assert all(trace["name"] != "Spin up" for trace in non_spin_plot["traces"])
 json.dumps(non_spin_band_payload.visualizations)
+
+wide_band_payload = render_workflow_results(
+    band_spec,
+    vasprun=FakeWideBandVasprun(),
+    files={"kpoints": {"path": "/remote/run/stage_03/KPOINTS"}},
+)
+wide_band_plot = wide_band_payload.visualizations[0]["plot"]
+assert wide_band_plot["yaxis_range"] == [-10, 10]
+assert wide_band_plot["traces"][0]["y"] == [-12.0, 0.0, 12.0]
+assert wide_band_plot["traces"][1]["y"] == [-4.0, 2.0, 31.0]
+assert any(
+    value > 10.0 or value < -10.0
+    for trace in wide_band_plot["traces"]
+    for value in trace["y"]
+)
+
+hse_wide_band_payload = render_workflow_results(
+    hse_band_workflow,
+    vasprun=FakeWideBandVasprun(),
+    files={"kpoints": {"path": "/remote/run/stage_03/KPOINTS"}},
+)
+assert hse_wide_band_payload.visualizations[0]["plot"]["yaxis_range"] == [-10, 10]
+assert (
+    hse_wide_band_payload.visualizations[0]["plot"]["traces"]
+    == wide_band_plot["traces"]
+)
 
 static_payload = render_workflow_results(
     static_spec,

@@ -679,6 +679,7 @@ def test_parse_vasp_result_files_uses_vasprun_band_structure_for_band_workflow()
     assert result["visualizations"][0]["id"] == "band_structure"
     assert result["visualizations"][0]["download_filename"] == "band_structure.png"
     assert result["visualizations"][0]["plot"]["x"] == [0.0, 1.0, 2.0]
+    assert result["visualizations"][0]["plot"]["yaxis_range"] == [-10, 10]
     assert result["visualizations"][0]["plot"]["ticktext"] == ["Γ", "X"]
     assert result["visualizations"][0]["plot"]["traces"][0]["name"] == "Bands"
     assert result["visualizations"][0]["plot"]["traces"][0]["showlegend"] is False

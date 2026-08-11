@@ -2453,6 +2453,101 @@ document.addEventListener("DOMContentLoaded", function () {
         }, 1600);
     }
 
+    var EXPORT_IMAGE_OPTIONS = {
+        format: "png",
+        width: 1600,
+        height: 1000,
+        scale: 2
+    };
+    var EXPORT_TYPOGRAPHY = {
+        axisTitle: 28,
+        tick: 22,
+        legend: 22
+    };
+    var EXPORT_MARGINS = {
+        l: 110,
+        r: 44,
+        t: 52,
+        b: 110
+    };
+
+    function clonePlotlyObject(value) {
+        return JSON.parse(JSON.stringify(value || {}));
+    }
+
+    function applyAxisTitleFont(axis, size) {
+        if (!axis.title) {
+            axis.title = {};
+        }
+        if (typeof axis.title === "string") {
+            axis.title = {
+                text: axis.title
+            };
+        }
+        axis.title.font = axis.title.font || {};
+        axis.title.font.size = size;
+    }
+
+    function exportLayoutWithReadableTypography(layout) {
+        var exportLayout = clonePlotlyObject(layout);
+        exportLayout.margin = Object.assign({}, exportLayout.margin || {}, EXPORT_MARGINS);
+        exportLayout.xaxis = exportLayout.xaxis || {};
+        exportLayout.yaxis = exportLayout.yaxis || {};
+        applyAxisTitleFont(exportLayout.xaxis, EXPORT_TYPOGRAPHY.axisTitle);
+        applyAxisTitleFont(exportLayout.yaxis, EXPORT_TYPOGRAPHY.axisTitle);
+        exportLayout.xaxis.tickfont = exportLayout.xaxis.tickfont || {};
+        exportLayout.xaxis.tickfont.size = EXPORT_TYPOGRAPHY.tick;
+        exportLayout.yaxis.tickfont = exportLayout.yaxis.tickfont || {};
+        exportLayout.yaxis.tickfont.size = EXPORT_TYPOGRAPHY.tick;
+        exportLayout.legend = exportLayout.legend || {};
+        exportLayout.legend.font = exportLayout.legend.font || {};
+        exportLayout.legend.font.size = EXPORT_TYPOGRAPHY.legend;
+        return exportLayout;
+    }
+
+    function removeExportTarget(exportTarget) {
+        if (window.Plotly && typeof window.Plotly.purge === "function") {
+            window.Plotly.purge(exportTarget);
+        }
+        if (typeof exportTarget.remove === "function") {
+            exportTarget.remove();
+        } else if (exportTarget.parentNode) {
+            exportTarget.parentNode.removeChild(exportTarget);
+        }
+    }
+
+    function plotImageWithExportTypography(target) {
+        var exportTarget = document.createElement("div");
+        exportTarget.style.position = "fixed";
+        exportTarget.style.left = "-10000px";
+        exportTarget.style.top = "-10000px";
+        exportTarget.style.width = EXPORT_IMAGE_OPTIONS.width + "px";
+        exportTarget.style.height = EXPORT_IMAGE_OPTIONS.height + "px";
+        exportTarget.style.pointerEvents = "none";
+        exportTarget.style.opacity = "0";
+        document.body.appendChild(exportTarget);
+
+        var data = clonePlotlyObject(target.data || []);
+        var layout = exportLayoutWithReadableTypography(target.layout || {});
+        var config = {
+            displaylogo: false,
+            responsive: false
+        };
+
+        return window.Plotly.newPlot(exportTarget, data, layout, config)
+            .then(function () {
+                return window.Plotly.toImage(exportTarget, EXPORT_IMAGE_OPTIONS);
+            })
+            .then(function (dataUrl) {
+                removeExportTarget(exportTarget);
+                return dataUrl;
+            })
+            .catch(function (err) {
+                removeExportTarget(exportTarget);
+                throw err;
+            });
+    }
+
     function bindPlotDownload(visualization, target) {
         var button = findPlotDownloadButton(visualization.element_id);
         if (!button || button.dataset.downloadBound === "true") {
@@ -2474,12 +2569,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
             button.disabled = true;
             button.textContent = "Preparing...";
-            window.Plotly.toImage(target, {
-                format: "png",
-                width: 1600,
-                height: 1000,
-                scale: 2
-            }).then(function (dataUrl) {
+            plotImageWithExportTypography(target).then(function (dataUrl) {
                 downloadDataUrl(dataUrl, filename);
                 button.textContent = originalText;
                 button.disabled = false;
@@ -2582,6 +2672,9 @@ document.addEventListener("DOMContentLoaded", function () {
         });
 
         var hasTicks = Array.isArray(plot.tickvals) && plot.tickvals.length;
+        var yaxisRange = (
+            Array.isArray(plot.yaxis_range) && plot.yaxis_range.length === 2
+        ) ? plot.yaxis_range : undefined;
         var layout = {
             autosize: true,
             paper_bgcolor: "#1b1b1b",
@@ -2607,7 +2700,8 @@ document.addEventListener("DOMContentLoaded", function () {
             yaxis: {
                 title: plot.yaxis_title || "Value",
                 gridcolor: "#333333",
-                zerolinecolor: "#555555"
+                zerolinecolor: "#555555",
+                range: yaxisRange
             },
             legend: {
                 orientation: "h",
