@@ -1,3 +1,5 @@
+import json
+
 from backend.calculations.models import CalculationSpec, Modifier, Purpose, Theory
 from backend.calculations.resources import ALLOWED_MEMORY_GB, ExecutionResources
 from backend.calculations.registry import CalculationValidationError
@@ -22,6 +24,26 @@ direct
 """
 
 structure = parse_structure(poscar)
+
+
+def workflow_spec_json(stage_type, *, theory="pbe", modifiers=None, recipe=None):
+    return json.dumps(
+        {
+            "stages": [
+                {
+                    "stage_type": stage_type,
+                    "theory": theory,
+                    "modifiers": list(modifiers or []),
+                    "label": None,
+                    "options": {},
+                }
+            ],
+            "label": None,
+            "recipe": recipe,
+        },
+        sort_keys=True,
+    )
+
 
 static_preview = preview_generated_inputs(
     structure,
@@ -156,7 +178,7 @@ assert "\r" not in generated_inputs["slurm_script"]
 assert generated_inputs["slurm_script"].startswith("#!/bin/bash\n\n")
 assert f"#SBATCH -p {DEFAULT_PARTITION}" in generated_inputs["slurm_script"]
 assert f"#SBATCH --account={DEFAULT_ACCOUNT}" in generated_inputs["slurm_script"]
-assert "#SBATCH -J Si-static" in generated_inputs["slurm_script"]
+assert "#SBATCH -J vasp_run_static" in generated_inputs["slurm_script"]
 assert f"#SBATCH --nodes={DEFAULT_RESOURCES['nodes']}" in generated_inputs["slurm_script"]
 assert f"#SBATCH --ntasks={DEFAULT_RESOURCES['ntasks']}" in generated_inputs["slurm_script"]
 assert f"#SBATCH --mem={DEFAULT_RESOURCES['mem_gb']}G" in generated_inputs["slurm_script"]
@@ -202,6 +224,7 @@ response = build_workflow(
     memory_gb=None,
     walltime=None,
     queue=None,
+    workflow_spec_json=workflow_spec_json("static"),
     workflow=None,
     method=None,
 )
@@ -231,6 +254,7 @@ resource_response = build_workflow(
     memory_gb="256",
     walltime="12:00:00",
     queue="debug",
+    workflow_spec_json=workflow_spec_json("static"),
     workflow=None,
     method=None,
 )
@@ -254,7 +278,7 @@ assert resource_response.context["generated_inputs"]["slurm_script"] == build_sl
 )
 assert "#SBATCH -p debug" in resource_response.context["generated_inputs"]["slurm_script"]
 assert f"#SBATCH --account={DEFAULT_ACCOUNT}" in resource_response.context["generated_inputs"]["slurm_script"]
-assert "#SBATCH -J Si-static" in resource_response.context["generated_inputs"]["slurm_script"]
+assert "#SBATCH -J vasp_run_static" in resource_response.context["generated_inputs"]["slurm_script"]
 assert "#SBATCH --nodes=1" in resource_response.context["generated_inputs"]["slurm_script"]
 assert "#SBATCH --ntasks=48" in resource_response.context["generated_inputs"]["slurm_script"]
 assert "#SBATCH --mem=256G" in resource_response.context["generated_inputs"]["slurm_script"]
@@ -271,6 +295,7 @@ invalid_memory_response = build_workflow(
     memory_gb="100",
     walltime="12:00:00",
     queue="debug",
+    workflow_spec_json=workflow_spec_json("static"),
     workflow=None,
     method=None,
 )
@@ -284,6 +309,11 @@ spin_response = build_workflow(
     purpose="static",
     theory="pbe",
     modifiers=["spin_polarized"],
+    cpus=None,
+    memory_gb=None,
+    walltime=None,
+    queue=None,
+    workflow_spec_json=workflow_spec_json("static", modifiers=["spin_polarized"]),
     workflow=None,
     method=None,
 )
@@ -298,6 +328,11 @@ soc_response = build_workflow(
     purpose="static",
     theory="pbe",
     modifiers=["soc"],
+    cpus=None,
+    memory_gb=None,
+    walltime=None,
+    queue=None,
+    workflow_spec_json=workflow_spec_json("static", modifiers=["soc"]),
     workflow=None,
     method=None,
 )
@@ -311,6 +346,11 @@ gamma_response = build_workflow(
     purpose="static",
     theory="pbe",
     modifiers=["gamma_only"],
+    cpus=None,
+    memory_gb=None,
+    walltime=None,
+    queue=None,
+    workflow_spec_json=workflow_spec_json("static", modifiers=["gamma_only"]),
     workflow=None,
     method=None,
 )
@@ -327,6 +367,11 @@ dft_u_error_response = build_workflow(
     purpose="static",
     theory="pbe",
     modifiers=["dft_u"],
+    cpus=None,
+    memory_gb=None,
+    walltime=None,
+    queue=None,
+    workflow_spec_json=workflow_spec_json("static", modifiers=["dft_u"]),
     workflow=None,
     method=None,
 )
@@ -340,6 +385,11 @@ relax_response = build_workflow(
     purpose="relax",
     theory="pbe",
     modifiers=None,
+    cpus=None,
+    memory_gb=None,
+    walltime=None,
+    queue=None,
+    workflow_spec_json=workflow_spec_json("relax"),
     workflow=None,
     method=None,
 )
@@ -401,3 +451,7 @@ assert "requestSubmit" not in template_source
 assert "data-current-calculation-action" in template_source
 
 print("generated inputs smoke test passed")
+
+
+def test_generated_inputs_smoke_module_loaded():
+    assert response.status_code == 200
