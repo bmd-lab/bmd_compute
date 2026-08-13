@@ -11,6 +11,7 @@ from backend.config import (
 )
 from backend.monitoring import MonitoringStageError
 from backend.paramiko_remote import (
+    DEFAULT_MONITOR_COMMAND_TIMEOUT_S,
     JobRecord,
     ParamikoRemoteRunner,
     _identity_files_from_ssh_config,
@@ -502,7 +503,10 @@ assert running_status.job_name == "TiO2-static"
 assert len(running_query_runner.commands) == 2
 assert all("/usr/bin/sacct" not in command for command in running_query_runner.commands)
 assert all("timeout 2s" not in command for command in running_query_runner.commands)
-assert running_query_runner.timeout_values == [None, None]
+assert running_query_runner.timeout_values == [
+    DEFAULT_MONITOR_COMMAND_TIMEOUT_S,
+    DEFAULT_MONITOR_COMMAND_TIMEOUT_S,
+]
 
 completed_query_runner = QueryRunner(
     {
@@ -523,7 +527,12 @@ assert "TiO2-static" in completed_status.raw["brief"]
 assert len(completed_query_runner.commands) == 4
 assert any("/usr/bin/sacct" in command for command in completed_query_runner.commands)
 assert all("timeout 2s" not in command for command in completed_query_runner.commands)
-assert completed_query_runner.timeout_values == [None, None, None, None]
+assert completed_query_runner.timeout_values == [
+    DEFAULT_MONITOR_COMMAND_TIMEOUT_S,
+    DEFAULT_MONITOR_COMMAND_TIMEOUT_S,
+    DEFAULT_MONITOR_COMMAND_TIMEOUT_S,
+    DEFAULT_MONITOR_COMMAND_TIMEOUT_S,
+]
 
 completed_after_scontrol_miss_runner = QueryRunner(
     {

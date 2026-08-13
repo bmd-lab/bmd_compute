@@ -36,6 +36,11 @@ from backend.submission import parse_sbatch_job_id, remote_preparation_file_grou
 
 LOGGER = logging.getLogger(__name__)
 
+DEFAULT_CONNECT_TIMEOUT_S = 20
+DEFAULT_REMOTE_COMMAND_TIMEOUT_S = 60
+DEFAULT_MONITOR_COMMAND_TIMEOUT_S = 30
+DEFAULT_SFTP_TIMEOUT_S = 120
+
 
 def _paramiko_connect_kwargs(profile: RemoteConnectionProfile, paramiko_module) -> dict:
     kwargs, _diagnostics = _paramiko_connect_details(profile, paramiko_module)
@@ -104,7 +109,10 @@ def _paramiko_connect_details_from_ssh_options(
         "key_filename": key_filename,
         "allow_agent": True,
         "look_for_keys": True,
-        "timeout": 20,
+        "timeout": DEFAULT_CONNECT_TIMEOUT_S,
+        "banner_timeout": DEFAULT_CONNECT_TIMEOUT_S,
+        "auth_timeout": DEFAULT_CONNECT_TIMEOUT_S,
+        "channel_timeout": DEFAULT_REMOTE_COMMAND_TIMEOUT_S,
     }
 
     if proxy_command and str(proxy_command).lower() != "none":
@@ -363,6 +371,37 @@ def _key_file_exists(key_filename) -> bool | list[dict[str, bool]]:
     ]
 
 
+def _close_quietly(resource) -> None:
+    close = getattr(resource, "close", None)
+    if callable(close):
+        try:
+            close()
+        except Exception:
+            pass
+
+
+def _set_timeout_quietly(resource, timeout_s: float | None) -> None:
+    if timeout_s is None:
+        return
+
+    settimeout = getattr(resource, "settimeout", None)
+    if callable(settimeout):
+        try:
+            settimeout(timeout_s)
+        except Exception:
+            pass
+
+
+def _sftp_channel(sftp):
+    get_channel = getattr(sftp, "get_channel", None)
+    if callable(get_channel):
+        try:
+            return get_channel()
+        except Exception:
+            return None
+    return None
+
+
 class ParamikoRemoteRunner(RemoteRunner):
     """
     Paramiko-backed implementation of the notebook's remote submission path.
@@ -377,6 +416,7 @@ class ParamikoRemoteRunner(RemoteRunner):
     def connect(self, profile: RemoteConnectionProfile) -> None:
         import paramiko
 
+        self.close()
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         connect_kwargs, diagnostics = _paramiko_connect_details(profile, paramiko)
@@ -384,7 +424,8 @@ class ParamikoRemoteRunner(RemoteRunner):
         try:
             client.connect(**connect_kwargs)
         except Exception as exc:
-            client.close()
+            _close_quietly(client)
+            _close_quietly(connect_kwargs.get("sock"))
             setattr(exc, "ssh_diagnostics", diagnostics)
             if hasattr(exc, "add_note"):
                 exc.add_note("SSH diagnostics: " + _format_ssh_diagnostics(diagnostics))
@@ -395,13 +436,16 @@ class ParamikoRemoteRunner(RemoteRunner):
             )
             raise
 
-        transport = client.get_transport()
-        if not transport or not transport.is_active():
-            client.close()
-            raise RuntimeError("SSH transport failed to start.")
+        try:
+            transport = client.get_transport()
+            if not transport or not transport.is_active():
+                raise RuntimeError("SSH transport failed to start.")
 
-        if profile.keepalive_s:
-            transport.set_keepalive(profile.keepalive_s)
+            if profile.keepalive_s:
+                transport.set_keepalive(profile.keepalive_s)
+        except Exception:
+            _close_quietly(client)
+            raise
 
         self.client = client
 
@@ -414,9 +458,15 @@ class ParamikoRemoteRunner(RemoteRunner):
             raise RuntimeError("SSH transport is not active.")
 
     def close(self) -> None:
-        if self.client is not None:
-            self.client.close()
+        client = self.client
         self.client = None
+        _close_quietly(client)
+
+    def _open_sftp(self):
+        self.ensure_available()
+        sftp = self.client.open_sftp()
+        _set_timeout_quietly(_sftp_channel(sftp), DEFAULT_SFTP_TIMEOUT_S)
+        return sftp
 
     def run(
         self,
@@ -446,27 +496,43 @@ class ParamikoRemoteRunner(RemoteRunner):
         parts.append(command)
         full_command = "\n".join(parts)
         started = time.time()
-        stdin, stdout, stderr = self.client.exec_command(
-            full_command,
-            get_pty=False,
-            timeout=timeout_s,
+        effective_timeout_s = (
+            DEFAULT_REMOTE_COMMAND_TIMEOUT_S
+            if timeout_s is None
+            else timeout_s
         )
-        del stdin
-        out = stdout.read().decode("utf-8", "ignore")
-        err = stderr.read().decode("utf-8", "ignore")
-        returncode = stdout.channel.recv_exit_status()
-        result = RemoteCommandResult(
-            command=full_command,
-            returncode=returncode,
-            stdout=out,
-            stderr=err,
-            elapsed_s=time.time() - started,
-        )
+        stdin = stdout = stderr = None
+        channel = None
+        try:
+            stdin, stdout, stderr = self.client.exec_command(
+                full_command,
+                get_pty=False,
+                timeout=effective_timeout_s,
+            )
+            _close_quietly(stdin)
+            channel = getattr(stdout, "channel", None)
+            out = stdout.read().decode("utf-8", "ignore")
+            err = stderr.read().decode("utf-8", "ignore")
+            returncode = channel.recv_exit_status() if channel is not None else 0
+            result = RemoteCommandResult(
+                command=full_command,
+                returncode=returncode,
+                stdout=out,
+                stderr=err,
+                elapsed_s=time.time() - started,
+            )
 
-        if check:
-            result.raise_for_status()
+            if check:
+                result.raise_for_status()
 
-        return result
+            return result
+        finally:
+            if channel is None and stdout is not None:
+                channel = getattr(stdout, "channel", None)
+            _close_quietly(stderr)
+            _close_quietly(stdout)
+            _close_quietly(stdin)
+            _close_quietly(channel)
 
     def stream(
         self,
@@ -558,13 +624,13 @@ class ParamikoRemoteRunner(RemoteRunner):
         if parent:
             self.ensure_directory(parent)
 
-        sftp = self.client.open_sftp()
+        sftp = self._open_sftp()
         try:
             with sftp.file(remote_path, "w") as handle:
                 handle.write(text)
             sftp.chmod(remote_path, mode)
         finally:
-            sftp.close()
+            _close_quietly(sftp)
 
         return RemoteTransferResult(
             remote_path=remote_path,
@@ -582,13 +648,13 @@ class ParamikoRemoteRunner(RemoteRunner):
         if parent:
             self.ensure_directory(parent)
 
-        sftp = self.client.open_sftp()
+        sftp = self._open_sftp()
         try:
             with sftp.file(remote_path, "wb") as handle:
                 handle.write(data)
             sftp.chmod(remote_path, mode)
         finally:
-            sftp.close()
+            _close_quietly(sftp)
 
         return RemoteTransferResult(
             remote_path=remote_path,
@@ -598,12 +664,12 @@ class ParamikoRemoteRunner(RemoteRunner):
 
     def read_bytes(self, remote_path: str, *, max_bytes: int | None = None) -> bytes:
         self.ensure_available()
-        sftp = self.client.open_sftp()
+        sftp = self._open_sftp()
         try:
             with sftp.file(remote_path, "rb") as handle:
                 data = handle.read(max_bytes) if max_bytes else handle.read()
         finally:
-            sftp.close()
+            _close_quietly(sftp)
         return data
 
     def upload_file(
@@ -618,23 +684,23 @@ class ParamikoRemoteRunner(RemoteRunner):
         if parent:
             self.ensure_directory(parent)
 
-        sftp = self.client.open_sftp()
+        sftp = self._open_sftp()
         try:
             sftp.put(local_path, remote_path)
             if mode is not None:
                 sftp.chmod(remote_path, mode)
         finally:
-            sftp.close()
+            _close_quietly(sftp)
 
         return RemoteTransferResult(remote_path=remote_path, local_path=local_path, mode=mode)
 
     def download_file(self, remote_path: str, local_path: str) -> RemoteTransferResult:
         self.ensure_available()
-        sftp = self.client.open_sftp()
+        sftp = self._open_sftp()
         try:
             sftp.get(remote_path, local_path)
         finally:
-            sftp.close()
+            _close_quietly(sftp)
         return RemoteTransferResult(remote_path=remote_path, local_path=local_path)
 
     def open_tunnel(
@@ -907,7 +973,7 @@ class ParamikoRemoteRunner(RemoteRunner):
                 check=False,
                 modules=False,
                 export_env=False,
-                timeout_s=None,
+                timeout_s=DEFAULT_MONITOR_COMMAND_TIMEOUT_S,
             )
         except Exception as exc:
             stdout = ""
