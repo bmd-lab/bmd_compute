@@ -1,5 +1,5 @@
 from backend.calculations.models import CalculationSpec, Modifier, Purpose, Theory
-from backend.calculations.resources import ExecutionResources
+from backend.calculations.resources import ALLOWED_MEMORY_GB, ExecutionResources
 from backend.calculations.registry import CalculationValidationError
 from backend.config import DEFAULT_ACCOUNT, DEFAULT_PARTITION, DEFAULT_RESOURCES
 from backend.generated_inputs import preview_generated_inputs
@@ -159,7 +159,7 @@ assert f"#SBATCH --account={DEFAULT_ACCOUNT}" in generated_inputs["slurm_script"
 assert "#SBATCH -J Si-static" in generated_inputs["slurm_script"]
 assert f"#SBATCH --nodes={DEFAULT_RESOURCES['nodes']}" in generated_inputs["slurm_script"]
 assert f"#SBATCH --ntasks={DEFAULT_RESOURCES['ntasks']}" in generated_inputs["slurm_script"]
-assert f"#SBATCH --mem={DEFAULT_RESOURCES['mem_gb']}GB" in generated_inputs["slurm_script"]
+assert f"#SBATCH --mem={DEFAULT_RESOURCES['mem_gb']}G" in generated_inputs["slurm_script"]
 assert f"#SBATCH --time={DEFAULT_RESOURCES['walltime']}" in generated_inputs["slurm_script"]
 assert "ulimit -s 81920" in generated_inputs["slurm_script"]
 assert "module load intel/rocky8-oneAPI-2023" in generated_inputs["slurm_script"]
@@ -241,6 +241,7 @@ assert resource_response.context["selected_resources"] == {
     "cpus": 48,
     "allowed_cpu_counts": [24, 48, 72, 96, 120, 144, 168, 192],
     "memory_gb": 256,
+    "allowed_memory_gb": list(ALLOWED_MEMORY_GB),
     "walltime": "12:00:00",
     "queue": "debug",
 }
@@ -256,8 +257,25 @@ assert f"#SBATCH --account={DEFAULT_ACCOUNT}" in resource_response.context["gene
 assert "#SBATCH -J Si-static" in resource_response.context["generated_inputs"]["slurm_script"]
 assert "#SBATCH --nodes=1" in resource_response.context["generated_inputs"]["slurm_script"]
 assert "#SBATCH --ntasks=48" in resource_response.context["generated_inputs"]["slurm_script"]
-assert "#SBATCH --mem=256GB" in resource_response.context["generated_inputs"]["slurm_script"]
+assert "#SBATCH --mem=256G" in resource_response.context["generated_inputs"]["slurm_script"]
 assert "#SBATCH --time=12:00:00" in resource_response.context["generated_inputs"]["slurm_script"]
+
+invalid_memory_response = build_workflow(
+    request,
+    structure=poscar,
+    fmt="poscar",
+    purpose="static",
+    theory="pbe",
+    modifiers=None,
+    cpus="48",
+    memory_gb="100",
+    walltime="12:00:00",
+    queue="debug",
+    workflow=None,
+    method=None,
+)
+assert invalid_memory_response.status_code == 400
+assert "Memory must be one of" in invalid_memory_response.context["calculation_error"]["message"]
 
 spin_response = build_workflow(
     request,

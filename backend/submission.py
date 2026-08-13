@@ -458,7 +458,7 @@ def build_sbatch_script(submission_spec: dict) -> str:
         f"#SBATCH --time={resources['walltime']}\n"
         f"#SBATCH --nodes={int(resources['nodes'])}\n"
         f"#SBATCH --ntasks={int(resources['ntasks'])}\n"
-        f"#SBATCH --mem={int(resources['mem_gb'])}GB\n"
+        f"#SBATCH --mem={int(resources['mem_gb'])}G\n"
         f"#SBATCH --output={paths['slurm_out']}\n"
         f"#SBATCH --error={paths['slurm_err']}"
     )
@@ -574,7 +574,7 @@ def build_slurm_preview_script(submission_spec: dict) -> str:
         f"#SBATCH --time={resources['walltime']}\n"
         f"#SBATCH --nodes={int(resources['nodes'])}\n"
         f"#SBATCH --ntasks={int(resources['ntasks'])}\n"
-        f"#SBATCH --mem={int(resources['mem_gb'])}GB\n"
+        f"#SBATCH --mem={int(resources['mem_gb'])}G\n"
         "\n"
         "ulimit -s 81920\n"
         "\n"

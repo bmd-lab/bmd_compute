@@ -1,6 +1,7 @@
 from backend.calculations.models import CalculationSpec, Modifier, Purpose, StageType, Theory
 from backend.calculations.resources import (
     ALLOWED_CPU_COUNTS,
+    ALLOWED_MEMORY_GB,
     ExecutionResources,
     ncore_for_execution_resources,
     stage_allows_automatic_ncore,
@@ -79,6 +80,8 @@ assert dft_u_settings["LDAU"] is True
 assert dft_u_settings["LDAUU"] == {"Ni": 6.2, "O": 0}
 assert apply_dft_u_settings({"LDAU": True}, dft_u=False)["LDAU"] is None
 assert ALLOWED_CPU_COUNTS == (24, 48, 72, 96, 120, 144, 168, 192)
+assert ALLOWED_MEMORY_GB == (32, 64, 96, 128, 160, 192, 224, 256, 320, 384, 512)
+assert ExecutionResources().memory_gb == 128
 assert ncore_for_execution_resources(ExecutionResources(cpus=24)) == 8
 assert ncore_for_execution_resources({"ntasks": 48}) == 8
 try:
@@ -87,6 +90,12 @@ except CalculationValidationError as exc:
     assert "CPUs must be one of" in exc.message
 else:
     raise AssertionError("Unsupported CPU counts should be rejected.")
+try:
+    ExecutionResources(memory_gb=100)
+except CalculationValidationError as exc:
+    assert "Memory must be one of" in exc.message
+else:
+    raise AssertionError("Unsupported memory amounts should be rejected.")
 assert apply_resource_incar_settings(
     {"ENCUT": 520},
     resources=ExecutionResources(cpus=24),

@@ -1081,12 +1081,15 @@ ul {
                                 </div>
                                 <div>
                                     <label>Memory (GB)</label>
-                                    <input
-                                        type="number"
-                                        min="1"
-                                        step="1"
-                                        name="memory_gb"
-                                        value="{{ selected_resources.memory_gb }}">
+                                    <select name="memory_gb">
+                                        {% for memory_gb in selected_resources.allowed_memory_gb %}
+                                        <option
+                                            value="{{ memory_gb }}"
+                                            {% if selected_resources.memory_gb == memory_gb %}selected{% endif %}>
+                                            {{ memory_gb }} GB
+                                        </option>
+                                        {% endfor %}
+                                    </select>
                                 </div>
                                 <div>
                                     <label>Walltime</label>

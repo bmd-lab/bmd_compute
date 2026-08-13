@@ -8,6 +8,7 @@ from backend.config import DEFAULT_ACCOUNT, DEFAULT_PARTITION, DEFAULT_RESOURCES
 
 
 ALLOWED_CPU_COUNTS = (24, 48, 72, 96, 120, 144, 168, 192)
+ALLOWED_MEMORY_GB = (32, 64, 96, 128, 160, 192, 224, 256, 320, 384, 512)
 DEFAULT_NCORE = 8
 AUTOMATIC_NCORE_STAGE_TYPES = frozenset(
     {
@@ -30,7 +31,7 @@ class ExecutionResources:
     def __post_init__(self) -> None:
         object.__setattr__(self, "nodes", _positive_int(self.nodes, "nodes"))
         object.__setattr__(self, "cpus", _allowed_cpu_count(self.cpus))
-        object.__setattr__(self, "memory_gb", _positive_int(self.memory_gb, "memory"))
+        object.__setattr__(self, "memory_gb", _allowed_memory_gb(self.memory_gb))
         object.__setattr__(self, "walltime", _nonempty_text(self.walltime, "walltime"))
         object.__setattr__(self, "queue", _nonempty_text(self.queue, "queue"))
         object.__setattr__(self, "account", _nonempty_text(self.account, "account"))
@@ -132,6 +133,18 @@ def _allowed_cpu_count(value) -> int:
     return cpus
 
 
+def _allowed_memory_gb(value) -> int:
+    memory_gb = _positive_int(value, "memory")
+    if memory_gb not in ALLOWED_MEMORY_GB:
+        allowed = ", ".join(str(amount) for amount in ALLOWED_MEMORY_GB)
+        raise CalculationValidationError(
+            f"Memory must be one of: {allowed} GB.",
+            suggestion="Choose one of the listed memory amounts and update the calculation again.",
+        )
+
+    return memory_gb
+
+
 def _nonempty_text(value, label: str) -> str:
     text = str(value or "").strip()
     if not text:
@@ -145,6 +158,7 @@ def _nonempty_text(value, label: str) -> str:
 
 __all__ = [
     "ALLOWED_CPU_COUNTS",
+    "ALLOWED_MEMORY_GB",
     "AUTOMATIC_NCORE_STAGE_TYPES",
     "DEFAULT_NCORE",
     "ExecutionResources",

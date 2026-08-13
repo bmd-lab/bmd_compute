@@ -10,6 +10,7 @@ from backend.calculations.models import (
 )
 from backend.calculations.resources import (
     ALLOWED_CPU_COUNTS,
+    ALLOWED_MEMORY_GB,
     DEFAULT_NCORE,
     ExecutionResources,
     default_execution_resources,
@@ -36,6 +37,7 @@ __all__ = [
     "CalculationValidationError",
     "CalculationStage",
     "ALLOWED_CPU_COUNTS",
+    "ALLOWED_MEMORY_GB",
     "DEFAULT_NCORE",
     "ExecutionResources",
     "Modifier",

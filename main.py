@@ -13,6 +13,7 @@ from backend.calculations.models import (
 )
 from backend.calculations.resources import (
     ALLOWED_CPU_COUNTS,
+    ALLOWED_MEMORY_GB,
     ExecutionResources,
     default_execution_resources,
 )
@@ -188,6 +189,7 @@ def selected_resources_context(resources: ExecutionResources) -> dict:
         "cpus": resources.cpus,
         "allowed_cpu_counts": list(ALLOWED_CPU_COUNTS),
         "memory_gb": resources.memory_gb,
+        "allowed_memory_gb": list(ALLOWED_MEMORY_GB),
         "walltime": resources.walltime,
         "queue": resources.queue,
     }

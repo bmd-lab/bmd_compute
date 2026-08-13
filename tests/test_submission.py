@@ -386,7 +386,7 @@ assert f"#SBATCH --account={DEFAULT_ACCOUNT}" in slurm_preview_script
 assert "#SBATCH -J Si-static" in slurm_preview_script
 assert f"#SBATCH --nodes={DEFAULT_RESOURCES['nodes']}" in slurm_preview_script
 assert f"#SBATCH --ntasks={DEFAULT_RESOURCES['ntasks']}" in slurm_preview_script
-assert f"#SBATCH --mem={DEFAULT_RESOURCES['mem_gb']}GB" in slurm_preview_script
+assert f"#SBATCH --mem={DEFAULT_RESOURCES['mem_gb']}G" in slurm_preview_script
 assert f"#SBATCH --time={DEFAULT_RESOURCES['walltime']}" in slurm_preview_script
 assert "ulimit -s 81920" in slurm_preview_script
 for module_name in MODULES:
@@ -411,7 +411,7 @@ assert f"#SBATCH -p {DEFAULT_PARTITION}" in sbatch_script
 assert f"#SBATCH --account={DEFAULT_ACCOUNT}" in sbatch_script
 assert f"#SBATCH --nodes={DEFAULT_RESOURCES['nodes']}" in sbatch_script
 assert f"#SBATCH --ntasks={DEFAULT_RESOURCES['ntasks']}" in sbatch_script
-assert f"#SBATCH --mem={DEFAULT_RESOURCES['mem_gb']}GB" in sbatch_script
+assert f"#SBATCH --mem={DEFAULT_RESOURCES['mem_gb']}G" in sbatch_script
 assert f"#SBATCH --time={DEFAULT_RESOURCES['walltime']}" in sbatch_script
 assert "export PMG_VASP_PSP_DIR=/bmd-db/potcars" in sbatch_script
 assert "/bmd-db/guest/potcars" not in sbatch_script
@@ -468,6 +468,7 @@ assert (
     "def hse_band_structure_run_vasp_kwargs"
     in backend_module_sources["calculations/custodian_policy.py"]
 )
+assert "ALLOWED_MEMORY_GB" in backend_module_sources["calculations/resources.py"]
 assert "def ncore_for_execution_resources" in backend_module_sources["calculations/resources.py"]
 assert "def calculation_spec_from_flow_spec" in backend_module_sources["calculations/registry.py"]
 assert "def theory_incar_settings" in backend_module_sources["calculations/theory_policy.py"]
