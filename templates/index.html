@@ -1421,6 +1421,20 @@ ul {
                         {% endif %}
                     </div>
                 </div>
+                {% if generated_inputs and (generated_inputs.vasp_executables or generated_inputs.vasp_executable) %}
+                <div class="callout">
+                    <div class="callout-title">VASP Executable</div>
+                    <div class="callout-value mono">
+                        {% if generated_inputs.vasp_executables %}
+                        {% for row in generated_inputs.vasp_executables %}
+                        stage {{ row.stage }}: {{ row.executable }}{% if not loop.last %}<br>{% endif %}
+                        {% endfor %}
+                        {% else %}
+                        {{ generated_inputs.vasp_executable }}
+                        {% endif %}
+                    </div>
+                </div>
+                {% endif %}
             </div>
 
             <div class="details-grid">

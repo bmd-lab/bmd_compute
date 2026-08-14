@@ -160,7 +160,7 @@ for modifier in ("spin_polarized", "dft_u", "gamma_only"):
 assert modifier_options["spin_polarized"]["tooltip"] == ""
 assert modifier_options["gamma_only"]["tooltip"] == ""
 assert modifier_options["dft_u"]["tooltip"] == "DFT+U is applied only when explicitly selected."
-assert modifier_options["soc"]["enabled"] is False
+assert modifier_options["soc"]["enabled"] is True
 assert "vasp_ncl" in modifier_options["soc"]["tooltip"]
 
 spin_static_spec = CalculationSpec(Purpose.STATIC, Theory.PBE, {Modifier.SPIN_POLARIZED})
@@ -187,6 +187,10 @@ gamma_band_spec = CalculationSpec(
     {Modifier.GAMMA_ONLY},
 )
 soc_static_spec = CalculationSpec(Purpose.STATIC, Theory.PBE, {Modifier.SOC})
+pbe_soc_relax_spec = CalculationSpec(Purpose.RELAX, Theory.PBE, {Modifier.SOC})
+pbe_soc_relax_static_spec = CalculationSpec(Purpose.RELAX_STATIC, Theory.PBE, {Modifier.SOC})
+pbe_soc_dos_spec = CalculationSpec(Purpose.DOS, Theory.PBE, {Modifier.SOC})
+pbe_soc_band_spec = CalculationSpec(Purpose.BAND_STRUCTURE, Theory.PBE, {Modifier.SOC})
 dft_u_relax_spec = CalculationSpec(Purpose.RELAX, Theory.PBE, {Modifier.DFT_U})
 gamma_static_spec = CalculationSpec(Purpose.STATIC, Theory.PBE, {Modifier.GAMMA_ONLY})
 hse_static_spec = CalculationSpec(Purpose.STATIC, Theory.HSE06)
@@ -245,6 +249,7 @@ assert validate_calculation_spec(spin_relax_static_spec) == spin_relax_static_sp
 assert validate_calculation_spec(spin_double_relax_spec) == spin_double_relax_spec
 assert validate_calculation_spec(spin_dos_spec) == spin_dos_spec
 assert validate_calculation_spec(spin_band_spec) == spin_band_spec
+assert validate_calculation_spec(soc_static_spec) == soc_static_spec
 assert validate_calculation_spec(dft_u_relax_spec) == dft_u_relax_spec
 assert validate_calculation_spec(gamma_static_spec) == gamma_static_spec
 assert validate_calculation_spec(hse_static_spec) == hse_static_spec
@@ -262,6 +267,7 @@ assert legacy_workflow_from_spec(spin_relax_static_spec) == "relax_static"
 assert legacy_workflow_from_spec(spin_double_relax_spec) == "double_relax"
 assert legacy_workflow_from_spec(spin_dos_spec) == "dos"
 assert legacy_workflow_from_spec(spin_band_spec) == "band_structure"
+assert legacy_workflow_from_spec(soc_static_spec) == "static"
 assert legacy_workflow_from_spec(dft_u_relax_spec) == "relax"
 assert legacy_workflow_from_spec(gamma_static_spec) == "static"
 try:
@@ -281,14 +287,11 @@ for unsupported_hse_spec in (hse_double_relax_spec, hse_dos_spec, hse_band_spec)
     else:
         raise AssertionError(f"{unsupported_hse_spec} should fail clearly.")
 
-try:
-    validate_calculation_spec(soc_static_spec)
-except CalculationValidationError as exc:
-    assert "Spin-Orbit Coupling (SOC)" in exc.message
-else:
-    raise AssertionError("SOC should be unavailable until vasp_ncl execution is validated.")
-
 for unsupported_modifier_spec in (
+    pbe_soc_relax_spec,
+    pbe_soc_relax_static_spec,
+    pbe_soc_dos_spec,
+    pbe_soc_band_spec,
     hse_dft_u_static_spec,
     hse_dft_u_relax_spec,
     hse_dft_u_relax_static_spec,
@@ -303,7 +306,8 @@ for unsupported_modifier_spec in (
             "DFT+U" in exc.message
             or "Spin-Orbit Coupling (SOC)" in exc.message
         )
-        assert "hse06" in exc.message
+        if unsupported_modifier_spec.theory is Theory.HSE06:
+            assert "hse06" in exc.message
     else:
         raise AssertionError(f"{unsupported_modifier_spec} should fail clearly.")
 

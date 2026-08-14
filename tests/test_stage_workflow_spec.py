@@ -56,12 +56,14 @@ class FakeJob:
         input_set_generator,
         prev_dir=None,
         mode=None,
+        run_vasp_kwargs=None,
     ):
         self.name = name
         self.structure = structure
         self.input_set_generator = input_set_generator
         self.prev_dir = prev_dir
         self.mode = mode
+        self.run_vasp_kwargs = run_vasp_kwargs or {}
         self.output = FakeOutput(
             structure=f"{name}_output_structure",
             dir_name=f"/remote/run/{name}",
@@ -98,9 +100,10 @@ class FakeRelaxSetGenerator(FakeGenerator):
 
 
 class FakeMaker:
-    def __init__(self, *, input_set_generator, name):
+    def __init__(self, *, input_set_generator, name, run_vasp_kwargs=None):
         self.input_set_generator = input_set_generator
         self.name = name
+        self.run_vasp_kwargs = run_vasp_kwargs or {}
 
     def make(self, structure, prev_dir=None, mode=None):
         return FakeJob(
@@ -109,6 +112,7 @@ class FakeMaker:
             input_set_generator=self.input_set_generator,
             prev_dir=prev_dir,
             mode=mode,
+            run_vasp_kwargs=self.run_vasp_kwargs,
         )
 
 
@@ -200,8 +204,37 @@ assert workflow_result_file_keys(band_workflow) == ("kpoints",)
 assert workflow_result_parse_dos(dos_workflow)
 assert workflow_result_parse_eigenvalues(band_workflow)
 
+soc_static_workflow = WorkflowSpec(
+    [
+        StageSpec(StageType.RELAX, Theory.PBE),
+        StageSpec(StageType.STATIC, Theory.PBE),
+        StageSpec(StageType.STATIC, Theory.PBE, {Modifier.SOC}),
+    ],
+    recipe="custom",
+)
+validated_soc_static = validate_workflow_spec(soc_static_workflow)
+assert calculation_spec_from_workflow_spec(validated_soc_static) is None
+assert workflow_stage_directories(validated_soc_static) == ("stage_01", "stage_02", "stage_03")
+assert calculation_plan_from_workflow_spec(validated_soc_static) == [
+    "Geometry Optimisation",
+    "Static Energy",
+    "Static Energy",
+]
+
 for invalid_workflow in (
-    WorkflowSpec([StageSpec(StageType.STATIC, Theory.PBE, {Modifier.SOC})]),
+    WorkflowSpec([StageSpec(StageType.RELAX, Theory.PBE, {Modifier.SOC})]),
+    WorkflowSpec(
+        [
+            StageSpec(StageType.STATIC, Theory.PBE),
+            StageSpec(StageType.DOS, Theory.PBE, {Modifier.SOC}),
+        ]
+    ),
+    WorkflowSpec(
+        [
+            StageSpec(StageType.STATIC, Theory.PBE),
+            StageSpec(StageType.BAND_STRUCTURE, Theory.PBE, {Modifier.SOC}),
+        ]
+    ),
     WorkflowSpec([StageSpec(StageType.DOS, Theory.PBE)]),
     WorkflowSpec(
         [
@@ -263,6 +296,17 @@ with fake_atomate2_and_jobflow():
         band_workflow,
         resources={"ntasks": 24},
     )
+    soc_static_flow = build_atomate2_flow_for_workflow_spec(
+        "initial_structure",
+        soc_static_workflow,
+        label="Si-soc",
+        resources={"ntasks": 24},
+    )
+    soc_generated_inputs = preview_generated_inputs(
+        "initial_structure",
+        soc_static_workflow,
+        resources={"ntasks": 24},
+    )
 
 assert mixed_flow.name == "Si-mixed_custom_workflow"
 assert mixed_flow.metadata["bmd_stage_directories"] == ("stage_01", "stage_02")
@@ -320,6 +364,30 @@ assert "# Stage 3 - Band Structure (PBE)" in band_section
 assert "NCORE = 8" in band_relax_section
 assert "NCORE = 8" in band_static_section
 assert "NCORE" not in band_section
+
+assert [job.name for job in soc_static_flow.jobs] == ["stage_01", "stage_02", "stage_03"]
+assert soc_static_flow.jobs[1].prev_dir == soc_static_flow.jobs[0].output.dir_name
+assert soc_static_flow.jobs[2].prev_dir == soc_static_flow.jobs[1].output.dir_name
+assert soc_static_flow.jobs[0].run_vasp_kwargs == {}
+assert soc_static_flow.jobs[1].run_vasp_kwargs == {}
+assert "vasp_ncl" in soc_static_flow.jobs[2].run_vasp_kwargs["vasp_cmd"]
+assert "vasp_std" not in soc_static_flow.jobs[2].run_vasp_kwargs["vasp_cmd"]
+soc_static_incar = soc_static_flow.jobs[2].input_set_generator.kwargs["user_incar_settings"]
+assert soc_static_incar["LSORBIT"] is True
+assert soc_static_incar["LNONCOLLINEAR"] is True
+assert soc_static_incar["ISPIN"] is None
+assert soc_static_incar["GGA_COMPAT"] is False
+assert soc_static_incar["LELF"] is None
+assert soc_static_incar["NCORE"] == 8
+soc_stage_1, soc_stage_2_and_3 = soc_generated_inputs["incar"].split("\n\n", 1)
+soc_stage_2, soc_stage_3 = soc_stage_2_and_3.split("\n\n", 1)
+assert "# VASP executable - vasp_std" in soc_stage_1
+assert "# VASP executable - vasp_std" in soc_stage_2
+assert "# VASP executable - vasp_ncl" in soc_stage_3
+assert "LSORBIT = True" in soc_stage_3
+assert "GGA_COMPAT = False" in soc_stage_3
+assert "ISPIN" not in soc_stage_3
+assert "LELF" not in soc_stage_3
 
 summary = summarize_workflow(mixed_flow, mixed_relax_static)
 assert summary["calculation_type"] == "Geometry Optimisation + Static Energy"

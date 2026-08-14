@@ -1,3 +1,7 @@
+import os
+import posixpath
+import shlex
+
 from backend.calculations.models import CalculationSpec, Modifier, Purpose, StageType, Theory
 from backend.calculations.resources import (
     ALLOWED_CPU_COUNTS,
@@ -8,16 +12,21 @@ from backend.calculations.resources import (
     stage_allows_automatic_ncore,
 )
 from backend.calculations.registry import CalculationValidationError
+from backend.parser import parse_structure
 from backend.workflows import (
     apply_modifier_incar_settings,
     apply_dft_u_settings,
     apply_resource_incar_settings,
+    apply_soc_magmom_settings,
     apply_stage_resource_incar_settings,
     apply_spin_settings,
     build_atomate2_flow_for_spec,
     incar_relax,
     incar_static,
     ksettings_for_modifiers,
+    run_vasp_kwargs_for_modifiers,
+    vasp_command_for_modifiers,
+    vasp_executable_for_modifiers,
     validate_input_set_for_modifiers,
 )
 
@@ -148,7 +157,7 @@ assert apply_modifier_incar_settings(
     {"MAGMOM": {"Fe": 5}},
     modifiers={Modifier.SOC},
 ) == {
-    "ISPIN": 2,
+    "MAGMOM": {"Fe": 5},
     "LDAU": None,
     "LDAUTYPE": None,
     "LDAUL": None,
@@ -160,8 +169,81 @@ assert apply_modifier_incar_settings(
     "LNONCOLLINEAR": True,
     "ISYM": 0,
     "SAXIS": [0, 0, 1],
-    "MAGMOM": None,
+    "GGA_COMPAT": False,
+    "LELF": None,
+    "ISPIN": None,
 }
+assert apply_modifier_incar_settings(
+    {"ISPIN": 2, "MAGMOM": {"Fe": 5}},
+    modifiers={Modifier.SPIN_POLARIZED, Modifier.SOC},
+) == {
+    "MAGMOM": {"Fe": 5},
+    "LDAU": None,
+    "LDAUTYPE": None,
+    "LDAUL": None,
+    "LDAUU": None,
+    "LDAUJ": None,
+    "LDAUPRINT": None,
+    "LMAXMIX": None,
+    "LSORBIT": True,
+    "LNONCOLLINEAR": True,
+    "ISYM": 0,
+    "SAXIS": [0, 0, 1],
+    "GGA_COMPAT": False,
+    "LELF": None,
+    "ISPIN": None,
+}
+assert vasp_executable_for_modifiers({Modifier.SOC}) == "vasp_ncl"
+assert vasp_executable_for_modifiers({Modifier.SPIN_POLARIZED}) == "vasp_std"
+assert vasp_command_for_modifiers(
+    {Modifier.SOC},
+    base_command="mpirun -n $SLURM_NTASKS vasp_std",
+) == "mpirun -n '$SLURM_NTASKS' vasp_ncl"
+saved_slurm_ntasks = os.environ.get("SLURM_NTASKS")
+try:
+    os.environ["SLURM_NTASKS"] = "24"
+    assert shlex.split(
+        posixpath.expandvars(
+            vasp_command_for_modifiers(
+                {Modifier.SOC},
+                base_command="mpirun -n $SLURM_NTASKS vasp_std",
+            )
+        )
+    ) == ["mpirun", "-n", "24", "vasp_ncl"]
+    os.environ["SLURM_NTASKS"] = "48"
+    assert shlex.split(
+        posixpath.expandvars(
+            vasp_command_for_modifiers(
+                {Modifier.SOC},
+                base_command="mpirun -n $SLURM_NTASKS vasp_std",
+            )
+        )
+    ) == ["mpirun", "-n", "48", "vasp_ncl"]
+finally:
+    if saved_slurm_ntasks is None:
+        os.environ.pop("SLURM_NTASKS", None)
+    else:
+        os.environ["SLURM_NTASKS"] = saved_slurm_ntasks
+assert run_vasp_kwargs_for_modifiers({Modifier.SOC})["vasp_cmd"].endswith("vasp_ncl")
+assert run_vasp_kwargs_for_modifiers({Modifier.SPIN_POLARIZED}) == {}
+
+soc_si = parse_structure(
+    """Si
+5.43
+0.0 0.5 0.5
+0.5 0.0 0.5
+0.5 0.5 0.0
+Si
+2
+direct
+0.0 0.0 0.0
+0.25 0.25 0.25
+"""
+)
+assert apply_soc_magmom_settings(
+    {"LSORBIT": True, "LNONCOLLINEAR": True, "SAXIS": [0, 0, 1]},
+    structure=soc_si,
+)["MAGMOM"] == {"Si": [0.0, 0.0, 0.6]}
 assert ksettings_for_modifiers(
     "structure",
     {"mode": "grid_density", "value": 1000},

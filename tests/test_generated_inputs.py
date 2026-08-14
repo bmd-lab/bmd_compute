@@ -26,6 +26,20 @@ direct
 structure = parse_structure(poscar)
 
 
+def incar_values(incar_text, key):
+    prefix = f"{key} = "
+    for line in incar_text.splitlines():
+        if line.startswith(prefix):
+            return line.removeprefix(prefix)
+    return None
+
+
+def magmom_component_count(incar_text):
+    magmom = incar_values(incar_text, "MAGMOM")
+    assert magmom is not None
+    return len(magmom.split())
+
+
 def workflow_spec_json(stage_type, *, theory="pbe", modifiers=None, recipe=None):
     return json.dumps(
         {
@@ -54,6 +68,8 @@ assert "ENCUT = 620.0" in static_preview["incar"]
 assert "NCORE = 8" in static_preview["incar"]
 assert "ISPIN = 2" in static_preview["incar"]
 assert "MAGMOM = 2*0.6" in static_preview["incar"]
+assert "LELF = True" in static_preview["incar"]
+assert "GGA_COMPAT" not in static_preview["incar"]
 assert "Gamma" in static_preview["kpoints"]
 assert "Si2" in static_preview["poscar"]
 assert "direct" in static_preview["poscar"].lower()
@@ -77,16 +93,24 @@ high_cpu_preview = preview_generated_inputs(
 )
 assert high_cpu_preview["incar"] == static_preview["incar"]
 
-try:
-    preview_generated_inputs(
-        structure,
-        CalculationSpec(Purpose.STATIC, Theory.PBE, {Modifier.SOC}),
-        potcar_functional="PBE_64",
-    )
-except CalculationValidationError as exc:
-    assert "Spin-Orbit Coupling (SOC)" in exc.message
-else:
-    raise AssertionError("SOC should remain unavailable until vasp_ncl execution is validated.")
+soc_static_preview = preview_generated_inputs(
+    structure,
+    CalculationSpec(Purpose.STATIC, Theory.PBE, {Modifier.SOC}),
+    potcar_functional="PBE_64",
+)
+assert soc_static_preview["vasp_executable"] == "vasp_ncl"
+assert "LSORBIT = True" in soc_static_preview["incar"]
+assert "LNONCOLLINEAR = True" in soc_static_preview["incar"]
+assert "ISPIN =" not in soc_static_preview["incar"]
+assert "ISYM = 0" in soc_static_preview["incar"]
+assert "GGA_COMPAT = False" in soc_static_preview["incar"]
+assert "LELF =" not in soc_static_preview["incar"]
+assert "SAXIS = 0 0 1" in soc_static_preview["incar"]
+assert "MAGMOM = 0.0 0.0 0.6 0.0 0.0 0.6" in soc_static_preview["incar"]
+assert "NCORE = 8" in soc_static_preview["incar"]
+assert magmom_component_count(soc_static_preview["incar"]) == 3 * len(structure)
+for dft_u_key in ("LDAU", "LDAUTYPE", "LDAUL", "LDAUU", "LDAUJ", "LDAUPRINT", "LMAXMIX"):
+    assert f"{dft_u_key} =" not in soc_static_preview["incar"]
 
 gamma_static_preview = preview_generated_inputs(
     structure,
@@ -171,6 +195,42 @@ assert "ISPIN = 2" in fe2o3_dft_u_preview["incar"]
 assert "MAGMOM = 2*5.0 3*0.6" in fe2o3_dft_u_preview["incar"]
 assert "LDAU = True" in fe2o3_dft_u_preview["incar"]
 assert "LDAUU = 5.3 0" in fe2o3_dft_u_preview["incar"]
+fe2o3_soc_preview = preview_generated_inputs(
+    fe2o3_structure,
+    CalculationSpec(Purpose.STATIC, Theory.PBE, {Modifier.SOC}),
+    potcar_functional="PBE_64",
+)
+assert fe2o3_soc_preview["vasp_executable"] == "vasp_ncl"
+assert "LSORBIT = True" in fe2o3_soc_preview["incar"]
+assert "LNONCOLLINEAR = True" in fe2o3_soc_preview["incar"]
+assert "ISPIN =" not in fe2o3_soc_preview["incar"]
+assert "GGA_COMPAT = False" in fe2o3_soc_preview["incar"]
+assert "LELF =" not in fe2o3_soc_preview["incar"]
+assert "MAGMOM = 0.0 0.0 5.0 0.0 0.0 5.0 0.0 0.0 0.6 0.0 0.0 0.6 0.0 0.0 0.6" in fe2o3_soc_preview["incar"]
+assert magmom_component_count(fe2o3_soc_preview["incar"]) == 3 * len(fe2o3_structure)
+assert "NCORE = 8" in fe2o3_soc_preview["incar"]
+for dft_u_key in ("LDAU", "LDAUTYPE", "LDAUL", "LDAUU", "LDAUJ", "LDAUPRINT", "LMAXMIX"):
+    assert f"{dft_u_key} =" not in fe2o3_soc_preview["incar"]
+fe2o3_spin_soc_preview = preview_generated_inputs(
+    fe2o3_structure,
+    CalculationSpec(Purpose.STATIC, Theory.PBE, {Modifier.SPIN_POLARIZED, Modifier.SOC}),
+    potcar_functional="PBE_64",
+)
+assert fe2o3_spin_soc_preview["incar"] == fe2o3_soc_preview["incar"]
+fe2o3_dft_u_soc_preview = preview_generated_inputs(
+    fe2o3_structure,
+    CalculationSpec(Purpose.STATIC, Theory.PBE, {Modifier.DFT_U, Modifier.SOC}),
+    potcar_functional="PBE_64",
+)
+assert "LSORBIT = True" in fe2o3_dft_u_soc_preview["incar"]
+assert "ISPIN =" not in fe2o3_dft_u_soc_preview["incar"]
+assert "GGA_COMPAT = False" in fe2o3_dft_u_soc_preview["incar"]
+assert "LELF =" not in fe2o3_dft_u_soc_preview["incar"]
+assert "MAGMOM = 0.0 0.0 5.0 0.0 0.0 5.0 0.0 0.0 0.6 0.0 0.0 0.6 0.0 0.0 0.6" in fe2o3_dft_u_soc_preview["incar"]
+assert magmom_component_count(fe2o3_dft_u_soc_preview["incar"]) == 3 * len(fe2o3_structure)
+assert "NCORE = 8" in fe2o3_dft_u_soc_preview["incar"]
+assert "LDAU = True" in fe2o3_dft_u_soc_preview["incar"]
+assert "LDAUU = 5.3 0" in fe2o3_dft_u_soc_preview["incar"]
 
 relax_preview = preview_generated_inputs(
     structure,
@@ -388,8 +448,13 @@ soc_response = build_workflow(
     workflow=None,
     method=None,
 )
-assert soc_response.status_code == 400
-assert "Spin-Orbit Coupling (SOC)" in soc_response.context["calculation_error"]["message"]
+assert soc_response.status_code == 200
+assert soc_response.context["generated_inputs"]["vasp_executable"] == "vasp_ncl"
+assert "LSORBIT = True" in soc_response.context["generated_inputs"]["incar"]
+assert "ISPIN =" not in soc_response.context["generated_inputs"]["incar"]
+assert "GGA_COMPAT = False" in soc_response.context["generated_inputs"]["incar"]
+assert "LELF =" not in soc_response.context["generated_inputs"]["incar"]
+assert "MAGMOM = 0.0 0.0 0.6 0.0 0.0 0.6" in soc_response.context["generated_inputs"]["incar"]
 
 gamma_response = build_workflow(
     request,

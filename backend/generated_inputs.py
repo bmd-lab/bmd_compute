@@ -27,6 +27,7 @@ from backend.workflows import (
     build_static_input_set_generator,
     build_vasp_input_set_for_spec,
     validate_input_set_for_modifiers,
+    vasp_executable_for_modifiers,
 )
 
 
@@ -81,6 +82,9 @@ def preview_generated_inputs(
             "incar": _input_text(input_set.incar),
             "kpoints": _input_text(input_set.kpoints),
             "poscar": _input_text(input_set.poscar),
+            "vasp_executable": vasp_executable_for_modifiers(
+                workflow_spec.stages[0].modifiers
+            ),
         }
 
     input_set = build_vasp_input_set_for_spec(
@@ -96,6 +100,7 @@ def preview_generated_inputs(
         "incar": _input_text(input_set.incar),
         "kpoints": _input_text(input_set.kpoints),
         "poscar": _input_text(input_set.poscar),
+        "vasp_executable": vasp_executable_for_modifiers(calculation_spec.modifiers),
     }
 
 
@@ -130,6 +135,7 @@ def _preview_workflow_inputs(
                 "directory": stage_directories[index] if stage_directories else None,
                 "label": stage_display_name(stage),
                 "theory_label": theory_display_name(stage.theory),
+                "vasp_executable": vasp_executable_for_modifiers(stage.modifiers),
                 "input_set": input_set,
             }
         )
@@ -138,6 +144,14 @@ def _preview_workflow_inputs(
         "incar": _combined_stage_input_text(stage_previews, "incar"),
         "kpoints": _combined_stage_input_text(stage_previews, "kpoints"),
         "poscar": _combined_stage_input_text(stage_previews, "poscar"),
+        "vasp_executables": [
+            {
+                "stage": stage["index"],
+                "label": stage["label"],
+                "executable": stage["vasp_executable"],
+            }
+            for stage in stage_previews
+        ],
     }
 
 
@@ -263,6 +277,7 @@ def _preview_relax_static_inputs(
             "directory": stage_directories[0],
             "label": stage_labels[0],
             "theory_label": theory_label,
+            "vasp_executable": vasp_executable_for_modifiers(spec.modifiers),
             "input_set": relax_generator.get_input_set(structure, potcar_spec=True),
         },
         {
@@ -270,6 +285,7 @@ def _preview_relax_static_inputs(
             "directory": stage_directories[1],
             "label": stage_labels[1],
             "theory_label": theory_label,
+            "vasp_executable": vasp_executable_for_modifiers(spec.modifiers),
             "input_set": static_generator.get_input_set(structure, potcar_spec=True),
         },
     ]
@@ -279,6 +295,14 @@ def _preview_relax_static_inputs(
         "incar": _combined_stage_input_text(stage_previews, "incar", theory_label),
         "kpoints": _combined_stage_input_text(stage_previews, "kpoints", theory_label),
         "poscar": _combined_stage_input_text(stage_previews, "poscar", theory_label),
+        "vasp_executables": [
+            {
+                "stage": stage["index"],
+                "label": stage["label"],
+                "executable": stage["vasp_executable"],
+            }
+            for stage in stage_previews
+        ],
     }
 
 
@@ -295,6 +319,7 @@ def _combined_stage_input_text(
             "\n".join(
                 [
                     f"# Stage {stage['index']} - {label} ({stage_theory_label})",
+                    f"# VASP executable - {stage['vasp_executable']}",
                     _input_text(getattr(stage["input_set"], key)),
                 ]
             )

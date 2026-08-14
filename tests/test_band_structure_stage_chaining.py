@@ -46,7 +46,7 @@ class FakeNonSCFSetGenerator(FakeGenerator):
 
 
 class FakeRelaxMaker:
-    def __init__(self, *, input_set_generator, name):
+    def __init__(self, *, input_set_generator, name, **kwargs):
         self.input_set_generator = input_set_generator
         self.name = name
 

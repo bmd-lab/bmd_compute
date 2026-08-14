@@ -1,3 +1,6 @@
+import os
+import shlex
+
 ENCUT_STATIC_PREP_DEFAULT = 520
 # BMD workflow policy from the validated reference notebook:
 # relax stages use 580 eV and final static-style stages use at least 620 eV.
@@ -14,7 +17,17 @@ DFT_U_INCAR_KEYS = (
     "LDAUPRINT",
     "LMAXMIX",
 )
+VASP_STANDARD_EXECUTABLE = "vasp_std"
+VASP_NCL_EXECUTABLE = "vasp_ncl"
+_KNOWN_VASP_EXECUTABLES = frozenset(
+    {
+        VASP_STANDARD_EXECUTABLE,
+        "vasp_gam",
+        VASP_NCL_EXECUTABLE,
+    }
+)
 
+from backend.config import DEFAULT_VASP_CMD
 from backend.calculations.models import (
     CalculationSpec,
     Modifier,
@@ -207,13 +220,47 @@ def calculation_modifiers_from_options(
     return frozenset(Modifier.from_value(modifier) for modifier in normalized)
 
 
+def vasp_executable_for_modifiers(modifiers) -> str:
+    normalized_modifiers = calculation_modifiers_from_options(modifiers=modifiers)
+    if Modifier.SOC in normalized_modifiers:
+        return VASP_NCL_EXECUTABLE
+    return VASP_STANDARD_EXECUTABLE
+
+
+def _replace_vasp_executable(command: str | None, executable: str) -> str:
+    parts = shlex.split(command or DEFAULT_VASP_CMD)
+    if not parts:
+        return executable
+
+    for index in range(len(parts) - 1, -1, -1):
+        token = parts[index]
+        basename = token.replace("\\", "/").rsplit("/", 1)[-1]
+        if basename in _KNOWN_VASP_EXECUTABLES:
+            parts[index] = token[: len(token) - len(basename)] + executable
+            return shlex.join(parts)
+
+    parts.append(executable)
+    return shlex.join(parts)
+
+
+def vasp_command_for_modifiers(modifiers, *, base_command: str | None = None) -> str:
+    command = base_command or os.environ.get("VASP_CMD") or DEFAULT_VASP_CMD
+    return _replace_vasp_executable(
+        command,
+        vasp_executable_for_modifiers(modifiers),
+    )
+
+
+def run_vasp_kwargs_for_modifiers(modifiers) -> dict:
+    if vasp_executable_for_modifiers(modifiers) == VASP_NCL_EXECUTABLE:
+        return {"vasp_cmd": vasp_command_for_modifiers(modifiers)}
+    return {}
+
+
 def apply_modifier_incar_settings(user_incar, *, modifiers) -> dict:
     settings = dict(user_incar or {})
     normalized_modifiers = calculation_modifiers_from_options(modifiers=modifiers)
-    spin_polarized = (
-        Modifier.SPIN_POLARIZED in normalized_modifiers
-        or Modifier.SOC in normalized_modifiers
-    )
+    spin_polarized = Modifier.SPIN_POLARIZED in normalized_modifiers
 
     settings = apply_spin_settings(settings, spin_polarized=spin_polarized)
     settings = apply_dft_u_settings(
@@ -226,7 +273,9 @@ def apply_modifier_incar_settings(user_incar, *, modifiers) -> dict:
         settings["LNONCOLLINEAR"] = True
         settings["ISYM"] = 0
         settings.setdefault("SAXIS", [0, 0, 1])
-        settings["MAGMOM"] = None
+        settings["GGA_COMPAT"] = False
+        settings["LELF"] = None
+        settings["ISPIN"] = None
 
     return settings
 
@@ -338,6 +387,181 @@ def _numeric_values(value):
         yield numeric
 
 
+def _is_vector(value) -> bool:
+    if not isinstance(value, (list, tuple)) or len(value) != 3:
+        return False
+
+    try:
+        for item in value:
+            float(item)
+    except (TypeError, ValueError):
+        return False
+
+    return True
+
+
+def _soc_axis_from_settings(settings: dict) -> tuple[float, float, float]:
+    value = settings.get("SAXIS") or [0, 0, 1]
+    try:
+        x, y, z = (float(value[0]), float(value[1]), float(value[2]))
+    except (TypeError, ValueError, IndexError):
+        return (0.0, 0.0, 1.0)
+
+    norm = (x * x + y * y + z * z) ** 0.5
+    if norm <= 0:
+        return (0.0, 0.0, 1.0)
+
+    return (x / norm, y / norm, z / norm)
+
+
+def _soc_vector_from_scalar(value, axis: tuple[float, float, float]) -> list[float]:
+    moment = float(value)
+    return [component * moment for component in axis]
+
+
+def _native_magmom_defaults() -> dict:
+    from pymatgen.io.vasp.sets import MPRelaxSet
+
+    return dict((MPRelaxSet.CONFIG.get("INCAR") or {}).get("MAGMOM") or {})
+
+
+def _site_magmom_candidates(site) -> tuple[str, ...]:
+    candidates = []
+    for attribute in ("species_string", "specie"):
+        value = getattr(site, attribute, None)
+        if value is not None:
+            candidates.append(str(value))
+
+    specie = getattr(site, "specie", None)
+    symbol = getattr(specie, "symbol", None)
+    if symbol:
+        candidates.append(str(symbol))
+
+    element = getattr(specie, "element", None)
+    element_symbol = getattr(element, "symbol", None)
+    if element_symbol:
+        candidates.append(str(element_symbol))
+
+    return tuple(dict.fromkeys(candidates))
+
+
+def _site_scalar_magmom(site, defaults: dict) -> float:
+    properties = getattr(site, "properties", {}) or {}
+    if "magmom" in properties:
+        value = properties["magmom"]
+        if _is_vector(value):
+            return float(value[2])
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            pass
+
+    specie = getattr(site, "specie", None)
+    spin = getattr(specie, "spin", None)
+    if spin is not None:
+        try:
+            return float(spin)
+        except (TypeError, ValueError):
+            pass
+
+    for candidate in _site_magmom_candidates(site):
+        if candidate in defaults:
+            return float(defaults[candidate])
+
+    return 0.6
+
+
+def _magmom_value_for_site(magmom: dict, site):
+    for candidate in _site_magmom_candidates(site):
+        if candidate in magmom:
+            return magmom[candidate]
+    return None
+
+
+def _coerce_soc_magmom_value(value, axis: tuple[float, float, float]):
+    if _is_vector(value):
+        return [float(component) for component in value]
+    return _soc_vector_from_scalar(value, axis)
+
+
+def _soc_magmom_key_for_site(site) -> str:
+    for candidate in _site_magmom_candidates(site):
+        if candidate:
+            return candidate
+    return str(site)
+
+
+def _magmom_dict_from_site_values(structure, values, axis: tuple[float, float, float]):
+    vectors = {}
+    for site, value in zip(structure, values):
+        key = _soc_magmom_key_for_site(site)
+        vectors.setdefault(key, _coerce_soc_magmom_value(value, axis))
+    return vectors
+
+
+def _coerce_soc_magmom_setting(magmom, structure, axis: tuple[float, float, float]):
+    defaults = _native_magmom_defaults()
+
+    if isinstance(magmom, dict):
+        vectors = {}
+        for site in structure:
+            key = _soc_magmom_key_for_site(site)
+            if key in vectors:
+                continue
+            value = _magmom_value_for_site(magmom, site)
+            if value is None:
+                value = _site_scalar_magmom(site, defaults)
+            vectors[key] = _coerce_soc_magmom_value(value, axis)
+        return vectors
+
+    if isinstance(magmom, (list, tuple)) and magmom:
+        if len(magmom) == len(structure):
+            return _magmom_dict_from_site_values(structure, magmom, axis)
+        if len(magmom) == 3 * len(structure):
+            values = [
+                [float(magmom[index]), float(magmom[index + 1]), float(magmom[index + 2])]
+                for index in range(0, len(magmom), 3)
+            ]
+            return _magmom_dict_from_site_values(structure, values, axis)
+
+    vectors = {}
+    for site in structure:
+        key = _soc_magmom_key_for_site(site)
+        if key not in vectors:
+            vectors[key] = _soc_vector_from_scalar(
+                _site_scalar_magmom(site, defaults),
+                axis,
+            )
+    return vectors
+
+
+def apply_soc_magmom_settings(user_incar, *, structure) -> dict:
+    settings = dict(user_incar or {})
+    try:
+        site_count = len(structure)
+    except TypeError:
+        return settings
+
+    if site_count <= 0:
+        return settings
+
+    try:
+        sites = list(structure)
+    except TypeError:
+        return settings
+
+    if not sites or not all(hasattr(site, "species_string") for site in sites):
+        return settings
+
+    axis = _soc_axis_from_settings(settings)
+    settings["MAGMOM"] = _coerce_soc_magmom_setting(
+        settings.get("MAGMOM"),
+        sites,
+        axis,
+    )
+    return settings
+
+
 def build_relax_input_set_generator(
     structure,
     *,
@@ -361,6 +585,8 @@ def build_relax_input_set_generator(
         user_incar,
         modifiers=calculation_modifiers,
     )
+    if Modifier.SOC in calculation_modifiers:
+        user_incar = apply_soc_magmom_settings(user_incar, structure=structure)
     user_incar.setdefault("ENCUT", ENCUT_RELAX_DEFAULT)
     user_incar.setdefault("EDIFF", 1e-6)
     user_incar.setdefault("ADDGRID", True)
@@ -421,6 +647,7 @@ def build_relax_flow(
     maker = RelaxMaker(
         input_set_generator=generator,
         name=("relax_ions" if isif == 2 else "relax"),
+        run_vasp_kwargs=run_vasp_kwargs_for_modifiers(modifiers),
     )
 
     step_name = name.replace("00_", "").replace("01_", "").replace("02_", "").strip("./")
@@ -460,6 +687,7 @@ def build_double_relax_flow(
     first_maker = RelaxMaker(
         input_set_generator=first_generator,
         name=first_stage_dir,
+        run_vasp_kwargs=run_vasp_kwargs_for_modifiers(modifiers),
     )
     first_relax = first_maker.make(structure)
 
@@ -475,6 +703,7 @@ def build_double_relax_flow(
     second_maker = RelaxMaker(
         input_set_generator=second_generator,
         name=second_stage_dir,
+        run_vasp_kwargs=run_vasp_kwargs_for_modifiers(modifiers),
     )
     second_relax = second_maker.make(first_relax.output.structure)
 
@@ -528,6 +757,7 @@ def build_relax_static_flow(
     relax_job = RelaxMaker(
         input_set_generator=relax_generator,
         name=relax_stage_dir,
+        run_vasp_kwargs=run_vasp_kwargs_for_modifiers(modifiers),
     ).make(structure)
 
     static_generator = build_static_input_set_generator(
@@ -545,6 +775,7 @@ def build_relax_static_flow(
     static_job = StaticMaker(
         input_set_generator=static_generator,
         name=static_stage_dir,
+        run_vasp_kwargs=run_vasp_kwargs_for_modifiers(modifiers),
     ).make(
         relax_job.output.structure,
         prev_dir=relax_job.output.dir_name,
@@ -573,6 +804,7 @@ def _static_user_incar_settings(
     resources=None,
     incar=None,
     resource_stage_type=StageType.STATIC,
+    structure=None,
 ):
     calculation_modifiers = calculation_modifiers_from_options(
         modifiers=modifiers,
@@ -583,6 +815,8 @@ def _static_user_incar_settings(
         user_incar,
         modifiers=calculation_modifiers,
     )
+    if Modifier.SOC in calculation_modifiers and structure is not None:
+        user_incar = apply_soc_magmom_settings(user_incar, structure=structure)
 
     policy_theory = Theory.HSE06 if hse else Theory.from_value(theory)
     user_incar = apply_theory_incar_settings(
@@ -648,6 +882,7 @@ def _static_restart_incar_settings(
     resources=None,
     incar=None,
     resource_stage_type=StageType.STATIC,
+    structure=None,
 ):
     settings = _static_user_incar_settings(
         hse=_is_hse_incar(incar or {}),
@@ -658,6 +893,7 @@ def _static_restart_incar_settings(
         resources=resources,
         incar=incar,
         resource_stage_type=resource_stage_type,
+        structure=structure,
     )
     settings["ICHARG"] = 11
     return settings
@@ -669,6 +905,7 @@ def _hse_band_structure_incar_settings(
     modifiers=None,
     resources=None,
     incar=None,
+    structure=None,
 ):
     calculation_modifiers = calculation_modifiers_from_options(
         modifiers=modifiers,
@@ -679,6 +916,8 @@ def _hse_band_structure_incar_settings(
         user_incar,
         modifiers=calculation_modifiers,
     )
+    if Modifier.SOC in calculation_modifiers and structure is not None:
+        user_incar = apply_soc_magmom_settings(user_incar, structure=structure)
 
     for key in ("ENAUG", "LMIXTAU"):
         user_incar.setdefault(key, None)
@@ -735,6 +974,7 @@ def build_static_input_set_generator(
         modifiers=calculation_modifiers,
         resources=resources,
         incar=incar,
+        structure=structure,
     )
 
     return StaticSetGenerator(
@@ -787,6 +1027,7 @@ def build_static_flow(
     maker = StaticMaker(
         input_set_generator=generator,
         name=("hse_static" if hybrid_static else "static"),
+        run_vasp_kwargs=run_vasp_kwargs_for_modifiers(modifiers),
     )
 
     return Flow(
@@ -818,6 +1059,7 @@ def build_dos_input_set_generator(
         resources=resources,
         incar=incar,
         resource_stage_type=StageType.DOS,
+        structure=structure,
     )
 
     return NonSCFSetGenerator(
@@ -863,6 +1105,7 @@ def build_dos_flow(
     relax_job = RelaxMaker(
         input_set_generator=relax_generator,
         name=relax_stage_dir,
+        run_vasp_kwargs=run_vasp_kwargs_for_modifiers(modifiers),
     ).make(structure)
 
     static_generator = build_static_input_set_generator(
@@ -879,6 +1122,7 @@ def build_dos_flow(
     static_job = StaticMaker(
         input_set_generator=static_generator,
         name=static_stage_dir,
+        run_vasp_kwargs=run_vasp_kwargs_for_modifiers(modifiers),
     ).make(
         relax_job.output.structure,
         prev_dir=relax_job.output.dir_name,
@@ -896,6 +1140,7 @@ def build_dos_flow(
     dos_job = NonSCFMaker(
         input_set_generator=dos_generator,
         name=dos_stage_dir,
+        run_vasp_kwargs=run_vasp_kwargs_for_modifiers(modifiers),
     ).make(
         static_job.output.structure,
         prev_dir=static_job.output.dir_name,
@@ -947,6 +1192,7 @@ def build_band_structure_input_set_generator(
             modifiers=calculation_modifiers,
             resources=resources,
             incar=incar,
+            structure=structure,
         )
         return HSEBSSetGenerator(
             mode="line",
@@ -965,6 +1211,7 @@ def build_band_structure_input_set_generator(
         resources=resources,
         incar=incar,
         resource_stage_type=StageType.BAND_STRUCTURE,
+        structure=structure,
     )
 
     return NonSCFSetGenerator(
@@ -1006,6 +1253,7 @@ def build_band_structure_flow(
     relax_job = RelaxMaker(
         input_set_generator=relax_generator,
         name=relax_stage_dir,
+        run_vasp_kwargs=run_vasp_kwargs_for_modifiers(modifiers),
     ).make(structure)
 
     static_generator = build_static_input_set_generator(
@@ -1022,6 +1270,7 @@ def build_band_structure_flow(
     static_job = StaticMaker(
         input_set_generator=static_generator,
         name=static_stage_dir,
+        run_vasp_kwargs=run_vasp_kwargs_for_modifiers(modifiers),
     ).make(
         relax_job.output.structure,
         prev_dir=relax_job.output.dir_name,
@@ -1040,6 +1289,7 @@ def build_band_structure_flow(
     band_job = NonSCFMaker(
         input_set_generator=band_generator,
         name=band_stage_dir,
+        run_vasp_kwargs=run_vasp_kwargs_for_modifiers(modifiers),
     ).make(
         static_job.output.structure,
         prev_dir=static_job.output.dir_name,
@@ -1155,6 +1405,7 @@ def build_atomate2_flow_for_workflow_spec(
             else _single_stage_job_name(stage, user_incar)
         )
         spin_polarized = Modifier.SPIN_POLARIZED in stage.modifiers
+        run_vasp_kwargs = run_vasp_kwargs_for_modifiers(stage.modifiers)
 
         if stage.stage_type is StageType.RELAX:
             generator = build_relax_input_set_generator(
@@ -1171,6 +1422,7 @@ def build_atomate2_flow_for_workflow_spec(
             job = RelaxMaker(
                 input_set_generator=generator,
                 name=stage_name,
+                run_vasp_kwargs=run_vasp_kwargs,
             ).make(stage_structure)
 
         elif stage.stage_type is StageType.STATIC:
@@ -1189,6 +1441,7 @@ def build_atomate2_flow_for_workflow_spec(
             maker = StaticMaker(
                 input_set_generator=generator,
                 name=stage_name,
+                run_vasp_kwargs=run_vasp_kwargs,
             )
             if previous_job is None:
                 job = maker.make(stage_structure)
@@ -1211,6 +1464,7 @@ def build_atomate2_flow_for_workflow_spec(
             job = NonSCFMaker(
                 input_set_generator=generator,
                 name=stage_name,
+                run_vasp_kwargs=run_vasp_kwargs,
             ).make(
                 stage_structure,
                 prev_dir=previous_job.output.dir_name,
@@ -1231,10 +1485,12 @@ def build_atomate2_flow_for_workflow_spec(
             if theory_uses_hybrid_functional(stage.theory):
                 from atomate2.vasp.jobs.core import HSEBSMaker
 
+                hse_run_vasp_kwargs = hse_band_structure_run_vasp_kwargs()
+                hse_run_vasp_kwargs.update(run_vasp_kwargs)
                 job = HSEBSMaker(
                     input_set_generator=generator,
                     name=stage_name,
-                    run_vasp_kwargs=hse_band_structure_run_vasp_kwargs(),
+                    run_vasp_kwargs=hse_run_vasp_kwargs,
                 ).make(
                     stage_structure,
                     prev_dir=previous_job.output.dir_name,
@@ -1244,6 +1500,7 @@ def build_atomate2_flow_for_workflow_spec(
                 job = NonSCFMaker(
                     input_set_generator=generator,
                     name=stage_name,
+                    run_vasp_kwargs=run_vasp_kwargs,
                 ).make(
                     stage_structure,
                     prev_dir=previous_job.output.dir_name,
@@ -1556,6 +1813,7 @@ __all__ = [
     "build_static_input_set_generator",
     "build_vasp_input_set_for_spec",
     "build_vasp_input_set_generator_for_spec",
+    "apply_soc_magmom_settings",
     "apply_stage_resource_incar_settings",
     "apply_spin_settings",
     "incar_relax",
@@ -1563,4 +1821,7 @@ __all__ = [
     "ksettings",
     "line_mode_density",
     "line_mode_ksettings",
+    "run_vasp_kwargs_for_modifiers",
+    "vasp_command_for_modifiers",
+    "vasp_executable_for_modifiers",
 ]

@@ -32,6 +32,13 @@ _ACTIVE_UI_MODIFIERS = (
     Modifier.GAMMA_ONLY,
 )
 
+_PBE_STATIC_MODIFIERS = (
+    Modifier.SPIN_POLARIZED,
+    Modifier.SOC,
+    Modifier.DFT_U,
+    Modifier.GAMMA_ONLY,
+)
+
 _HSE06_SINGLE_STAGE_MODIFIERS = (
     Modifier.SPIN_POLARIZED,
     Modifier.GAMMA_ONLY,
@@ -54,8 +61,10 @@ def _build_supported_compatibility_workflows() -> dict[
 ]:
     supported: dict[tuple[Purpose, Theory, frozenset[Modifier]], str] = {}
 
-    for modifiers in _modifier_subsets(_ACTIVE_UI_MODIFIERS):
+    for modifiers in _modifier_subsets(_PBE_STATIC_MODIFIERS):
         supported[(Purpose.STATIC, Theory.PBE, modifiers)] = "static"
+
+    for modifiers in _modifier_subsets(_ACTIVE_UI_MODIFIERS):
         supported[(Purpose.RELAX, Theory.PBE, modifiers)] = "relax"
         supported[(Purpose.RELAX_STATIC, Theory.PBE, modifiers)] = "relax_static"
         supported[(Purpose.DOUBLE_RELAX, Theory.PBE, modifiers)] = "double_relax"
@@ -180,7 +189,7 @@ _MODIFIER_DISPLAY_NAMES = {
 _UNIMPLEMENTED_TOOLTIP = "Coming soon"
 _MODIFIER_TOOLTIPS = {
     Modifier.SOC: (
-        "SOC support requires the validated vasp_ncl execution path and is not yet available."
+        "SOC is available for reviewed PBE Static Energy stages and runs with vasp_ncl."
     ),
     Modifier.DFT_U: "DFT+U is applied only when explicitly selected.",
 }
@@ -616,6 +625,8 @@ def _supported_modifiers_for_stage(
 ) -> frozenset[Modifier]:
     if theory is Theory.PBE:
         supported = set(_ACTIVE_UI_MODIFIERS)
+        if stage_type is StageType.STATIC:
+            supported.add(Modifier.SOC)
         if stage_type is StageType.RELAX:
             supported.add(Modifier.IONS_ONLY)
         if stage_type is StageType.BAND_STRUCTURE:
