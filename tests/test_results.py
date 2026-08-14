@@ -571,6 +571,7 @@ class FakeVasprun:
         self.final_energy = -4.0
         self.ionic_steps = [1]
         self.converged_electronic = True
+        self.converged_ionic = False
         self.tdos = FakeTotalDos()
         self.efermi = None if kwargs.get("parse_dos") is False else 0.0
 
@@ -633,6 +634,10 @@ def test_parse_vasp_result_files_uses_vasprun_dos_for_dos_workflow():
     assert FakeVasprun.calls[-1]["kwargs"]["parse_dos"] is True
     assert result["final_energy_ev"] == -4.0
     assert result["energy_per_atom_ev"] == -2.0
+    assert result["electronic_convergence"] is True
+    assert result["converged_electronic"] is True
+    assert result["ionic_convergence"] is None
+    assert result["converged_ionic"] is None
     assert result["viewer"]["cif"] == "data_Si\n"
     assert result["dos"]["available"] is True
     assert result["dos"]["source"] == "vasprun.xml"
@@ -671,6 +676,8 @@ def test_parse_vasp_result_files_uses_vasprun_band_structure_for_band_workflow()
     assert "efermi" not in FakeVasprun.band_calls[-1]
     assert result["final_energy_ev"] == -4.0
     assert result["energy_per_atom_ev"] == -2.0
+    assert result["ionic_convergence"] is None
+    assert result["converged_ionic"] is None
     assert result["viewer"]["cif"] == "data_Si\n"
     assert result["band_structure"]["available"] is True
     assert result["band_structure"]["source"] == "vasprun.xml"
@@ -683,6 +690,26 @@ def test_parse_vasp_result_files_uses_vasprun_band_structure_for_band_workflow()
     assert result["visualizations"][0]["plot"]["ticktext"] == ["Γ", "X"]
     assert result["visualizations"][0]["plot"]["traces"][0]["name"] == "Bands"
     assert result["visualizations"][0]["plot"]["traces"][0]["showlegend"] is False
+
+
+def test_parse_vasp_result_files_carries_ionic_convergence_for_relaxation_results():
+    files = {
+        "contcar": {"path": "/remote/CONTCAR", "text": "contcar"},
+        "outcar": {"path": "/remote/OUTCAR", "text": "outcar"},
+        "vasprun": {"path": "/remote/vasprun.xml", "text": "<modeling />"},
+    }
+    context = {
+        **monitoring_success,
+        "calculation_spec": CalculationSpec(Purpose.RELAX, Theory.PBE).to_dict(),
+    }
+
+    with fake_pymatgen_results_modules():
+        result = parse_vasp_result_files(files, context)
+
+    assert result["electronic_convergence"] is True
+    assert result["converged_electronic"] is True
+    assert result["ionic_convergence"] is False
+    assert result["converged_ionic"] is False
 
 
 if __name__ == "__main__":
@@ -701,4 +728,5 @@ if __name__ == "__main__":
     test_results_report_missing_bmd_job_state_for_resume()
     test_parse_vasp_result_files_uses_vasprun_dos_for_dos_workflow()
     test_parse_vasp_result_files_uses_vasprun_band_structure_for_band_workflow()
+    test_parse_vasp_result_files_carries_ionic_convergence_for_relaxation_results()
     print("results smoke test passed")

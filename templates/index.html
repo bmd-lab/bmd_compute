@@ -512,6 +512,11 @@ ul {
     color: var(--bmd-danger);
 }
 
+.pill.warning {
+    border-color: var(--bmd-warning);
+    color: var(--bmd-warning);
+}
+
 .calculation-layout {
     align-items: stretch;
     display: flex;
@@ -662,6 +667,10 @@ ul {
 
 .prep-panel.failed {
     border-color: var(--bmd-danger);
+}
+
+.prep-panel.warning {
+    border-color: var(--bmd-warning);
 }
 
 .prep-title {
@@ -1097,7 +1106,15 @@ ul {
                                 </div>
                                 <div>
                                     <label>Queue</label>
-                                    <input name="queue" value="{{ selected_resources.queue }}">
+                                    <select name="queue">
+                                        {% for queue in selected_resources.allowed_queues %}
+                                        <option
+                                            value="{{ queue }}"
+                                            {% if selected_resources.queue == queue %}selected{% endif %}>
+                                            {{ queue }}
+                                        </option>
+                                        {% endfor %}
+                                    </select>
                                 </div>
                                 <input
                                     type="hidden"
@@ -1748,6 +1765,8 @@ ul {
                     {% if monitoring_result and monitoring_result.status == "success" %}
                         {% if monitoring_result.summary == "FAILURE" %}
                         <span class="pill failed">{{ monitoring_result.summary }}</span>
+                        {% elif monitoring_result.summary == "UNKNOWN" %}
+                        <span class="pill warning">{{ monitoring_result.summary }}</span>
                         {% else %}
                         <span class="pill ready">{{ monitoring_result.summary }}</span>
                         {% endif %}
@@ -1787,7 +1806,7 @@ ul {
 
             {% if monitoring_result %}
                 {% if monitoring_result.status == "success" %}
-                <div class="prep-panel success">
+                <div class="prep-panel {% if monitoring_result.summary == 'FAILURE' %}failed{% elif monitoring_result.summary == 'UNKNOWN' %}warning{% else %}success{% endif %}">
                     <div class="prep-title">Current SLURM State</div>
                     <div class="details-grid">
                         <div class="callout">
@@ -1958,6 +1977,18 @@ ul {
                             {% endif %}
                         </div>
                     </div>
+                    {% if results_summary.ionic_convergence is defined and results_summary.ionic_convergence is not none %}
+                    <div class="callout">
+                        <div class="callout-title">Ionic Convergence</div>
+                        <div class="callout-value">
+                            {% if results_summary.ionic_convergence %}
+                            Converged
+                            {% else %}
+                            Not converged
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endif %}
                     {% if results_summary.dos %}
                     <div class="callout">
                         <div class="callout-title">DOS</div>

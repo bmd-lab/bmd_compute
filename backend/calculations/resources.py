@@ -9,6 +9,7 @@ from backend.config import DEFAULT_ACCOUNT, DEFAULT_PARTITION, DEFAULT_RESOURCES
 
 ALLOWED_CPU_COUNTS = (24, 48, 72, 96, 120, 144, 168, 192)
 ALLOWED_MEMORY_GB = (32, 64, 96, 128, 160, 192, 224, 256, 320, 384, 512)
+ALLOWED_QUEUES = (DEFAULT_PARTITION,)
 DEFAULT_NCORE = 8
 AUTOMATIC_NCORE_STAGE_TYPES = frozenset(
     {
@@ -33,7 +34,7 @@ class ExecutionResources:
         object.__setattr__(self, "cpus", _allowed_cpu_count(self.cpus))
         object.__setattr__(self, "memory_gb", _allowed_memory_gb(self.memory_gb))
         object.__setattr__(self, "walltime", _nonempty_text(self.walltime, "walltime"))
-        object.__setattr__(self, "queue", _nonempty_text(self.queue, "queue"))
+        object.__setattr__(self, "queue", validate_queue(self.queue))
         object.__setattr__(self, "account", _nonempty_text(self.account, "account"))
 
     @property
@@ -99,6 +100,18 @@ def ncore_for_execution_resources(resources=None) -> int:
     return DEFAULT_NCORE
 
 
+def validate_queue(value) -> str:
+    queue = _nonempty_text(value, "queue")
+    if queue not in ALLOWED_QUEUES:
+        allowed = ", ".join(ALLOWED_QUEUES)
+        raise CalculationValidationError(
+            f"Queue must be one of: {allowed}.",
+            suggestion="Choose one of the listed queues and update the calculation again.",
+        )
+
+    return queue
+
+
 def stage_allows_automatic_ncore(stage_type: StageType | str) -> bool:
     return StageType.from_value(stage_type) in AUTOMATIC_NCORE_STAGE_TYPES
 
@@ -159,6 +172,7 @@ def _nonempty_text(value, label: str) -> str:
 __all__ = [
     "ALLOWED_CPU_COUNTS",
     "ALLOWED_MEMORY_GB",
+    "ALLOWED_QUEUES",
     "AUTOMATIC_NCORE_STAGE_TYPES",
     "DEFAULT_NCORE",
     "ExecutionResources",
@@ -166,4 +180,5 @@ __all__ = [
     "ncore_for_execution_resources",
     "normalize_execution_resources",
     "stage_allows_automatic_ncore",
+    "validate_queue",
 ]

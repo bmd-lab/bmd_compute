@@ -38,7 +38,11 @@ def test_classify_slurm_state_matches_notebook_rules():
     assert classify_slurm_state("COMPLETING") == "RUNNING"
     assert classify_slurm_state("COMPLETED", "0:0") == "SUCCESS"
     assert classify_slurm_state("FAILED", "1:0") == "FAILURE"
+    assert classify_slurm_state("BOOT_FAIL", "1:0") == "FAILURE"
+    assert classify_slurm_state("DEADLINE", "1:0") == "FAILURE"
+    assert classify_slurm_state("SPECIAL_EXIT", "1:0") == "FAILURE"
     assert classify_slurm_state("COMPLETED", "2:0") == "FAILURE"
+    assert classify_slurm_state("SCHEDULER_SURPRISE") == "UNKNOWN"
     assert classify_slurm_state("") == "UNKNOWN"
 
 

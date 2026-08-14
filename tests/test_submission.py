@@ -13,6 +13,7 @@ from backend.config import (
     MODULES,
     POTCAR_LINK_MAP,
 )
+from backend.calculations.registry import CalculationValidationError
 from backend.submission import (
     build_backend_module_sources,
     build_execution_module_source,
@@ -253,7 +254,7 @@ advanced_flow_spec = {
     "calculation_spec": {
         "purpose": "static",
         "theory": "pbe",
-        "modifiers": ["dft_u", "gamma_only", "soc", "spin_polarized"],
+        "modifiers": ["dft_u", "gamma_only", "spin_polarized"],
     },
 }
 advanced_spec = create_submission_spec(
@@ -265,7 +266,7 @@ advanced_spec = create_submission_spec(
 assert advanced_spec["flow_spec"]["calculation_spec"] == {
     "purpose": "static",
     "theory": "pbe",
-    "modifiers": ["dft_u", "gamma_only", "soc", "spin_polarized"],
+    "modifiers": ["dft_u", "gamma_only", "spin_polarized"],
     "label": None,
 }
 
@@ -340,15 +341,25 @@ env_spec = create_submission_spec(
     flow_spec,
     timestamp="20260629-120000",
     env={
-        "SLURM_PARTITION": "debug",
         "SLURM_ACCOUNT": "debug-users",
         "VASP_CMD": "srun -n $SLURM_NTASKS vasp_std",
     },
 )
 
-assert env_spec["cluster"]["partition"] == "debug"
+assert env_spec["cluster"]["partition"] == DEFAULT_PARTITION
 assert env_spec["cluster"]["account"] == "debug-users"
 assert env_spec["environment"]["VASP_CMD"] == "srun -n $SLURM_NTASKS vasp_std"
+
+try:
+    create_submission_spec(
+        flow_spec,
+        timestamp="20260629-120000",
+        env={"SLURM_PARTITION": "debug; rm -rf /"},
+    )
+except CalculationValidationError as exc:
+    assert "Queue must be one of" in exc.message
+else:
+    raise AssertionError("Unsafe SLURM partition values should be rejected.")
 
 assert default_resources_for_workflow("gw_static")["ntasks"] == 12
 assert default_resources_for_workflow("gw_static")["mem_gb"] == 240

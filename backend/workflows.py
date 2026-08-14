@@ -1,4 +1,6 @@
 ENCUT_STATIC_PREP_DEFAULT = 520
+# BMD workflow policy from the validated reference notebook:
+# relax stages use 580 eV and final static-style stages use at least 620 eV.
 ENCUT_RELAX_DEFAULT = 580
 ENCUT_STATIC_FINAL_DEFAULT = 620
 BAND_STRUCTURE_LINE_DENSITY_DEFAULT = 40
@@ -190,9 +192,6 @@ def apply_spin_settings(user_incar, *, spin_polarized: bool):
     settings = dict(user_incar or {})
     if spin_polarized:
         settings["ISPIN"] = 2
-    else:
-        settings["ISPIN"] = 1
-        settings["MAGMOM"] = None
 
     return settings
 
@@ -237,6 +236,8 @@ def apply_dft_u_settings(user_incar, *, dft_u: bool) -> dict:
     if dft_u:
         return settings
 
+    # Deliberate BMD policy: plain PBE means no Hubbard U unless DFT+U is
+    # explicitly selected, even when pymatgen would add chemistry-based U tags.
     for key in DFT_U_INCAR_KEYS:
         settings[key] = None
 

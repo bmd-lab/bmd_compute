@@ -36,6 +36,14 @@ assert "selected_resources.allowed_memory_gb" in memory_select_block
 assert 'value="{{ memory_gb }}"' in memory_select_block
 assert "{% if selected_resources.memory_gb == memory_gb %}selected{% endif %}" in memory_select_block
 assert "{{ memory_gb }} GB" in memory_select_block
+queue_label_index = resource_panel.index("<label>Queue</label>")
+queue_select_index = resource_panel.index('<select name="queue">')
+queue_select_end = resource_panel.index("</select>", queue_select_index)
+queue_select_block = resource_panel[queue_select_index:queue_select_end]
+assert queue_label_index < queue_select_index
+assert "selected_resources.allowed_queues" in queue_select_block
+assert 'value="{{ queue }}"' in queue_select_block
+assert "{% if selected_resources.queue == queue %}selected{% endif %}" in queue_select_block
 assert 'type="number"' not in resource_panel
 assert 'step="1"' not in resource_panel
 assert "grid-template-columns: minmax(0, 1fr);" in source

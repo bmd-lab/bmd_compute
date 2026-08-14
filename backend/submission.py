@@ -18,6 +18,7 @@ from backend.calculations.registry import (
     workflow_spec_from_flow_spec,
     workflow_stage_directories,
 )
+from backend.calculations.resources import validate_queue
 from backend.config import (
     DEFAULT_ACCOUNT,
     DEFAULT_PARTITION,
@@ -897,7 +898,7 @@ def create_submission_spec(
     resolved_mem_gb = _coerce_int(mem_gb, resource_defaults["mem_gb"])
     resolved_walltime = walltime or resource_defaults["walltime"]
 
-    resolved_partition = (
+    resolved_partition = validate_queue(
         partition
         or env_values.get("SLURM_PARTITION")
         or env_values.get("SLURM_DEFAULT_PARTITION")

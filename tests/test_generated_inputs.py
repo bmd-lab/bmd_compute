@@ -1,7 +1,7 @@
 import json
 
 from backend.calculations.models import CalculationSpec, Modifier, Purpose, Theory
-from backend.calculations.resources import ALLOWED_MEMORY_GB, ExecutionResources
+from backend.calculations.resources import ALLOWED_MEMORY_GB, ALLOWED_QUEUES, ExecutionResources
 from backend.calculations.registry import CalculationValidationError
 from backend.config import DEFAULT_ACCOUNT, DEFAULT_PARTITION, DEFAULT_RESOURCES
 from backend.generated_inputs import preview_generated_inputs
@@ -52,8 +52,8 @@ static_preview = preview_generated_inputs(
 )
 assert "ENCUT = 620.0" in static_preview["incar"]
 assert "NCORE = 8" in static_preview["incar"]
-assert "ISPIN = 1" in static_preview["incar"]
-assert "MAGMOM" not in static_preview["incar"]
+assert "ISPIN = 2" in static_preview["incar"]
+assert "MAGMOM = 2*0.6" in static_preview["incar"]
 assert "Gamma" in static_preview["kpoints"]
 assert "Si2" in static_preview["poscar"]
 assert "direct" in static_preview["poscar"].lower()
@@ -77,17 +77,16 @@ high_cpu_preview = preview_generated_inputs(
 )
 assert high_cpu_preview["incar"] == static_preview["incar"]
 
-soc_static_preview = preview_generated_inputs(
-    structure,
-    CalculationSpec(Purpose.STATIC, Theory.PBE, {Modifier.SOC}),
-    potcar_functional="PBE_64",
-)
-assert "ISPIN = 2" in soc_static_preview["incar"]
-assert "LSORBIT = True" in soc_static_preview["incar"]
-assert "LNONCOLLINEAR = True" in soc_static_preview["incar"]
-assert "ISYM = 0" in soc_static_preview["incar"]
-assert "SAXIS = 0 0 1" in soc_static_preview["incar"]
-assert "MAGMOM" not in soc_static_preview["incar"]
+try:
+    preview_generated_inputs(
+        structure,
+        CalculationSpec(Purpose.STATIC, Theory.PBE, {Modifier.SOC}),
+        potcar_functional="PBE_64",
+    )
+except CalculationValidationError as exc:
+    assert "Spin-Orbit Coupling (SOC)" in exc.message
+else:
+    raise AssertionError("SOC should remain unavailable until vasp_ncl execution is validated.")
 
 gamma_static_preview = preview_generated_inputs(
     structure,
@@ -139,6 +138,40 @@ dft_u_preview = preview_generated_inputs(
 assert "LDAU = True" in dft_u_preview["incar"]
 assert "LDAUU" in dft_u_preview["incar"]
 
+fe2o3_poscar = """Fe2O3
+5.04
+1.0 0.0 0.0
+-0.5 0.8660254 0.0
+0.0 0.0 2.7281746
+Fe O
+2 3
+direct
+0.0 0.0 0.355
+0.0 0.0 0.645
+0.305 0.0 0.25
+0.0 0.305 0.25
+0.695 0.695 0.25
+"""
+fe2o3_structure = parse_structure(fe2o3_poscar)
+fe2o3_plain_preview = preview_generated_inputs(
+    fe2o3_structure,
+    CalculationSpec(Purpose.STATIC, Theory.PBE),
+    potcar_functional="PBE_64",
+)
+assert "ISPIN = 2" in fe2o3_plain_preview["incar"]
+assert "MAGMOM = 2*5.0 3*0.6" in fe2o3_plain_preview["incar"]
+for dft_u_key in ("LDAU", "LDAUTYPE", "LDAUL", "LDAUU", "LDAUJ", "LDAUPRINT", "LMAXMIX"):
+    assert f"{dft_u_key} =" not in fe2o3_plain_preview["incar"]
+fe2o3_dft_u_preview = preview_generated_inputs(
+    fe2o3_structure,
+    CalculationSpec(Purpose.STATIC, Theory.PBE, {Modifier.DFT_U}),
+    potcar_functional="PBE_64",
+)
+assert "ISPIN = 2" in fe2o3_dft_u_preview["incar"]
+assert "MAGMOM = 2*5.0 3*0.6" in fe2o3_dft_u_preview["incar"]
+assert "LDAU = True" in fe2o3_dft_u_preview["incar"]
+assert "LDAUU = 5.3 0" in fe2o3_dft_u_preview["incar"]
+
 relax_preview = preview_generated_inputs(
     structure,
     CalculationSpec(Purpose.RELAX, Theory.PBE),
@@ -146,8 +179,8 @@ relax_preview = preview_generated_inputs(
 )
 assert "ENCUT = 580.0" in relax_preview["incar"]
 assert "ISIF = 3" in relax_preview["incar"]
-assert "ISPIN = 1" in relax_preview["incar"]
-assert "MAGMOM" not in relax_preview["incar"]
+assert "ISPIN = 2" in relax_preview["incar"]
+assert "MAGMOM = 2*0.6" in relax_preview["incar"]
 
 band_preview = preview_generated_inputs(
     structure,
@@ -253,7 +286,7 @@ resource_response = build_workflow(
     cpus="48",
     memory_gb="256",
     walltime="12:00:00",
-    queue="debug",
+    queue=DEFAULT_PARTITION,
     workflow_spec_json=workflow_spec_json("static"),
     workflow=None,
     method=None,
@@ -267,16 +300,17 @@ assert resource_response.context["selected_resources"] == {
     "memory_gb": 256,
     "allowed_memory_gb": list(ALLOWED_MEMORY_GB),
     "walltime": "12:00:00",
-    "queue": "debug",
+    "queue": DEFAULT_PARTITION,
+    "allowed_queues": list(ALLOWED_QUEUES),
 }
 assert resource_response.context["submission_spec"]["resources"]["ntasks"] == 48
 assert resource_response.context["submission_spec"]["resources"]["mem_gb"] == 256
-assert resource_response.context["submission_spec"]["cluster"]["partition"] == "debug"
+assert resource_response.context["submission_spec"]["cluster"]["partition"] == DEFAULT_PARTITION
 assert resource_response.context["submission_spec"]["cluster"]["account"] == DEFAULT_ACCOUNT
 assert resource_response.context["generated_inputs"]["slurm_script"] == build_slurm_preview_script(
     resource_response.context["submission_spec"]
 )
-assert "#SBATCH -p debug" in resource_response.context["generated_inputs"]["slurm_script"]
+assert f"#SBATCH -p {DEFAULT_PARTITION}" in resource_response.context["generated_inputs"]["slurm_script"]
 assert f"#SBATCH --account={DEFAULT_ACCOUNT}" in resource_response.context["generated_inputs"]["slurm_script"]
 assert "#SBATCH -J vasp_run_static" in resource_response.context["generated_inputs"]["slurm_script"]
 assert "#SBATCH --nodes=1" in resource_response.context["generated_inputs"]["slurm_script"]
@@ -294,13 +328,31 @@ invalid_memory_response = build_workflow(
     cpus="48",
     memory_gb="100",
     walltime="12:00:00",
-    queue="debug",
+    queue=DEFAULT_PARTITION,
     workflow_spec_json=workflow_spec_json("static"),
     workflow=None,
     method=None,
 )
 assert invalid_memory_response.status_code == 400
 assert "Memory must be one of" in invalid_memory_response.context["calculation_error"]["message"]
+
+invalid_queue_response = build_workflow(
+    request,
+    structure=poscar,
+    fmt="poscar",
+    purpose="static",
+    theory="pbe",
+    modifiers=None,
+    cpus="48",
+    memory_gb="256",
+    walltime="12:00:00",
+    queue="debug; rm -rf /",
+    workflow_spec_json=workflow_spec_json("static"),
+    workflow=None,
+    method=None,
+)
+assert invalid_queue_response.status_code == 400
+assert "Queue must be one of" in invalid_queue_response.context["calculation_error"]["message"]
 
 spin_response = build_workflow(
     request,
@@ -336,8 +388,8 @@ soc_response = build_workflow(
     workflow=None,
     method=None,
 )
-assert soc_response.status_code == 200
-assert "LSORBIT = True" in soc_response.context["generated_inputs"]["incar"]
+assert soc_response.status_code == 400
+assert "Spin-Orbit Coupling (SOC)" in soc_response.context["calculation_error"]["message"]
 
 gamma_response = build_workflow(
     request,
@@ -426,6 +478,21 @@ assert '<div class="callout-title">Jobs</div>' not in template_source
 assert "calculation.job_names" not in template_source
 for field_name in ("cpus", "memory_gb", "walltime", "queue"):
     assert f'name="{field_name}"' in template_source
+calculation_definition = template_source[
+    template_source.index('<form\n                id="calculation-review-form"'):
+]
+resource_panel = calculation_definition[
+    calculation_definition.index("<h3>Execution Resources</h3>"):
+    calculation_definition.index("<h3>Scientific Specification</h3>")
+]
+queue_label_index = resource_panel.index("<label>Queue</label>")
+queue_select_index = resource_panel.index('<select name="queue">')
+queue_select_end = resource_panel.index("</select>", queue_select_index)
+queue_select_block = resource_panel[queue_select_index:queue_select_end]
+assert queue_label_index < queue_select_index
+assert "selected_resources.allowed_queues" in queue_select_block
+assert 'value="{{ queue }}"' in queue_select_block
+assert "{% if selected_resources.queue == queue %}selected{% endif %}" in queue_select_block
 assert 'name="account"' not in template_source
 assert "Account" not in template_source
 assert "submission_spec.cluster.account" not in template_source
@@ -449,6 +516,7 @@ assert 'id="calculation-review-form"' in template_source
 assert "data-auto-rebuild" not in template_source
 assert "requestSubmit" not in template_source
 assert "data-current-calculation-action" in template_source
+assert "Ionic Convergence" in template_source
 
 print("generated inputs smoke test passed")
 

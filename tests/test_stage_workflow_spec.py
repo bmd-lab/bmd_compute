@@ -201,6 +201,7 @@ assert workflow_result_parse_dos(dos_workflow)
 assert workflow_result_parse_eigenvalues(band_workflow)
 
 for invalid_workflow in (
+    WorkflowSpec([StageSpec(StageType.STATIC, Theory.PBE, {Modifier.SOC})]),
     WorkflowSpec([StageSpec(StageType.DOS, Theory.PBE)]),
     WorkflowSpec(
         [
@@ -272,6 +273,8 @@ assert mixed_flow.jobs[1].prev_dir == mixed_flow.jobs[0].output.dir_name
 relax_incar = mixed_flow.jobs[0].input_set_generator.kwargs["user_incar_settings"]
 static_incar = mixed_flow.jobs[1].input_set_generator.kwargs["user_incar_settings"]
 assert "LHFCALC" not in relax_incar
+assert "ISPIN" not in relax_incar
+assert "MAGMOM" not in relax_incar
 assert relax_incar["NCORE"] == 8
 assert static_incar["LHFCALC"] is True
 assert static_incar["PRECFOCK"] == "Accurate"
@@ -294,6 +297,9 @@ band_static_incar = band_flow.jobs[1].input_set_generator.kwargs["user_incar_set
 band_incar = band_flow.jobs[2].input_set_generator.kwargs["user_incar_settings"]
 assert band_relax_incar["NCORE"] == 8
 assert band_static_incar["NCORE"] == 8
+assert "ISPIN" not in band_relax_incar
+assert "ISPIN" not in band_static_incar
+assert "ISPIN" not in band_incar
 assert "NCORE" not in band_incar
 
 relax_section, static_section = generated_inputs["incar"].split("\n\n", 1)

@@ -9,7 +9,7 @@ import traceback
 from pathlib import Path
 from typing import Callable
 
-from backend.calculations.models import CalculationSpec, WorkflowSpec
+from backend.calculations.models import CalculationSpec, Purpose, StageType, WorkflowSpec
 from backend.calculations.registry import (
     calculation_result_stage_directory,
     calculation_spec_from_flow_spec,
@@ -449,6 +449,9 @@ def parse_vasp_result_files(files: dict, monitoring_result: dict) -> dict:
         electronic_convergence = getattr(vasprun, "converged_electronic", None)
         if electronic_convergence is None:
             electronic_convergence = getattr(vasprun, "converged", None)
+        ionic_convergence = None
+        if _result_has_final_relaxation_stage(result_spec):
+            ionic_convergence = getattr(vasprun, "converged_ionic", None)
 
         completion_status = _completion_status(monitoring_result)
         formula = final_structure.composition.reduced_formula
@@ -471,6 +474,9 @@ def parse_vasp_result_files(files: dict, monitoring_result: dict) -> dict:
             "energy_per_atom_ev": energy_per_atom,
             "ionic_steps": len(getattr(vasprun, "ionic_steps", []) or []),
             "electronic_convergence": _bool_or_none(electronic_convergence),
+            "converged_electronic": _bool_or_none(electronic_convergence),
+            "ionic_convergence": _bool_or_none(ionic_convergence),
+            "converged_ionic": _bool_or_none(ionic_convergence),
             "final_formula": formula,
             "natoms": natoms,
             "files": {key: value["path"] for key, value in files.items()},
@@ -502,6 +508,22 @@ def _completion_status(monitoring_result: dict) -> str:
     state = monitoring_result.get("slurm_state") or "COMPLETED"
     exit_code = monitoring_result.get("exit_code") or "0:0"
     return f"{state} (ExitCode {exit_code})"
+
+
+def _result_has_final_relaxation_stage(result_spec) -> bool:
+    if isinstance(result_spec, WorkflowSpec):
+        return bool(
+            result_spec.stages
+            and result_spec.stages[-1].stage_type is StageType.RELAX
+        )
+
+    if isinstance(result_spec, CalculationSpec):
+        return result_spec.purpose in {
+            Purpose.RELAX,
+            Purpose.DOUBLE_RELAX,
+        }
+
+    return False
 
 
 def _vasprun_parse_kwargs(

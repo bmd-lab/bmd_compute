@@ -37,6 +37,10 @@ class MonitoringStageError(RuntimeError):
 PENDING_STATES = {
     "PENDING",
     "CONFIGURING",
+    "REQUEUE_FED",
+    "REQUEUE_HOLD",
+    "REQUEUED",
+    "RESIZING",
     "SUSPENDED",
     "STAGE_OUT",
     "RESV_DEL_HOLD",
@@ -44,14 +48,20 @@ PENDING_STATES = {
 RUNNING_STATES = {
     "RUNNING",
     "COMPLETING",
+    "SIGNALING",
 }
 FAILURE_PREFIXES = (
+    "BOOT_FAIL",
     "FAILED",
     "CANCELLED",
+    "DEADLINE",
     "TIMEOUT",
     "OUT_OF_MEMORY",
     "NODE_FAIL",
     "PREEMPTED",
+    "REVOKED",
+    "SPECIAL_EXIT",
+    "STOPPED",
 )
 
 
@@ -79,7 +89,7 @@ def classify_slurm_state(state: str | None, exit_code: str | None = None) -> str
     if exit_text and not exit_text.startswith("0:0"):
         return "FAILURE"
     if state_upper:
-        return "PENDING"
+        return "UNKNOWN"
     return "UNKNOWN"
 
 

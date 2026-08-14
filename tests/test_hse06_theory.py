@@ -265,6 +265,8 @@ assert hse_incar["ISMEAR"] == 0
 assert hse_incar["SIGMA"] == 0.05
 assert hse_incar["ENCUT"] == 620
 assert hse_incar["NCORE"] == pbe_incar["NCORE"] == 8
+assert "ISPIN" not in hse_incar
+assert "MAGMOM" not in hse_incar
 
 hse_user_ncore_incar = hse_user_ncore_generator.kwargs["user_incar_settings"]
 assert hse_user_ncore_incar["NCORE"] == 8
@@ -284,6 +286,8 @@ assert hse_relax_incar["EDIFFG"] == -0.01
 assert hse_relax_incar["LCHARG"] is False
 assert hse_relax_incar["LWAVE"] is False
 assert hse_relax_incar["NCORE"] == pbe_relax_incar["NCORE"] == 8
+assert "ISPIN" not in hse_relax_incar
+assert "MAGMOM" not in hse_relax_incar
 
 with fake_atomate2_and_jobflow():
     spin_generator = build_static_input_set_generator(

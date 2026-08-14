@@ -2,6 +2,7 @@ from backend.calculations.models import CalculationSpec, Modifier, Purpose, Stag
 from backend.calculations.resources import (
     ALLOWED_CPU_COUNTS,
     ALLOWED_MEMORY_GB,
+    ALLOWED_QUEUES,
     ExecutionResources,
     ncore_for_execution_resources,
     stage_allows_automatic_ncore,
@@ -21,14 +22,9 @@ from backend.workflows import (
 )
 
 
-assert apply_spin_settings({}, spin_polarized=False) == {
-    "ISPIN": 1,
-    "MAGMOM": None,
-}
+assert apply_spin_settings({}, spin_polarized=False) == {}
 assert apply_spin_settings({"ENCUT": 520}, spin_polarized=False) == {
     "ENCUT": 520,
-    "ISPIN": 1,
-    "MAGMOM": None,
 }
 assert apply_spin_settings({}, spin_polarized=True) == {
     "ISPIN": 2,
@@ -59,8 +55,8 @@ non_dft_u_settings = apply_modifier_incar_settings(
     },
     modifiers=(),
 )
-assert non_dft_u_settings["ISPIN"] == 1
-assert non_dft_u_settings["MAGMOM"] is None
+assert "ISPIN" not in non_dft_u_settings
+assert "MAGMOM" not in non_dft_u_settings
 for key in ("LDAU", "LDAUTYPE", "LDAUL", "LDAUU", "LDAUJ", "LDAUPRINT", "LMAXMIX"):
     assert non_dft_u_settings[key] is None
 
@@ -81,7 +77,9 @@ assert dft_u_settings["LDAUU"] == {"Ni": 6.2, "O": 0}
 assert apply_dft_u_settings({"LDAU": True}, dft_u=False)["LDAU"] is None
 assert ALLOWED_CPU_COUNTS == (24, 48, 72, 96, 120, 144, 168, 192)
 assert ALLOWED_MEMORY_GB == (32, 64, 96, 128, 160, 192, 224, 256, 320, 384, 512)
+assert ALLOWED_QUEUES == ("leeburton-pool",)
 assert ExecutionResources().memory_gb == 128
+assert ExecutionResources().queue == "leeburton-pool"
 assert ncore_for_execution_resources(ExecutionResources(cpus=24)) == 8
 assert ncore_for_execution_resources({"ntasks": 48}) == 8
 try:
@@ -96,6 +94,12 @@ except CalculationValidationError as exc:
     assert "Memory must be one of" in exc.message
 else:
     raise AssertionError("Unsupported memory amounts should be rejected.")
+try:
+    ExecutionResources(queue="debug; rm -rf /")
+except CalculationValidationError as exc:
+    assert "Queue must be one of" in exc.message
+else:
+    raise AssertionError("Unsupported queue values should be rejected.")
 assert apply_resource_incar_settings(
     {"ENCUT": 520},
     resources=ExecutionResources(cpus=24),
@@ -190,16 +194,16 @@ else:
     raise AssertionError("DFT+U should fail when no active U values are generated.")
 
 non_spin_static = incar_static(apply_spin_settings({}, spin_polarized=False))
-assert non_spin_static["ISPIN"] == 1
-assert non_spin_static["MAGMOM"] is None
+assert "ISPIN" not in non_spin_static
+assert "MAGMOM" not in non_spin_static
 
 spin_static = incar_static(apply_spin_settings({}, spin_polarized=True))
 assert spin_static["ISPIN"] == 2
 assert "MAGMOM" not in spin_static
 
 non_spin_relax = incar_relax(apply_spin_settings({}, spin_polarized=False))
-assert non_spin_relax["ISPIN"] == 1
-assert non_spin_relax["MAGMOM"] is None
+assert "ISPIN" not in non_spin_relax
+assert "MAGMOM" not in non_spin_relax
 
 spin_relax = incar_relax(apply_spin_settings({}, spin_polarized=True))
 assert spin_relax["ISPIN"] == 2

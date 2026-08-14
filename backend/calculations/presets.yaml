@@ -48,7 +48,8 @@ theories:
 modifiers:
   soc:
     display_name: SOC
-    enabled: true
+    enabled: false
+    description: SOC support requires the validated vasp_ncl execution path and is not yet available.
   dft_u:
     display_name: DFT+U
     enabled: true

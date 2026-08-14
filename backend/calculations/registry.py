@@ -28,7 +28,6 @@ class CalculationValidationError(ValueError):
 
 _ACTIVE_UI_MODIFIERS = (
     Modifier.SPIN_POLARIZED,
-    Modifier.SOC,
     Modifier.DFT_U,
     Modifier.GAMMA_ONLY,
 )
@@ -179,6 +178,12 @@ _MODIFIER_DISPLAY_NAMES = {
 }
 
 _UNIMPLEMENTED_TOOLTIP = "Coming soon"
+_MODIFIER_TOOLTIPS = {
+    Modifier.SOC: (
+        "SOC support requires the validated vasp_ncl execution path and is not yet available."
+    ),
+    Modifier.DFT_U: "DFT+U is applied only when explicitly selected.",
+}
 
 _UI_HIDDEN_MODIFIERS = {
     Modifier.IONS_ONLY,
@@ -736,9 +741,9 @@ def calculation_form_options() -> dict:
                 "label": modifier_display_name(modifier),
                 "enabled": modifier in supported_modifiers,
                 "tooltip": (
-                    ""
+                    _MODIFIER_TOOLTIPS.get(modifier, "")
                     if modifier in supported_modifiers
-                    else _UNIMPLEMENTED_TOOLTIP
+                    else _MODIFIER_TOOLTIPS.get(modifier, _UNIMPLEMENTED_TOOLTIP)
                 ),
             }
             for modifier in _UI_MODIFIER_ORDER
