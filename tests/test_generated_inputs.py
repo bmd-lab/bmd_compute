@@ -1,12 +1,24 @@
 import json
 
-from backend.calculations.models import CalculationSpec, Modifier, Purpose, Theory
+from backend.calculations.models import (
+    CalculationSpec,
+    Modifier,
+    Purpose,
+    StageSpec,
+    StageType,
+    Theory,
+    WorkflowSpec,
+)
 from backend.calculations.resources import ALLOWED_MEMORY_GB, ALLOWED_QUEUES, ExecutionResources
 from backend.calculations.registry import CalculationValidationError
 from backend.config import DEFAULT_ACCOUNT, DEFAULT_PARTITION, DEFAULT_RESOURCES
 from backend.generated_inputs import preview_generated_inputs
-from backend.parser import parse_structure
+from backend.parser import parse_structure, structure_from_spec
 from backend.submission import build_slurm_preview_script
+from backend.workflows import (
+    build_atomate2_flow_from_spec,
+    workflow_stage_artifact_policies,
+)
 from main import build_submission_state, build_workflow
 from starlette.requests import Request
 
@@ -59,6 +71,46 @@ def workflow_spec_json(stage_type, *, theory="pbe", modifiers=None, recipe=None)
     )
 
 
+def input_set_generator_from_job(job):
+    if hasattr(job, "input_set_generator"):
+        return job.input_set_generator
+
+    bound_self = getattr(getattr(job, "function", None), "__self__", None)
+    if hasattr(bound_self, "input_set_generator"):
+        return bound_self.input_set_generator
+
+    for value in getattr(job, "function_args", ()) or ():
+        if hasattr(value, "input_set_generator"):
+            return value.input_set_generator
+
+    for value in (getattr(job, "function_kwargs", {}) or {}).values():
+        if hasattr(value, "input_set_generator"):
+            return value.input_set_generator
+
+    raise AssertionError(f"Could not find input_set_generator on {job!r}")
+
+
+def reconstructed_runtime_stage_incar(structure_text, workflow_spec, stage_index):
+    _, _, _, submission_spec = build_submission_state(
+        structure_text=structure_text,
+        fmt="poscar",
+        workflow_spec=workflow_spec,
+        timestamp="20260814-120000",
+    )
+    runtime_structure = structure_from_spec(submission_spec["flow_spec"]["structure"])
+    flow = build_atomate2_flow_from_spec(
+        runtime_structure,
+        submission_spec["flow_spec"],
+        run_name=submission_spec["run_name"],
+        resources=submission_spec["resources"],
+    )
+    generator = input_set_generator_from_job(flow.jobs[stage_index]).get_input_set(
+        runtime_structure,
+        potcar_spec=True,
+    )
+    return str(generator.incar)
+
+
 static_preview = preview_generated_inputs(
     structure,
     CalculationSpec(Purpose.STATIC, Theory.PBE),
@@ -69,6 +121,7 @@ assert "NCORE = 8" in static_preview["incar"]
 assert "ISPIN = 2" in static_preview["incar"]
 assert "MAGMOM = 2*0.6" in static_preview["incar"]
 assert "LELF = True" in static_preview["incar"]
+assert "LWAVE = False" in static_preview["incar"]
 assert "GGA_COMPAT" not in static_preview["incar"]
 assert "Gamma" in static_preview["kpoints"]
 assert "Si2" in static_preview["poscar"]
@@ -108,9 +161,51 @@ assert "LELF =" not in soc_static_preview["incar"]
 assert "SAXIS = 0 0 1" in soc_static_preview["incar"]
 assert "MAGMOM = 0.0 0.0 0.6 0.0 0.0 0.6" in soc_static_preview["incar"]
 assert "NCORE = 8" in soc_static_preview["incar"]
+assert "LWAVE = False" in soc_static_preview["incar"]
 assert magmom_component_count(soc_static_preview["incar"]) == 3 * len(structure)
 for dft_u_key in ("LDAU", "LDAUTYPE", "LDAUL", "LDAUU", "LDAUJ", "LDAUPRINT", "LMAXMIX"):
     assert f"{dft_u_key} =" not in soc_static_preview["incar"]
+
+static_to_soc_workflow = WorkflowSpec(
+    [
+        StageSpec(StageType.STATIC, Theory.PBE),
+        StageSpec(StageType.STATIC, Theory.PBE, {Modifier.SOC}),
+    ],
+    recipe="custom",
+)
+static_to_soc_preview = preview_generated_inputs(
+    structure,
+    static_to_soc_workflow,
+    potcar_functional="PBE_64",
+)
+static_precursor_section, static_soc_section = static_to_soc_preview["incar"].split("\n\n", 1)
+assert "# Stage 1 - Static Energy (PBE)" in static_precursor_section
+assert "# VASP executable - vasp_std" in static_precursor_section
+assert "LWAVE = False" in static_precursor_section
+assert "# Stage 2 - Static Energy (PBE)" in static_soc_section
+assert "# VASP executable - vasp_ncl" in static_soc_section
+assert "LWAVE = False" in static_soc_section
+assert "LSORBIT = True" in static_soc_section
+assert "MAGMOM = 0.0 0.0 0.6 0.0 0.0 0.6" in static_soc_section
+assert workflow_stage_artifact_policies(static_to_soc_workflow) == (
+    {"write_wavecar": False, "copy_from_previous": ()},
+    {"write_wavecar": False, "copy_from_previous": ()},
+)
+
+static_soc_runtime_incar = reconstructed_runtime_stage_incar(
+    poscar,
+    static_to_soc_workflow,
+    stage_index=1,
+)
+assert incar_values(static_soc_runtime_incar, "MAGMOM") == incar_values(
+    static_soc_section,
+    "MAGMOM",
+)
+assert magmom_component_count(static_soc_runtime_incar) == 3 * len(structure)
+assert "LSORBIT = True" in static_soc_runtime_incar
+assert "LNONCOLLINEAR = True" in static_soc_runtime_incar
+assert "ISPIN =" not in static_soc_runtime_incar
+assert "LELF =" not in static_soc_runtime_incar
 
 gamma_static_preview = preview_generated_inputs(
     structure,
@@ -231,6 +326,30 @@ assert magmom_component_count(fe2o3_dft_u_soc_preview["incar"]) == 3 * len(fe2o3
 assert "NCORE = 8" in fe2o3_dft_u_soc_preview["incar"]
 assert "LDAU = True" in fe2o3_dft_u_soc_preview["incar"]
 assert "LDAUU = 5.3 0" in fe2o3_dft_u_soc_preview["incar"]
+
+fe12o18_structure = fe2o3_structure.copy()
+fe12o18_structure.make_supercell([2, 3, 1])
+from pymatgen.io.vasp.inputs import Poscar
+
+fe12o18_poscar = str(Poscar(fe12o18_structure))
+fe12o18_static_to_soc_preview = preview_generated_inputs(
+    fe12o18_structure,
+    static_to_soc_workflow,
+    potcar_functional="PBE_64",
+)
+_, fe12o18_soc_section = fe12o18_static_to_soc_preview["incar"].split("\n\n", 1)
+fe12o18_runtime_incar = reconstructed_runtime_stage_incar(
+    fe12o18_poscar,
+    static_to_soc_workflow,
+    stage_index=1,
+)
+assert "MAGMOM =" in fe12o18_soc_section
+assert incar_values(fe12o18_runtime_incar, "MAGMOM") == incar_values(
+    fe12o18_soc_section,
+    "MAGMOM",
+)
+assert magmom_component_count(fe12o18_soc_section) == 3 * len(fe12o18_structure) == 90
+assert magmom_component_count(fe12o18_runtime_incar) == 90
 
 relax_preview = preview_generated_inputs(
     structure,

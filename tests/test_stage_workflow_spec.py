@@ -21,7 +21,10 @@ from backend.workflow_results import (
     workflow_result_parse_eigenvalues,
 )
 from backend.workflow_summary import calculation_plan_from_workflow_spec, summarize_workflow
-from backend.workflows import build_atomate2_flow_for_workflow_spec
+from backend.workflows import (
+    build_atomate2_flow_for_workflow_spec,
+    workflow_stage_artifact_policies,
+)
 
 
 class FakeText:
@@ -215,6 +218,11 @@ soc_static_workflow = WorkflowSpec(
 validated_soc_static = validate_workflow_spec(soc_static_workflow)
 assert calculation_spec_from_workflow_spec(validated_soc_static) is None
 assert workflow_stage_directories(validated_soc_static) == ("stage_01", "stage_02", "stage_03")
+assert workflow_stage_artifact_policies(validated_soc_static) == (
+    {"write_wavecar": False, "copy_from_previous": ()},
+    {"write_wavecar": False, "copy_from_previous": ()},
+    {"write_wavecar": False, "copy_from_previous": ()},
+)
 assert calculation_plan_from_workflow_spec(validated_soc_static) == [
     "Geometry Optimisation",
     "Static Energy",
@@ -368,22 +376,32 @@ assert "NCORE" not in band_section
 assert [job.name for job in soc_static_flow.jobs] == ["stage_01", "stage_02", "stage_03"]
 assert soc_static_flow.jobs[1].prev_dir == soc_static_flow.jobs[0].output.dir_name
 assert soc_static_flow.jobs[2].prev_dir == soc_static_flow.jobs[1].output.dir_name
+assert soc_static_flow.metadata["bmd_stage_artifacts"] == [
+    {"write_wavecar": False, "copy_from_previous": []},
+    {"write_wavecar": False, "copy_from_previous": []},
+    {"write_wavecar": False, "copy_from_previous": []},
+]
 assert soc_static_flow.jobs[0].run_vasp_kwargs == {}
 assert soc_static_flow.jobs[1].run_vasp_kwargs == {}
 assert "vasp_ncl" in soc_static_flow.jobs[2].run_vasp_kwargs["vasp_cmd"]
 assert "vasp_std" not in soc_static_flow.jobs[2].run_vasp_kwargs["vasp_cmd"]
 soc_static_incar = soc_static_flow.jobs[2].input_set_generator.kwargs["user_incar_settings"]
+soc_precursor_incar = soc_static_flow.jobs[1].input_set_generator.kwargs["user_incar_settings"]
+assert soc_precursor_incar["LWAVE"] is False
 assert soc_static_incar["LSORBIT"] is True
 assert soc_static_incar["LNONCOLLINEAR"] is True
 assert soc_static_incar["ISPIN"] is None
 assert soc_static_incar["GGA_COMPAT"] is False
 assert soc_static_incar["LELF"] is None
+assert soc_static_incar["LWAVE"] is False
 assert soc_static_incar["NCORE"] == 8
 soc_stage_1, soc_stage_2_and_3 = soc_generated_inputs["incar"].split("\n\n", 1)
 soc_stage_2, soc_stage_3 = soc_stage_2_and_3.split("\n\n", 1)
 assert "# VASP executable - vasp_std" in soc_stage_1
 assert "# VASP executable - vasp_std" in soc_stage_2
 assert "# VASP executable - vasp_ncl" in soc_stage_3
+assert "LWAVE = False" in soc_stage_2
+assert "LWAVE = False" in soc_stage_3
 assert "LSORBIT = True" in soc_stage_3
 assert "GGA_COMPAT = False" in soc_stage_3
 assert "ISPIN" not in soc_stage_3

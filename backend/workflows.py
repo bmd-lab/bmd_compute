@@ -19,6 +19,7 @@ DFT_U_INCAR_KEYS = (
 )
 VASP_STANDARD_EXECUTABLE = "vasp_std"
 VASP_NCL_EXECUTABLE = "vasp_ncl"
+WAVECAR_FILE = "WAVECAR"
 _KNOWN_VASP_EXECUTABLES = frozenset(
     {
         VASP_STANDARD_EXECUTABLE,
@@ -255,6 +256,43 @@ def run_vasp_kwargs_for_modifiers(modifiers) -> dict:
     if vasp_executable_for_modifiers(modifiers) == VASP_NCL_EXECUTABLE:
         return {"vasp_cmd": vasp_command_for_modifiers(modifiers)}
     return {}
+
+
+def wavecar_carry_forward_transition(
+    upstream: StageSpec | None,
+    downstream: StageSpec | None,
+) -> bool:
+    # No WAVECAR carry-forward transition is currently validated. The generic
+    # artifact plumbing remains available for future reviewed transitions.
+    return False
+
+
+def workflow_stage_artifact_policies(workflow: WorkflowSpec) -> tuple[dict, ...]:
+    normalized = validate_workflow_spec(workflow)
+    policies = []
+    stages = normalized.stages
+    for index, stage in enumerate(stages):
+        next_stage = stages[index + 1] if index + 1 < len(stages) else None
+        previous_stage = stages[index - 1] if index > 0 else None
+        policies.append(
+            {
+                "write_wavecar": wavecar_carry_forward_transition(stage, next_stage),
+                "copy_from_previous": (
+                    (WAVECAR_FILE,)
+                    if wavecar_carry_forward_transition(previous_stage, stage)
+                    else ()
+                ),
+            }
+        )
+    return tuple(policies)
+
+
+def apply_stage_artifact_incar_settings(user_incar, *, artifact_policy=None) -> dict:
+    settings = dict(user_incar or {})
+    policy = dict(artifact_policy or {})
+    if policy.get("write_wavecar") and "LWAVE" not in settings:
+        settings["LWAVE"] = True
+    return settings
 
 
 def apply_modifier_incar_settings(user_incar, *, modifiers) -> dict:
@@ -805,6 +843,7 @@ def _static_user_incar_settings(
     incar=None,
     resource_stage_type=StageType.STATIC,
     structure=None,
+    magmom_structure=None,
 ):
     calculation_modifiers = calculation_modifiers_from_options(
         modifiers=modifiers,
@@ -815,8 +854,11 @@ def _static_user_incar_settings(
         user_incar,
         modifiers=calculation_modifiers,
     )
-    if Modifier.SOC in calculation_modifiers and structure is not None:
-        user_incar = apply_soc_magmom_settings(user_incar, structure=structure)
+    if Modifier.SOC in calculation_modifiers:
+        user_incar = apply_soc_magmom_settings(
+            user_incar,
+            structure=magmom_structure or structure,
+        )
 
     policy_theory = Theory.HSE06 if hse else Theory.from_value(theory)
     user_incar = apply_theory_incar_settings(
@@ -883,6 +925,7 @@ def _static_restart_incar_settings(
     incar=None,
     resource_stage_type=StageType.STATIC,
     structure=None,
+    magmom_structure=None,
 ):
     settings = _static_user_incar_settings(
         hse=_is_hse_incar(incar or {}),
@@ -894,6 +937,7 @@ def _static_restart_incar_settings(
         incar=incar,
         resource_stage_type=resource_stage_type,
         structure=structure,
+        magmom_structure=magmom_structure,
     )
     settings["ICHARG"] = 11
     return settings
@@ -959,6 +1003,7 @@ def build_static_input_set_generator(
     incar=None,
     kpoints=None,
     potcar_functional="PBE_64",
+    magmom_structure=None,
 ):
     from atomate2.vasp.sets.core import StaticSetGenerator
 
@@ -975,6 +1020,7 @@ def build_static_input_set_generator(
         resources=resources,
         incar=incar,
         structure=structure,
+        magmom_structure=magmom_structure,
     )
 
     return StaticSetGenerator(
@@ -1356,19 +1402,42 @@ def _workflow_flow_suffix(workflow: WorkflowSpec) -> str:
     return "custom_workflow"
 
 
-def _flow_with_stage_metadata(jobs, *, name: str, stage_directories: tuple[str, ...]):
+def _stage_artifact_metadata(stage_artifacts: tuple[dict, ...] | None) -> list[dict]:
+    return [
+        {
+            "write_wavecar": bool(policy.get("write_wavecar")),
+            "copy_from_previous": list(policy.get("copy_from_previous") or ()),
+        }
+        for policy in (stage_artifacts or ())
+    ]
+
+
+def _flow_with_stage_metadata(
+    jobs,
+    *,
+    name: str,
+    stage_directories: tuple[str, ...],
+    stage_artifacts: tuple[dict, ...] | None = None,
+):
     from jobflow import Flow
+
+    metadata = {"bmd_stage_directories": stage_directories}
+    artifact_metadata = _stage_artifact_metadata(stage_artifacts)
+    if artifact_metadata:
+        metadata["bmd_stage_artifacts"] = artifact_metadata
 
     if stage_directories:
         try:
             return Flow(
                 jobs,
                 name=name,
-                metadata={"bmd_stage_directories": stage_directories},
+                metadata=metadata,
             )
         except TypeError:
             flow = Flow(jobs, name=name)
             flow.bmd_stage_directories = stage_directories
+            if artifact_metadata:
+                flow.bmd_stage_artifacts = artifact_metadata
             return flow
 
     return Flow(jobs, name=name)
@@ -1388,11 +1457,16 @@ def build_atomate2_flow_for_workflow_spec(
 
     workflow = validate_workflow_spec(workflow_spec)
     stage_directories = workflow_stage_directories(workflow)
+    stage_artifacts = workflow_stage_artifact_policies(workflow)
     jobs = []
     previous_job = None
 
     for index, stage in enumerate(workflow.stages):
         user_incar = _stage_incar(stage, incar)
+        user_incar = apply_stage_artifact_incar_settings(
+            user_incar,
+            artifact_policy=stage_artifacts[index],
+        )
         stage_kpoints = _stage_kpoints(stage, kpoints)
         stage_structure = (
             previous_job.output.structure
@@ -1437,6 +1511,7 @@ def build_atomate2_flow_for_workflow_spec(
                 incar=user_incar,
                 kpoints=stage_kpoints,
                 potcar_functional=potcar_functional,
+                magmom_structure=structure,
             )
             maker = StaticMaker(
                 input_set_generator=generator,
@@ -1521,6 +1596,7 @@ def build_atomate2_flow_for_workflow_spec(
         jobs,
         name=flow_name,
         stage_directories=stage_directories,
+        stage_artifacts=stage_artifacts,
     )
 
 
@@ -1824,4 +1900,6 @@ __all__ = [
     "run_vasp_kwargs_for_modifiers",
     "vasp_command_for_modifiers",
     "vasp_executable_for_modifiers",
+    "wavecar_carry_forward_transition",
+    "workflow_stage_artifact_policies",
 ]

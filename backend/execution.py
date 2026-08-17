@@ -205,6 +205,7 @@ def _run_locally_with_stage_directories(
         initialize_logger(fmt=log if isinstance(log, str) else "")
 
     root_flow = get_flow(flow, allow_external_references=allow_external_references)
+    stage_artifacts = _flow_stage_artifacts(root_flow)
     logger = logging.getLogger("jobflow.managers.local")
     stopped_parents: set[str] = set()
     errored: set[str] = set()
@@ -275,6 +276,12 @@ def _run_locally_with_stage_directories(
         for index, (job, parents) in enumerate(current_flow.iterflow()):
             job_dir = _stage_directory(index)
             job_dir.mkdir(exist_ok=True)
+            if index > 0:
+                _copy_optional_previous_stage_artifacts(
+                    _stage_directory(index - 1),
+                    job_dir,
+                    stage_artifacts[index] if index < len(stage_artifacts) else {},
+                )
             with _change_directory(job_dir):
                 response, jobflow_stopped = _run_job(job, parents)
             if response is not None:
@@ -292,6 +299,44 @@ def _run_locally_with_stage_directories(
         raise RuntimeError("Flow did not finish running successfully")
 
     return dict(responses)
+
+
+def _flow_stage_artifacts(flow) -> tuple[dict, ...]:
+    metadata = getattr(flow, "metadata", None) or {}
+    configured = metadata.get("bmd_stage_artifacts") or getattr(
+        flow,
+        "bmd_stage_artifacts",
+        (),
+    )
+    return tuple(dict(policy or {}) for policy in configured)
+
+
+def _copy_optional_previous_stage_artifacts(
+    previous_dir: Path,
+    current_dir: Path,
+    artifact_policy: dict,
+) -> None:
+    for filename in artifact_policy.get("copy_from_previous") or ():
+        safe_name = _safe_artifact_filename(filename)
+        source = previous_dir / safe_name
+        if not source.exists():
+            continue
+        if not source.is_file():
+            raise OSError(f"Expected VASP artifact to be a file: {source}")
+        shutil.copy2(source, current_dir / safe_name)
+
+
+def _safe_artifact_filename(filename) -> str:
+    value = str(filename or "").strip()
+    if (
+        not value
+        or "/" in value
+        or "\\" in value
+        or value in {".", ".."}
+        or Path(value).name != value
+    ):
+        raise ValueError(f"Unsupported stage artifact filename: {filename!r}")
+    return value
 
 
 @contextmanager
@@ -342,6 +387,7 @@ class _JobflowFailureTracebackFilter(logging.Filter):
 
 __all__ = [
     "_flow_stage_directories",
+    "_flow_stage_artifacts",
     "_run_locally_with_stage_directories",
     "configure_atomate2_vasp_command",
     "print_runtime_info",

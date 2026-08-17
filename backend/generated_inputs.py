@@ -28,6 +28,8 @@ from backend.workflows import (
     build_vasp_input_set_for_spec,
     validate_input_set_for_modifiers,
     vasp_executable_for_modifiers,
+    apply_stage_artifact_incar_settings,
+    workflow_stage_artifact_policies,
 )
 
 
@@ -114,6 +116,7 @@ def _preview_workflow_inputs(
     potcar_functional: str,
 ) -> dict:
     stage_directories = workflow_stage_directories(workflow_spec)
+    stage_artifacts = workflow_stage_artifact_policies(workflow_spec)
     stage_previews = []
 
     for index, stage in enumerate(workflow_spec.stages):
@@ -124,6 +127,7 @@ def _preview_workflow_inputs(
             kpoints=kpoints,
             resources=resources,
             potcar_functional=potcar_functional,
+            artifact_policy=stage_artifacts[index],
         )
         validate_input_set_for_modifiers(
             input_set,
@@ -136,6 +140,7 @@ def _preview_workflow_inputs(
                 "label": stage_display_name(stage),
                 "theory_label": theory_display_name(stage.theory),
                 "vasp_executable": vasp_executable_for_modifiers(stage.modifiers),
+                "artifact_policy": stage_artifacts[index],
                 "input_set": input_set,
             }
         )
@@ -163,9 +168,14 @@ def _input_set_for_stage(
     kpoints,
     resources,
     potcar_functional: str,
+    artifact_policy: dict | None = None,
 ):
     user_incar = dict(incar or {})
     user_incar.update(dict(stage.options or {}).get("incar") or {})
+    user_incar = apply_stage_artifact_incar_settings(
+        user_incar,
+        artifact_policy=artifact_policy,
+    )
     stage_kpoints = dict(stage.options or {}).get("kpoints", kpoints)
     spin_polarized = Modifier.SPIN_POLARIZED in stage.modifiers
 
