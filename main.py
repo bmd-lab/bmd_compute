@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 
 from fastapi import FastAPI, Form, Request
 from fastapi.templating import Jinja2Templates
@@ -38,7 +39,7 @@ from backend.monitoring import monitor_job
 from backend.parser import StructureValidationError, parse_structure
 from backend.remote_preparation import prepare_remote_submission, remembered_successful_preparation
 from backend.remote_submission import remembered_successful_submission, submit_remote_workflow
-from backend.results import load_results_for_completed_job
+from backend.results import load_results_for_completed_job, monitoring_indicates_success
 from backend.submission import create_submission_spec
 from backend.summary import summarize_structure
 from backend.workflow_summary import summarize_workflow
@@ -66,6 +67,7 @@ def page_context(
     resume_job_id: str = "",
     structure_error=None,
     calculation_error=None,
+    collapse_structure_input: bool = False,
 ):
     if selected_workflow is None:
         selected_workflow = (
@@ -95,6 +97,12 @@ def page_context(
         "workflow": calculation_summary,
         "generated_inputs": generated_inputs,
         "submission_spec": submission_spec,
+        "monitor_state_json": monitor_state_json(
+            summary=summary,
+            calculation_summary=calculation_summary,
+            generated_inputs=generated_inputs,
+            submission_spec=submission_spec,
+        ),
         "remote_preparation": remote_preparation,
         "submission_result": submission_result,
         "monitoring_result": monitoring_result,
@@ -102,7 +110,101 @@ def page_context(
         "resume_job_id": resume_job_id,
         "structure_error": structure_error,
         "calculation_error": calculation_error,
+        "collapse_structure_input": collapse_structure_input,
     }
+
+
+def monitor_state_json(
+    *,
+    summary=None,
+    calculation_summary=None,
+    generated_inputs=None,
+    submission_spec=None,
+) -> str:
+    if not submission_spec:
+        return ""
+
+    payload = {
+        "summary": summary,
+        "calculation": calculation_summary,
+        "generated_inputs": generated_inputs,
+        "submission_spec": _compact_submission_spec_for_monitor(submission_spec),
+    }
+    return json.dumps(payload, sort_keys=True)
+
+
+def _compact_submission_spec_for_monitor(submission_spec: dict) -> dict:
+    compact = deepcopy(submission_spec)
+    flow_spec = compact.get("flow_spec")
+    if isinstance(flow_spec, dict):
+        # Monitoring/results need the workflow and remote paths, not the full
+        # pasted structure text. The original structure remains in the visible
+        # form state for editing/rebuilding.
+        flow_spec.pop("structure", None)
+    return compact
+
+
+def monitor_state_from_json(value: str | None) -> dict:
+    if not value:
+        return {}
+    try:
+        payload = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise CalculationValidationError(
+            "The saved monitoring state could not be read.",
+            suggestion="Rebuild the calculation, then refresh monitoring again.",
+        ) from exc
+    return payload if isinstance(payload, dict) else {}
+
+
+def lightweight_submission_spec_from_monitor_form(
+    *,
+    structure_text: str,
+    fmt: str,
+    workflow_spec: WorkflowSpec,
+    execution_resources: ExecutionResources,
+    timestamp: str,
+    calculation_summary=None,
+) -> dict:
+    calculation_spec = calculation_spec_from_workflow_spec(workflow_spec)
+    potcar_functional = (
+        legacy_potcar_functional_from_spec(calculation_spec)
+        if calculation_spec is not None
+        else "PBE_64"
+    )
+    legacy_workflow = (
+        legacy_workflow_from_spec(calculation_spec)
+        if calculation_spec is not None
+        else "custom_workflow"
+    )
+    flow_spec = {
+        "workflow_spec": workflow_spec.to_dict(),
+        "workflow": legacy_workflow,
+        "potcar_functional": potcar_functional,
+        "kpoints": None,
+        "incar": {},
+        "execution_resources": execution_resources.to_dict(),
+        "structure": {
+            "type": "pasted_text",
+            "format": fmt,
+            "text": structure_text,
+        },
+    }
+    if calculation_spec is not None:
+        flow_spec["calculation_spec"] = calculation_spec.to_dict()
+
+    return create_submission_spec(
+        flow_spec,
+        structure=None,
+        label=(calculation_summary or {}).get("flow_name", "vasp_run"),
+        timestamp=timestamp,
+        nodes=execution_resources.nodes,
+        ntasks=execution_resources.cpus,
+        mem_gb=execution_resources.memory_gb,
+        walltime=execution_resources.walltime,
+        partition=execution_resources.queue,
+        account=execution_resources.account,
+    )
 
 
 def structure_error_context(exc: StructureValidationError) -> dict:
@@ -448,9 +550,15 @@ def analyze(
 def resume_existing_calculation(
     request: Request,
     job_id: str = Form(...),
+    load_results: str = Form("false"),
 ):
     monitoring_result = monitor_job(job_id)
-    results_summary = load_results_for_completed_job(monitoring_result)
+    should_load_results = load_results.lower() == "true"
+    results_summary = (
+        load_results_for_completed_job(monitoring_result)
+        if should_load_results and monitoring_indicates_success(monitoring_result)
+        else None
+    )
 
     return templates.TemplateResponse(
         request=request,
@@ -459,6 +567,7 @@ def resume_existing_calculation(
             monitoring_result=monitoring_result,
             results_summary=results_summary,
             resume_job_id=job_id,
+            collapse_structure_input=True,
         ),
     )
 
@@ -756,6 +865,7 @@ def refresh_monitoring(
     created_at: str = Form(...),
     job_id: str = Form(...),
     submitted_at: str = Form(""),
+    monitor_state_json: str | None = Form(None),
     workflow_spec_json: str | None = Form(None),
     workflow: str | None = Form(None),
     method: str | None = Form(None),
@@ -763,7 +873,13 @@ def refresh_monitoring(
     calculation_spec = default_calculation_spec()
     workflow_spec = default_workflow_spec()
     execution_resources = default_execution_resources()
+    monitor_state = {}
+    summary = None
+    calculation_summary = None
+    generated_inputs = None
+    submission_spec = None
     try:
+        monitor_state = monitor_state_from_json(monitor_state_json)
         workflow_spec = workflow_spec_from_form(
             workflow_spec_json=workflow_spec_json,
             purpose=purpose,
@@ -782,15 +898,26 @@ def refresh_monitoring(
             walltime=walltime,
             queue=queue,
         )
-        summary, calculation_summary, generated_inputs, submission_spec = build_submission_state(
-            structure_text=structure,
-            fmt=fmt,
-            workflow_spec=workflow_spec,
-            execution_resources=execution_resources,
-            timestamp=created_at,
-        )
-    except StructureValidationError as exc:
-        return structure_error_response(
+        summary = monitor_state.get("summary")
+        calculation_summary = monitor_state.get("calculation")
+        generated_inputs = monitor_state.get("generated_inputs")
+        submission_spec = monitor_state.get("submission_spec")
+        if not submission_spec:
+            submission_spec = lightweight_submission_spec_from_monitor_form(
+                structure_text=structure,
+                fmt=fmt,
+                workflow_spec=workflow_spec,
+                execution_resources=execution_resources,
+                timestamp=created_at,
+                calculation_summary=calculation_summary,
+            )
+        if not isinstance(submission_spec, dict):
+            raise CalculationValidationError(
+                "The saved submission state could not be read.",
+                suggestion="Rebuild the calculation, then refresh monitoring again.",
+            )
+    except CalculationValidationError as exc:
+        return calculation_error_response(
             request,
             structure_text=structure,
             fmt=fmt,
@@ -799,8 +926,8 @@ def refresh_monitoring(
             selected_resources=execution_resources,
             exc=exc,
         )
-    except CalculationValidationError as exc:
-        return calculation_error_response(
+    except StructureValidationError as exc:
+        return structure_error_response(
             request,
             structure_text=structure,
             fmt=fmt,
@@ -816,10 +943,12 @@ def refresh_monitoring(
         submitted_at=submitted_at,
     )
     monitoring_result = monitor_job(job_id, submission_spec=submission_spec)
-    results_summary = load_results_for_completed_job(
-        monitoring_result,
-        submission_spec=submission_spec,
-    )
+    results_summary = None
+    if monitoring_indicates_success(monitoring_result):
+        results_summary = load_results_for_completed_job(
+            monitoring_result,
+            submission_spec=submission_spec,
+        )
 
     return templates.TemplateResponse(
         request=request,
@@ -838,5 +967,6 @@ def refresh_monitoring(
             submission_result=submission_result,
             monitoring_result=monitoring_result,
             results_summary=results_summary,
+            collapse_structure_input=True,
         ),
     )

@@ -4,31 +4,31 @@ import gzip
 import json
 import logging
 import posixpath
+import threading
 import tempfile
+import time
 import traceback
+from collections import OrderedDict
+from copy import deepcopy
 from pathlib import Path
 from typing import Callable
 
-from backend.calculations.models import CalculationSpec, Purpose, StageType, WorkflowSpec
+from backend.calculations.models import CalculationSpec, WorkflowSpec
 from backend.calculations.registry import (
     calculation_result_stage_directory,
     calculation_spec_from_flow_spec,
     workflow_result_stage_directory,
     workflow_spec_from_flow_spec,
 )
-from backend.config import DEFAULT_LOGS_DIR
+from backend.config import DEFAULT_LOGS_DIR, DEFAULT_REMOTE_PYTHON
 from backend.remote import RemoteRunner
 from backend.remote_runtime import (
     connected_remote_runner,
     connection_profile_from_submission_spec,
     default_connection_profile,
 )
-from backend.workflow_results import (
-    render_workflow_results,
-    workflow_result_file_keys,
-    workflow_result_parse_dos,
-    workflow_result_parse_eigenvalues,
-)
+from backend.remote_result_parser import parse_result_paths
+from backend.workflow_results import workflow_result_file_keys
 
 
 RESULT_FILES = {
@@ -39,6 +39,18 @@ RESULT_FILES = {
     "kpoints": "KPOINTS",
 }
 LOGGER = logging.getLogger(__name__)
+RESULTS_CACHE_MAX_ENTRIES = 4
+REMOTE_RESULT_PARSE_TIMEOUT_S = 900
+REMOTE_RESULT_STDOUT_MAX_BYTES = 64 * 1024 * 1024
+REMOTE_RESULT_JSON_START = "__BMD_RESULTS_JSON_START__"
+REMOTE_RESULT_JSON_END = "__BMD_RESULTS_JSON_END__"
+_RESULTS_CACHE_LOCK = threading.Lock()
+_RESULTS_CACHE: OrderedDict[str, dict] = OrderedDict()
+_RESULTS_CACHE_JOB_INDEX: dict[str, str] = {}
+
+
+class RemoteResultExtractionError(RuntimeError):
+    """Raised when the remote parser command cannot return compact results."""
 
 
 def _log_results(message: str) -> None:
@@ -65,6 +77,7 @@ def load_results_for_completed_job(
     submission_spec: dict | None = None,
     runner_factory: Callable[[], RemoteRunner] | None = None,
     parser: Callable[[dict, dict], dict] | None = None,
+    cache: bool | None = None,
 ) -> dict | None:
     _log_results("ENTER results")
     _log_results("Check monitoring success")
@@ -73,6 +86,18 @@ def load_results_for_completed_job(
         _log_results("RETURN results")
         return None
     _log_results("Monitoring reported SUCCESS")
+
+    use_cache = (parser is None) if cache is None else bool(cache)
+    local_location = (
+        results_location_from_submission_spec(submission_spec)
+        if submission_spec is not None
+        else None
+    )
+    if use_cache:
+        cached = cached_completed_result(monitoring_result, local_location)
+        if cached is not None:
+            _log_results("RETURN cached results")
+            return cached
 
     _log_results("Build results connection profile")
     profile = (
@@ -106,6 +131,12 @@ def load_results_for_completed_job(
                 )
             _log_results("Run directory found")
 
+            if use_cache:
+                cached = cached_completed_result(monitoring_result, location)
+                if cached is not None:
+                    _log_results("RETURN cached results")
+                    return cached
+
             _log_results("Build direct result paths")
             output_dir = location["output_dir"]
             paths = result_file_paths(
@@ -126,9 +157,36 @@ def load_results_for_completed_job(
                     files=paths,
                 )
 
-            _log_results("Read result files")
-            files = read_result_files(runner, paths)
-            _log_results("Result file reads complete")
+            parse_context = _results_parse_context(monitoring_result, location)
+            if parser is None:
+                _log_results("Parse result files remotely")
+                result = extract_remote_vasp_result(
+                    runner,
+                    paths,
+                    parse_context,
+                    python=location.get("remote_python"),
+                )
+                _log_results("Remote result parsing complete")
+                files = {
+                    key: {
+                        "path": value,
+                    }
+                    for key, value in paths.items()
+                }
+            else:
+                _log_results("Read result files")
+                files = read_result_files(runner, paths)
+                _log_results("Result file reads complete")
+    except RemoteResultExtractionError as exc:
+        _log_results("Remote results parsing failed")
+        _log_results("RETURN results")
+        return _failure_result(
+            "Results Parsing",
+            _clean_message(exc),
+            "Check that the remote pymatgen environment can parse the completed VASP outputs.",
+            files=locals().get("paths", {}),
+            exception=exc.__cause__ or exc,
+        )
     except Exception as exc:
         _log_results("Results retrieval failed")
         _log_results("RETURN results")
@@ -139,22 +197,22 @@ def load_results_for_completed_job(
             exception=exc,
         )
 
-    parse = parser or parse_vasp_result_files
-    parse_context = _results_parse_context(monitoring_result, location)
-    try:
-        _log_results("Parse result files")
-        result = parse(files, parse_context)
-        _log_results("Result file parsing complete")
-    except Exception as exc:
-        _log_results("Results parsing failed")
-        _log_results("RETURN results")
-        return _failure_result(
-            "Results Parsing",
-            _clean_message(exc),
-            "Check that pymatgen is installed and that the VASP output files are complete.",
-            files={key: value["path"] for key, value in files.items()},
-            exception=exc,
-        )
+    if parser is not None:
+        parse_context = _results_parse_context(monitoring_result, location)
+        try:
+            _log_results("Parse result files")
+            result = parser(files, parse_context)
+            _log_results("Result file parsing complete")
+        except Exception as exc:
+            _log_results("Results parsing failed")
+            _log_results("RETURN results")
+            return _failure_result(
+                "Results Parsing",
+                _clean_message(exc),
+                "Check that pymatgen is installed and that the VASP output files are complete.",
+                files={key: value["path"] for key, value in files.items()},
+                exception=exc,
+            )
 
     result.setdefault("status", "success")
     result.setdefault("title", "Results Summary")
@@ -163,8 +221,36 @@ def load_results_for_completed_job(
     result.setdefault("job_id", monitoring_result.get("job_id"))
     result.setdefault("files", {key: value["path"] for key, value in files.items()})
     result.setdefault("visualizations", [])
+    if use_cache:
+        store_completed_result(monitoring_result, location, result)
     _log_results("RETURN results")
     return result
+
+
+def results_location_from_submission_spec(submission_spec: dict | None) -> dict:
+    if not submission_spec:
+        return _empty_results_location()
+
+    run_dir = _run_dir_from_submission_or_state(submission_spec, {})
+    if not run_dir:
+        return _empty_results_location()
+
+    workflow_spec = workflow_spec_from_submission_spec(submission_spec)
+    calculation_spec = calculation_spec_from_submission_spec(submission_spec)
+    output_dir = result_output_dir_from_submission_spec(run_dir, submission_spec)
+    return {
+        "run_dir": run_dir,
+        "output_dir": output_dir,
+        "calculation_spec": calculation_spec,
+        "workflow_spec": workflow_spec,
+        "workflow_result_file_keys": workflow_result_file_keys(
+            workflow_spec or calculation_spec
+        ),
+        "remote_python": (
+            (submission_spec.get("runner") or {}).get("python")
+            or DEFAULT_REMOTE_PYTHON
+        ),
+    }
 
 
 def resolve_results_location(
@@ -197,18 +283,86 @@ def resolve_results_location(
     if not run_dir:
         return _empty_results_location()
 
-    workflow_spec = workflow_spec_from_submission_spec(resolved_spec)
-    calculation_spec = calculation_spec_from_submission_spec(resolved_spec)
-    output_dir = result_output_dir_from_submission_spec(run_dir, resolved_spec)
-    return {
-        "run_dir": run_dir,
-        "output_dir": output_dir,
-        "calculation_spec": calculation_spec,
-        "workflow_spec": workflow_spec,
-        "workflow_result_file_keys": workflow_result_file_keys(
-            workflow_spec or calculation_spec
-        ),
+    resolved_spec_with_run_dir = {
+        **(resolved_spec or {}),
+        "paths": {
+            **((resolved_spec or {}).get("paths") or {}),
+            "run_dir": run_dir,
+        },
     }
+    return results_location_from_submission_spec(resolved_spec_with_run_dir)
+
+
+def results_cache_key(
+    monitoring_result: dict | None,
+    location: dict | None,
+) -> str | None:
+    job_id = str((monitoring_result or {}).get("job_id") or "").strip()
+    run_dir = str((location or {}).get("run_dir") or "").strip()
+    output_dir = str((location or {}).get("output_dir") or "").strip()
+    if not job_id or not run_dir:
+        return None
+    return "|".join((job_id, run_dir, output_dir))
+
+
+def cached_completed_result(
+    monitoring_result: dict | None,
+    location: dict | None,
+) -> dict | None:
+    key = results_cache_key(monitoring_result, location)
+    job_id = str((monitoring_result or {}).get("job_id") or "").strip()
+    if key is None:
+        if not job_id:
+            return None
+        with _RESULTS_CACHE_LOCK:
+            key = _RESULTS_CACHE_JOB_INDEX.get(job_id)
+            if key is None:
+                return None
+
+    with _RESULTS_CACHE_LOCK:
+        value = _RESULTS_CACHE.get(key)
+        if value is None:
+            return None
+        _RESULTS_CACHE.move_to_end(key)
+        return deepcopy(value)
+
+
+def store_completed_result(
+    monitoring_result: dict | None,
+    location: dict | None,
+    result: dict,
+) -> None:
+    key = results_cache_key(monitoring_result, location)
+    if key is None or result.get("status") != "success":
+        return
+    job_id = str((monitoring_result or {}).get("job_id") or "").strip()
+
+    with _RESULTS_CACHE_LOCK:
+        _RESULTS_CACHE[key] = deepcopy(result)
+        _RESULTS_CACHE.move_to_end(key)
+        if job_id:
+            _RESULTS_CACHE_JOB_INDEX[job_id] = key
+        while len(_RESULTS_CACHE) > RESULTS_CACHE_MAX_ENTRIES:
+            removed_key, _ = _RESULTS_CACHE.popitem(last=False)
+            for indexed_job_id, indexed_key in list(_RESULTS_CACHE_JOB_INDEX.items()):
+                if indexed_key == removed_key:
+                    _RESULTS_CACHE_JOB_INDEX.pop(indexed_job_id, None)
+
+
+def clear_results_cache() -> None:
+    with _RESULTS_CACHE_LOCK:
+        _RESULTS_CACHE.clear()
+        _RESULTS_CACHE_JOB_INDEX.clear()
+
+
+def results_cache_info() -> dict:
+    with _RESULTS_CACHE_LOCK:
+        return {
+            "size": len(_RESULTS_CACHE),
+            "max_entries": RESULTS_CACHE_MAX_ENTRIES,
+            "keys": list(_RESULTS_CACHE),
+            "job_index_size": len(_RESULTS_CACHE_JOB_INDEX),
+        }
 
 
 def resolve_results_run_dir(
@@ -291,6 +445,7 @@ def _empty_results_location() -> dict:
         "calculation_spec": None,
         "workflow_spec": None,
         "workflow_result_file_keys": (),
+        "remote_python": DEFAULT_REMOTE_PYTHON,
     }
 
 
@@ -364,25 +519,189 @@ def read_result_files(runner: RemoteRunner, paths: dict[str, str | None]) -> dic
     return files
 
 
+def extract_remote_vasp_result(
+    runner: RemoteRunner,
+    paths: dict[str, str],
+    context: dict,
+    *,
+    python: str | None = None,
+    timeout_s: float = REMOTE_RESULT_PARSE_TIMEOUT_S,
+) -> dict:
+    source = remote_result_parser_source(paths, context)
+    started = time.time()
+    try:
+        command_result = runner.run_python(
+            source,
+            python=python or DEFAULT_REMOTE_PYTHON,
+            check=False,
+            timeout_s=timeout_s,
+        )
+    except Exception as exc:
+        raise RemoteResultExtractionError(_clean_message(exc)) from exc
+
+    if not command_result.ok:
+        message = (
+            (command_result.stderr or "").strip()
+            or (command_result.stdout or "").strip()
+            or f"Remote parser exited with code {command_result.returncode}."
+        )
+        raise RemoteResultExtractionError(message)
+
+    stdout = command_result.stdout or ""
+    stdout_bytes = len(stdout.encode("utf-8"))
+    if stdout_bytes > REMOTE_RESULT_STDOUT_MAX_BYTES:
+        raise RemoteResultExtractionError(
+            "Remote result parser returned an unexpectedly large payload "
+            f"({stdout_bytes} bytes)."
+        )
+
+    try:
+        payload_json = _remote_result_json_from_stdout(stdout)
+        result = json.loads(payload_json)
+        if not isinstance(result, dict):
+            raise RuntimeError("Remote result parser returned a non-object payload.")
+    except Exception as exc:
+        raise RemoteResultExtractionError(_clean_message(exc)) from exc
+
+    diagnostics = result.setdefault("diagnostics", {})
+    remote_parsing = diagnostics.setdefault("remote_parsing", {})
+    remote_parsing["compact_result_bytes"] = len(payload_json.encode("utf-8"))
+    remote_parsing["remote_command_elapsed_s"] = _round_float(command_result.elapsed_s)
+    remote_parsing["local_processing_elapsed_s"] = _round_float(time.time() - started)
+    remote_parsing["stdout_bytes"] = stdout_bytes
+    remote_parsing["timeout_s"] = timeout_s
+    return result
+
+
+def remote_result_parser_source(paths: dict[str, str], context: dict) -> str:
+    parser_module = Path(__file__).with_name("remote_result_parser.py")
+    parser_source = parser_module.read_text(encoding="utf-8")
+    paths_json = json.dumps(
+        _json_safe_mapping(paths),
+        sort_keys=True,
+        allow_nan=False,
+    )
+    context_json = json.dumps(
+        remote_result_parser_context(context),
+        sort_keys=True,
+        allow_nan=False,
+    )
+    start = json.dumps(REMOTE_RESULT_JSON_START)
+    end = json.dumps(REMOTE_RESULT_JSON_END)
+    return (
+        parser_source
+        + "\n\n"
+        + "if __name__ == '__main__':\n"
+        + "    import json as _json\n"
+        + f"    _paths = _json.loads({paths_json!r})\n"
+        + f"    _context = _json.loads({context_json!r})\n"
+        + "    _cwd = os.getcwd()\n"
+        + "    _stage_dir = os.path.dirname(_paths.get('vasprun') or '')\n"
+        + "    try:\n"
+        + "        if _stage_dir:\n"
+        + "            os.chdir(_stage_dir)\n"
+        + "        _result = parse_result_paths(\n"
+        + "            _paths,\n"
+        + "            _context,\n"
+        + "            parser_name='pymatgen-remote',\n"
+        + "            include_remote_metadata=True,\n"
+        + "        )\n"
+        + "    except Exception as _exc:\n"
+        + "        _result = remote_failure_result(_paths, _exc)\n"
+        + "    finally:\n"
+        + "        os.chdir(_cwd)\n"
+        + "    _payload = _json.dumps(_result, separators=(',', ':'), allow_nan=False)\n"
+        + f"    print({start})\n"
+        + "    print(_payload)\n"
+        + f"    print({end})\n"
+    )
+
+
+def _remote_result_json_from_stdout(stdout: str) -> str:
+    text = stdout or ""
+    start_index = text.find(REMOTE_RESULT_JSON_START)
+    if start_index < 0:
+        raise RuntimeError("Remote result parser did not emit a result payload.")
+    start_index += len(REMOTE_RESULT_JSON_START)
+    end_index = text.find(REMOTE_RESULT_JSON_END, start_index)
+    if end_index < 0:
+        raise RuntimeError("Remote result parser payload was incomplete.")
+    payload = text[start_index:end_index].strip()
+    if not payload:
+        raise RuntimeError("Remote result parser returned an empty payload.")
+    return payload
+
+
+def remote_result_parser_context(context: dict | None) -> dict:
+    """
+    Return the narrow JSON-native context consumed by the remote parser.
+
+    The remote parser only needs scheduler completion fields for display and a
+    calculation/workflow spec dict to decide whether DOS, band, or relaxation
+    semantics apply. Application-domain Python objects such as RemoteJobStatus
+    must not cross this process boundary.
+    """
+
+    source = context or {}
+    payload = {
+        "slurm_state": _json_safe_scalar(source.get("slurm_state")),
+        "exit_code": _json_safe_scalar(source.get("exit_code")),
+        "workflow_spec": _json_safe_optional_mapping(source.get("workflow_spec")),
+        "calculation_spec": _json_safe_optional_mapping(source.get("calculation_spec")),
+    }
+    return {
+        key: value
+        for key, value in payload.items()
+        if value is not None
+    }
+
+
+def _json_safe_optional_mapping(value) -> dict | None:
+    if value is None:
+        return None
+    if hasattr(value, "to_dict"):
+        value = value.to_dict()
+    if not isinstance(value, dict):
+        return None
+    return _json_safe_mapping(value)
+
+
+def _json_safe_mapping(value: dict) -> dict:
+    return {
+        str(key): _json_safe_value(item)
+        for key, item in value.items()
+    }
+
+
+def _json_safe_sequence(value) -> list:
+    return [
+        _json_safe_value(item)
+        for item in value
+    ]
+
+
+def _json_safe_value(value):
+    if isinstance(value, dict):
+        return _json_safe_mapping(value)
+    if isinstance(value, (list, tuple)):
+        return _json_safe_sequence(value)
+    return _json_safe_scalar(value)
+
+
+def _json_safe_scalar(value):
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    raise TypeError(
+        f"Remote result parser context contains unsupported value "
+        f"{value.__class__.__module__}.{value.__class__.__name__}."
+    )
+
+
 def parse_vasp_result_files(files: dict, monitoring_result: dict) -> dict:
     _log_results("ENTER parse_vasp_result_files")
-    from pymatgen.core import Structure
-    from pymatgen.io.vasp.outputs import Outcar, Vasprun
-
     with tempfile.TemporaryDirectory(prefix="bmd-results-") as tmpdir:
         _log_results("Write temporary VASP files")
         tmp = Path(tmpdir)
-        workflow_spec = _workflow_spec_from_results_context(monitoring_result)
-        calculation_spec = _calculation_spec_from_results_context(monitoring_result)
-        result_spec = workflow_spec or calculation_spec
-        parse_dos = workflow_result_parse_dos(
-            result_spec,
-            available_file_keys=set(files),
-        )
-        parse_eigenvalues = workflow_result_parse_eigenvalues(
-            result_spec,
-            available_file_keys=set(files),
-        )
         local_paths = {
             "contcar": tmp / "CONTCAR",
             "outcar": tmp / "OUTCAR",
@@ -397,103 +716,25 @@ def parse_vasp_result_files(files: dict, monitoring_result: dict) -> dict:
             local_path.write_text(files[key]["text"], encoding="utf-8")
         _log_results("Temporary VASP files written")
 
-        _log_results("Parse Structure")
-        contcar_structure = Structure.from_file(str(local_paths["contcar"]))
-        _log_results("Structure parsed")
-
-        outcar_parsed = True
-        outcar_error = ""
-        try:
-            _log_results("Parse Outcar")
-            Outcar(str(local_paths["outcar"]))
-            _log_results("Outcar parsed")
-        except Exception as exc:
-            outcar_parsed = False
-            outcar_error = str(exc)
-            _log_results("Outcar parse failed")
-
-        try:
-            _log_results("Parse Vasprun")
-            vasprun = Vasprun(
-                str(local_paths["vasprun"]),
-                **_vasprun_parse_kwargs(
-                    parse_dos=parse_dos,
-                    parse_eigenvalues=parse_eigenvalues,
-                ),
-            )
-            _log_results("Vasprun parsed")
-        except TypeError:
-            _log_results("Parse Vasprun with legacy eigenvalue argument")
-            vasprun = Vasprun(
-                str(local_paths["vasprun"]),
-                **_vasprun_parse_kwargs(
-                    parse_dos=parse_dos,
-                    parse_eigenvalues=parse_eigenvalues,
-                    legacy_eigen_arg=True,
-                ),
-            )
-            _log_results("Vasprun parsed")
-
-        _log_results("Extract final structure")
-        final_structure = getattr(vasprun, "final_structure", None) or contcar_structure
-        _log_results("Final structure extracted")
-        _log_results("Extract final energy")
-        final_energy = _float_or_none(getattr(vasprun, "final_energy", None))
-        _log_results("Final energy extracted")
-        natoms = len(final_structure)
-        energy_per_atom = (
-            _round_float(final_energy / natoms)
-            if final_energy is not None and natoms
-            else None
-        )
-        electronic_convergence = getattr(vasprun, "converged_electronic", None)
-        if electronic_convergence is None:
-            electronic_convergence = getattr(vasprun, "converged", None)
-        ionic_convergence = None
-        if _result_has_final_relaxation_stage(result_spec):
-            ionic_convergence = getattr(vasprun, "converged_ionic", None)
-
-        completion_status = _completion_status(monitoring_result)
-        formula = final_structure.composition.reduced_formula
-        workflow_payload = render_workflow_results(
-            result_spec,
-            vasprun=vasprun,
-            files=files,
-            local_paths=local_paths,
-        )
-        _log_results("Generate CIF")
-        cif_text = final_structure.to(fmt="cif")
-        _log_results("CIF generated")
-
-        _log_results("RETURN parse_vasp_result_files")
-        result = {
-            "status": "success",
-            "title": "Results Summary",
-            "completion_status": completion_status,
-            "final_energy_ev": _round_float(final_energy),
-            "energy_per_atom_ev": energy_per_atom,
-            "ionic_steps": len(getattr(vasprun, "ionic_steps", []) or []),
-            "electronic_convergence": _bool_or_none(electronic_convergence),
-            "converged_electronic": _bool_or_none(electronic_convergence),
-            "ionic_convergence": _bool_or_none(ionic_convergence),
-            "converged_ionic": _bool_or_none(ionic_convergence),
-            "final_formula": formula,
-            "natoms": natoms,
-            "files": {key: value["path"] for key, value in files.items()},
-            "diagnostics": {
-                "outcar_parsed": outcar_parsed,
-                "outcar_error": outcar_error,
-                "parser": "pymatgen",
-            },
-            "visualizations": workflow_payload.visualizations,
-            "viewer": {
-                "format": "cif",
-                "source": "CONTCAR",
-                "cif": cif_text,
-            },
+        path_context = {
+            key: str(value)
+            for key, value in local_paths.items()
         }
-        for key, summary in workflow_payload.summaries.items():
-            result[key] = summary
+        result = parse_result_paths(
+            path_context,
+            monitoring_result,
+            display_paths={
+                key: value["path"]
+                for key, value in files.items()
+            },
+            parser_name="pymatgen",
+            include_remote_metadata=False,
+        )
+        result["files"] = {
+            key: value["path"]
+            for key, value in files.items()
+        }
+        _log_results("RETURN parse_vasp_result_files")
         return result
 
 
@@ -502,50 +743,6 @@ def _decode_remote_output(remote_path: str, data: bytes) -> str:
     if remote_path.endswith(".gz") or raw.startswith(b"\x1f\x8b"):
         raw = gzip.decompress(raw)
     return raw.decode("utf-8", "ignore")
-
-
-def _completion_status(monitoring_result: dict) -> str:
-    state = monitoring_result.get("slurm_state") or "COMPLETED"
-    exit_code = monitoring_result.get("exit_code") or "0:0"
-    return f"{state} (ExitCode {exit_code})"
-
-
-def _result_has_final_relaxation_stage(result_spec) -> bool:
-    if isinstance(result_spec, WorkflowSpec):
-        return bool(
-            result_spec.stages
-            and result_spec.stages[-1].stage_type is StageType.RELAX
-        )
-
-    if isinstance(result_spec, CalculationSpec):
-        return result_spec.purpose in {
-            Purpose.RELAX,
-            Purpose.DOUBLE_RELAX,
-        }
-
-    return False
-
-
-def _vasprun_parse_kwargs(
-    *,
-    parse_dos: bool,
-    parse_eigenvalues: bool,
-    legacy_eigen_arg: bool = False,
-) -> dict:
-    common = {
-        "exception_on_bad_xml": False,
-        "parse_potcar_file": False,
-    }
-    if parse_eigenvalues:
-        # Keep pymatgen's standard band-structure parse path; parse_dos=False can leave efermi unset.
-        return common
-
-    eigen_key = "parse_eigen" if legacy_eigen_arg else "parse_eigenvalues"
-    return {
-        "parse_dos": parse_dos,
-        eigen_key: False,
-        **common,
-    }
 
 
 def _results_parse_context(monitoring_result: dict | None, location: dict) -> dict:
@@ -557,38 +754,6 @@ def _results_parse_context(monitoring_result: dict | None, location: dict) -> di
     if calculation_spec is not None:
         context["calculation_spec"] = calculation_spec.to_dict()
     return context
-
-
-def _workflow_spec_from_results_context(context: dict | None) -> WorkflowSpec | None:
-    if not context:
-        return None
-
-    value = context.get("workflow_spec")
-    if isinstance(value, WorkflowSpec):
-        return value
-    if value:
-        try:
-            return WorkflowSpec.from_dict(value)
-        except Exception:
-            return None
-
-    return workflow_spec_from_submission_spec(context.get("submission_spec"))
-
-
-def _calculation_spec_from_results_context(context: dict | None) -> CalculationSpec | None:
-    if not context:
-        return None
-
-    value = context.get("calculation_spec")
-    if isinstance(value, CalculationSpec):
-        return value
-    if value:
-        try:
-            return CalculationSpec.from_dict(value)
-        except Exception:
-            return None
-
-    return calculation_spec_from_submission_spec(context.get("submission_spec"))
 
 
 def _failure_result(
@@ -626,29 +791,26 @@ def _round_float(value: float | None, digits: int = 6) -> float | None:
     return round(float(value), digits)
 
 
-def _float_or_none(value) -> float | None:
-    if value is None:
-        return None
-    return float(value)
-
-
-def _bool_or_none(value) -> bool | None:
-    if value is None:
-        return None
-    return bool(value)
-
-
 __all__ = [
+    "cached_completed_result",
+    "clear_results_cache",
+    "extract_remote_vasp_result",
     "load_results_for_completed_job",
     "missing_result_files",
     "monitoring_indicates_success",
     "parse_vasp_result_files",
     "read_result_files",
+    "remote_result_parser_context",
+    "remote_result_parser_source",
     "remote_job_state_path",
     "resolve_results_location",
     "resolve_results_run_dir",
+    "results_cache_info",
+    "results_cache_key",
+    "results_location_from_submission_spec",
     "result_includes_dos_from_submission_spec",
     "result_output_dir_from_submission_spec",
     "result_stage_directory_from_submission_spec",
     "result_file_paths",
+    "store_completed_result",
 ]

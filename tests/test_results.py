@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import io
+import ast
 import json
+import re
 import sys
 import types
+from contextlib import redirect_stdout
 from contextlib import contextmanager
+from copy import deepcopy
 
 from backend.calculations.models import CalculationSpec, Purpose, Theory
 from backend.config import (
@@ -13,11 +18,18 @@ from backend.config import (
     DEFAULT_USERNAME,
 )
 from backend.results import (
+    REMOTE_RESULT_JSON_END,
+    REMOTE_RESULT_JSON_START,
+    clear_results_cache,
     load_results_for_completed_job,
     monitoring_indicates_success,
     parse_vasp_result_files,
+    remote_result_parser_context,
+    remote_result_parser_source,
     remote_job_state_path,
+    results_cache_info,
 )
+from backend.remote import RemoteCommandResult, RemoteJobStatus
 
 
 monitoring_success = {
@@ -86,6 +98,96 @@ class ResultsRunner:
     def read_bytes(self, remote_path, *, max_bytes=None):
         self.read_paths.append(remote_path)
         return f"contents for {remote_path}\n".encode()
+
+
+class RemoteParserRunner(ResultsRunner):
+    def __init__(
+        self,
+        *,
+        payload: dict | None = None,
+        returncode: int = 0,
+        raise_exc: Exception | None = None,
+        state_payload: dict | None = None,
+    ):
+        super().__init__(state_payload=state_payload)
+        self.payload = payload or fake_parser_payload()
+        self.returncode = returncode
+        self.raise_exc = raise_exc
+        self.python = None
+        self.timeout_s = None
+        self.run_python_calls = 0
+        self.source = ""
+
+    def run_python(self, source, *, python, env=None, check=False, timeout_s=None):
+        del env, check
+        self.run_python_calls += 1
+        self.source = source
+        self.python = python
+        self.timeout_s = timeout_s
+        assert "parse_result_paths" in source
+        if self.raise_exc is not None:
+            raise self.raise_exc
+        if self.returncode != 0:
+            return RemoteCommandResult(
+                command="remote parser",
+                returncode=self.returncode,
+                stdout="",
+                stderr="remote parser failed",
+                elapsed_s=1.25,
+            )
+        payload = json.dumps(self.payload, separators=(",", ":"))
+        return RemoteCommandResult(
+            command="remote parser",
+            returncode=0,
+            stdout=(
+                "diagnostic before payload\n"
+                f"{REMOTE_RESULT_JSON_START}\n"
+                f"{payload}\n"
+                f"{REMOTE_RESULT_JSON_END}\n"
+            ),
+            stderr="",
+            elapsed_s=1.25,
+        )
+
+    def read_bytes(self, remote_path, *, max_bytes=None):
+        raise AssertionError(f"Raw result file should not be downloaded: {remote_path}")
+
+
+def fake_parser_payload() -> dict:
+    return {
+        "status": "success",
+        "completion_status": "COMPLETED (ExitCode 0:0)",
+        "final_energy_ev": -10.25,
+        "energy_per_atom_ev": -5.125,
+        "ionic_steps": 7,
+        "electronic_convergence": True,
+        "converged_electronic": True,
+        "ionic_convergence": None,
+        "converged_ionic": None,
+        "final_formula": "TiO2",
+        "natoms": 3,
+        "files": {
+            "contcar": f"{RUN_DIR}/CONTCAR",
+            "outcar": f"{RUN_DIR}/OUTCAR",
+            "vasprun": f"{RUN_DIR}/vasprun.xml",
+        },
+        "diagnostics": {
+            "parser": "pymatgen-remote",
+            "outcar_parsed": True,
+            "outcar_error": "",
+            "remote_parsing": {
+                "source_bytes": 145000000,
+                "source_file_bytes": {
+                    "contcar": 1024,
+                    "outcar": 1800000,
+                    "vasprun": 143198976,
+                },
+                "remote_parse_elapsed_s": 4.2,
+            },
+        },
+        "visualizations": [],
+        "viewer": {"format": "cif", "source": "CONTCAR", "cif": "data_TiO2\n"},
+    }
 
 
 def fake_parser(files, monitoring_result):
@@ -470,6 +572,283 @@ def test_results_are_skipped_until_monitoring_reports_success():
     assert result is None
 
 
+def test_completed_results_are_cached_without_repeated_download_or_parse():
+    clear_results_cache()
+    parse_calls = []
+
+    def counting_parser(files, monitoring_result):
+        parse_calls.append(monitoring_result["job_id"])
+        return fake_parser(files, monitoring_result)
+
+    first_runner = ResultsRunner()
+    first = load_results_for_completed_job(
+        monitoring_success,
+        submission_spec=submission_spec,
+        runner_factory=lambda: first_runner,
+        parser=counting_parser,
+        cache=True,
+    )
+    first["final_formula"] = "mutated"
+
+    class UnusedRunner(ResultsRunner):
+        def connect(self, profile):
+            raise AssertionError("Cached submitted results should not reconnect")
+
+    second = load_results_for_completed_job(
+        monitoring_success,
+        submission_spec=submission_spec,
+        runner_factory=UnusedRunner,
+        parser=counting_parser,
+        cache=True,
+    )
+
+    assert first_runner.read_paths == [
+        f"{RUN_DIR}/CONTCAR",
+        f"{RUN_DIR}/OUTCAR",
+        f"{RUN_DIR}/vasprun.xml",
+    ]
+    assert parse_calls == ["123456"]
+    assert second["final_formula"] == "TiO2"
+    assert second["files"]["vasprun"] == f"{RUN_DIR}/vasprun.xml"
+
+    resumed = load_results_for_completed_job(
+        monitoring_success,
+        runner_factory=UnusedRunner,
+        parser=counting_parser,
+        cache=True,
+    )
+
+    assert parse_calls == ["123456"]
+    assert resumed["final_formula"] == "TiO2"
+
+
+def test_completed_results_cache_is_bounded():
+    clear_results_cache()
+
+    def generic_parser(files, monitoring_result):
+        return {
+            "status": "success",
+            "completion_status": "COMPLETED (ExitCode 0:0)",
+            "final_formula": f"Si{monitoring_result['job_id']}",
+            "diagnostics": {
+                "parser": "fake",
+                "outcar_parsed": True,
+                "outcar_error": "",
+            },
+            "viewer": {"format": "cif", "source": "CONTCAR", "cif": "data_Si\n"},
+        }
+
+    max_entries = results_cache_info()["max_entries"]
+    for index in range(max_entries + 2):
+        run_dir = f"{RUN_DIR}-{index}"
+        spec = {
+            **submission_spec,
+            "paths": {
+                **submission_spec["paths"],
+                "run_dir": run_dir,
+            },
+        }
+        result = load_results_for_completed_job(
+            {
+                **monitoring_success,
+                "job_id": str(200000 + index),
+            },
+            submission_spec=spec,
+            runner_factory=ResultsRunner,
+            parser=generic_parser,
+            cache=True,
+        )
+        assert result["status"] == "success"
+
+    info = results_cache_info()
+    assert info["size"] == max_entries
+    assert all("200000|" not in key for key in info["keys"])
+
+
+def test_remote_completed_results_parse_without_downloading_raw_vasprun():
+    clear_results_cache()
+    runner = RemoteParserRunner()
+    result = load_results_for_completed_job(
+        monitoring_success,
+        submission_spec=submission_spec,
+        runner_factory=lambda: runner,
+    )
+
+    assert result["status"] == "success"
+    assert result["final_formula"] == "TiO2"
+    assert runner.run_python_calls == 1
+    assert runner.read_paths == []
+    assert runner.timeout_s == 900
+    assert result["diagnostics"]["parser"] == "pymatgen-remote"
+    remote_metadata = result["diagnostics"]["remote_parsing"]
+    assert remote_metadata["source_bytes"] == 145000000
+    assert remote_metadata["compact_result_bytes"] < remote_metadata["source_bytes"]
+    assert remote_metadata["remote_command_elapsed_s"] == 1.25
+    assert result["files"]["vasprun"] == f"{RUN_DIR}/vasprun.xml"
+    assert runner.closed is True
+
+
+def test_remote_completed_results_cache_reuses_compact_payload_without_reconnecting():
+    clear_results_cache()
+    runner = RemoteParserRunner()
+    first = load_results_for_completed_job(
+        monitoring_success,
+        submission_spec=submission_spec,
+        runner_factory=lambda: runner,
+    )
+    first["final_formula"] = "mutated"
+
+    class UnusedRunner(RemoteParserRunner):
+        def connect(self, profile):
+            raise AssertionError("Cached remote results should not reconnect")
+
+    second = load_results_for_completed_job(
+        monitoring_success,
+        submission_spec=submission_spec,
+        runner_factory=UnusedRunner,
+    )
+
+    assert runner.run_python_calls == 1
+    assert second["final_formula"] == "TiO2"
+    assert second["diagnostics"]["remote_parsing"]["source_bytes"] == 145000000
+
+
+def json_context_from_remote_source(source: str) -> dict:
+    match = re.search(r"_context = _json\.loads\((?P<literal>.+?)\)\n", source)
+    assert match, "remote parser source should embed a JSON context literal"
+    return json.loads(ast.literal_eval(match.group("literal")))
+
+
+def assert_json_native(value):
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return
+    if isinstance(value, list):
+        for item in value:
+            assert_json_native(item)
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            assert isinstance(key, str)
+            assert_json_native(item)
+        return
+    raise AssertionError(f"non-JSON value leaked into remote context: {value!r}")
+
+
+def test_resumed_remote_results_context_drops_remote_job_status_object():
+    clear_results_cache()
+    status = RemoteJobStatus(
+        job_id="123456",
+        state="COMPLETED",
+        exit_code="0:0",
+        stdout_path="/remote/slurm.out",
+        workdir="/remote/workdir",
+        job_name="vasp_run_static",
+        raw={"summary": "SUCCESS", "brief": "123456|COMPLETED"},
+    )
+    workflow_submission_spec = {
+        **submission_spec,
+        "flow_spec": {
+            "calculation_spec": CalculationSpec(Purpose.STATIC, Theory.PBE).to_dict(),
+            "workflow": "static",
+            "potcar_functional": "PBE_64",
+        },
+    }
+    runner = RemoteParserRunner(
+        state_payload={
+            "run_dir": RUN_DIR,
+            "submission_spec": workflow_submission_spec,
+        }
+    )
+    result = load_results_for_completed_job(
+        {
+            **monitoring_success,
+            "job_status": status,
+        },
+        runner_factory=lambda: runner,
+    )
+
+    assert result["status"] == "success"
+    assert runner.run_python_calls == 1
+    serialized_context = json_context_from_remote_source(runner.source)
+    assert_json_native(serialized_context)
+    assert "job_status" not in serialized_context
+    assert "RemoteJobStatus" not in runner.source
+    assert serialized_context["slurm_state"] == "COMPLETED"
+    assert serialized_context["exit_code"] == "0:0"
+    assert serialized_context["calculation_spec"] == CalculationSpec(
+        Purpose.STATIC,
+        Theory.PBE,
+    ).to_dict()
+
+
+def test_remote_result_parser_context_is_narrow_json_contract():
+    status = RemoteJobStatus(
+        job_id="654321",
+        state="COMPLETED",
+        exit_code="0:0",
+        raw={"summary": "SUCCESS"},
+    )
+    context = remote_result_parser_context(
+        {
+            **monitoring_success,
+            "job_status": status,
+            "brief": "not used remotely",
+            "workflow_spec": {
+                "stages": [
+                    {
+                        "stage_type": "static",
+                        "theory": "pbe",
+                        "modifiers": [],
+                        "label": None,
+                        "options": {},
+                    }
+                ],
+                "label": None,
+                "recipe": None,
+            },
+        }
+    )
+
+    assert set(context) == {"slurm_state", "exit_code", "workflow_spec"}
+    assert_json_native(context)
+    payload = json.dumps(context, sort_keys=True, allow_nan=False)
+    assert "RemoteJobStatus" not in payload
+    assert "job_status" not in payload
+    assert "not used remotely" not in payload
+
+
+def test_remote_result_parser_failure_does_not_download_oversized_raw_fallback():
+    clear_results_cache()
+    runner = RemoteParserRunner(returncode=2)
+    result = load_results_for_completed_job(
+        monitoring_success,
+        submission_spec=submission_spec,
+        runner_factory=lambda: runner,
+    )
+
+    assert result["status"] == "failed"
+    assert result["stage"] == "Results Parsing"
+    assert "remote parser failed" in result["reason"]
+    assert runner.read_paths == []
+    assert runner.closed is True
+
+
+def test_remote_result_parser_timeout_closes_connection_without_raw_fallback():
+    clear_results_cache()
+    runner = RemoteParserRunner(raise_exc=TimeoutError("remote parser timed out"))
+    result = load_results_for_completed_job(
+        monitoring_success,
+        submission_spec=submission_spec,
+        runner_factory=lambda: runner,
+    )
+
+    assert result["status"] == "failed"
+    assert result["stage"] == "Results Parsing"
+    assert "remote parser timed out" in result["reason"]
+    assert runner.read_paths == []
+    assert runner.closed is True
+
+
 def test_results_report_missing_required_output_file():
     runner = ResultsRunner(missing="vasprun")
     result = load_results_for_completed_job(
@@ -614,6 +993,116 @@ def fake_pymatgen_results_modules():
                 sys.modules[name] = module
 
 
+def fixture_result_files(tmp_path, keys=("contcar", "outcar", "vasprun")):
+    filenames = {
+        "contcar": "CONTCAR",
+        "outcar": "OUTCAR",
+        "vasprun": "vasprun.xml",
+        "doscar": "DOSCAR",
+        "kpoints": "KPOINTS",
+    }
+    paths = {}
+    files = {}
+    for key in keys:
+        path = tmp_path / filenames[key]
+        path.write_text(f"{key} fixture\n", encoding="utf-8")
+        paths[key] = str(path)
+        files[key] = {
+            "path": str(path),
+            "text": path.read_text(encoding="utf-8"),
+        }
+    return paths, files
+
+
+def execute_remote_parser_source(paths, context):
+    source = remote_result_parser_source(paths, context)
+    stream = io.StringIO()
+    with redirect_stdout(stream):
+        exec(source, {"__name__": "__main__"})
+    stdout = stream.getvalue()
+    start = stdout.index(REMOTE_RESULT_JSON_START) + len(REMOTE_RESULT_JSON_START)
+    end = stdout.index(REMOTE_RESULT_JSON_END, start)
+    return json.loads(stdout[start:end].strip())
+
+
+def comparable_result_payload(result):
+    payload = deepcopy(result)
+    diagnostics = payload.get("diagnostics") or {}
+    diagnostics.pop("parser", None)
+    diagnostics.pop("remote_parsing", None)
+    return payload
+
+
+def assert_remote_parser_matches_local_parser(tmp_path, context, keys):
+    paths, files = fixture_result_files(tmp_path, keys)
+    with fake_pymatgen_results_modules():
+        local_result = parse_vasp_result_files(files, context)
+    with fake_pymatgen_results_modules():
+        remote_result = execute_remote_parser_source(paths, context)
+
+    assert remote_result["diagnostics"]["parser"] == "pymatgen-remote"
+    assert remote_result["diagnostics"]["remote_parsing"]["source_bytes"] > 0
+    assert comparable_result_payload(remote_result) == comparable_result_payload(local_result)
+
+
+def test_remote_result_parser_matches_local_static_parser(tmp_path):
+    context = {
+        **monitoring_success,
+        "calculation_spec": CalculationSpec(Purpose.STATIC, Theory.PBE).to_dict(),
+    }
+
+    assert_remote_parser_matches_local_parser(
+        tmp_path,
+        context,
+        ("contcar", "outcar", "vasprun"),
+    )
+
+
+def test_remote_result_parser_matches_local_dos_parser_and_plot_arrays(tmp_path):
+    context = {
+        **monitoring_success,
+        "calculation_spec": CalculationSpec(Purpose.DOS, Theory.PBE).to_dict(),
+    }
+
+    assert_remote_parser_matches_local_parser(
+        tmp_path,
+        context,
+        ("contcar", "outcar", "vasprun", "doscar"),
+    )
+
+
+def test_remote_result_parser_matches_local_band_parser_and_plot_arrays(tmp_path):
+    context = {
+        **monitoring_success,
+        "calculation_spec": CalculationSpec(Purpose.BAND_STRUCTURE, Theory.PBE).to_dict(),
+    }
+
+    assert_remote_parser_matches_local_parser(
+        tmp_path,
+        context,
+        ("contcar", "outcar", "vasprun", "kpoints"),
+    )
+
+
+def test_remote_result_parser_preserves_soc_static_convergence_semantics(tmp_path):
+    context = {
+        **monitoring_success,
+        "calculation_spec": CalculationSpec(Purpose.STATIC, Theory.PBE).to_dict(),
+    }
+    context["calculation_spec"]["modifiers"] = ["soc"]
+
+    paths, _files = fixture_result_files(tmp_path, ("contcar", "outcar", "vasprun"))
+    with fake_pymatgen_results_modules():
+        result = execute_remote_parser_source(paths, context)
+
+    assert result["status"] == "success"
+    assert result["final_formula"] == "Si"
+    assert result["electronic_convergence"] is True
+    assert result["converged_electronic"] is True
+    assert result["ionic_convergence"] is None
+    assert result["converged_ionic"] is None
+
+
 def test_parse_vasp_result_files_uses_vasprun_dos_for_dos_workflow():
     FakeVasprun.calls = []
     files = {
@@ -724,6 +1213,8 @@ if __name__ == "__main__":
     test_resumed_dos_uses_final_stage_directory_from_job_state()
     test_resumed_band_structure_uses_final_stage_directory_from_job_state()
     test_results_are_skipped_until_monitoring_reports_success()
+    test_completed_results_are_cached_without_repeated_download_or_parse()
+    test_completed_results_cache_is_bounded()
     test_results_report_missing_required_output_file()
     test_results_report_missing_bmd_job_state_for_resume()
     test_parse_vasp_result_files_uses_vasprun_dos_for_dos_workflow()

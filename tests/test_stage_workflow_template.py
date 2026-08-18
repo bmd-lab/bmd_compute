@@ -18,6 +18,13 @@ assert "Custom Workflow" in source
 assert "Calculation Type" in source
 assert "Level of Theory" in source
 assert "Advanced Options" in source
+assert 'id="structure-input-details"' in source
+structure_details_block = source[
+    source.index('id="structure-input-details"'):
+    source.index('<summary>Structure Input</summary>')
+]
+assert "details-wide" in structure_details_block
+assert "{% if not collapse_structure_input %}open{% endif %}" in structure_details_block
 calculation_definition = source[source.index('<form\n                id="calculation-review-form"'):]
 assert calculation_definition.index("<h3>Execution Resources</h3>") < calculation_definition.index("<h3>Scientific Specification</h3>")
 resource_panel = calculation_definition[
@@ -50,6 +57,14 @@ assert "grid-template-columns: minmax(0, 1fr);" in source
 assert "grid-template-columns: repeat(4, minmax(140px, 1fr));" in source
 assert "workflow_spec_json" in source[source.index('<form action="/prepare-remote"'):]
 assert "workflow_spec_json" in source[source.index('<form action="/submit"'):]
-assert "workflow_spec_json" in source[source.index('<form action="/monitor"'):]
+monitor_form = source[source.index('<form action="/monitor"'):]
+assert "workflow_spec_json" in monitor_form
+assert "monitor_state_json" in monitor_form
+resume_monitoring_block = source[source.index('{% else %}\n            <form action="/resume"'):]
+assert 'name="load_results" value="true"' in resume_monitoring_block
+assert "Load Results" in resume_monitoring_block
+assert "Remote source bytes" in source
+assert "Compact result bytes" in source
+assert "remote_parse_elapsed_s" in source
 
 print("stage workflow template smoke test passed")

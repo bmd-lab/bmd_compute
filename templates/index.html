@@ -900,47 +900,54 @@ ul {
                 </div>
             </div>
 
-            <form action="/analyze" method="post">
+            <details
+                id="structure-input-details"
+                class="disclosure details-wide"
+                {% if not collapse_structure_input %}open{% endif %}>
+                <summary>Structure Input</summary>
 
-                <div class="form-row">
-                    <label>Structure Format</label>
-                    <select name="fmt">
-                        <option value="poscar" {% if fmt == "poscar" %}selected{% endif %}>POSCAR</option>
-                        <option value="cif" {% if fmt == "cif" %}selected{% endif %}>CIF</option>
-                    </select>
+                <form action="/analyze" method="post">
+
+                    <div class="form-row">
+                        <label>Structure Format</label>
+                        <select name="fmt">
+                            <option value="poscar" {% if fmt == "poscar" %}selected{% endif %}>POSCAR</option>
+                            <option value="cif" {% if fmt == "cif" %}selected{% endif %}>CIF</option>
+                        </select>
+                    </div>
+
+                    <div class="form-row">
+                        <label>Structure</label>
+                        <textarea
+                            name="structure"
+                            rows="14"
+                            placeholder="Paste your POSCAR or CIF here...">{{ structure_text }}</textarea>
+                    </div>
+
+                    <button type="submit">
+                        Analyze Structure
+                    </button>
+
+                </form>
+
+                {% if structure_error %}
+                <div class="prep-panel failed">
+                    <div class="prep-title">Structure Validation Failed</div>
+                    <table class="compact-table failure-table">
+                        <tr>
+                            <td>Reason</td>
+                            <td>{{ structure_error.message }}</td>
+                        </tr>
+                        {% if structure_error.suggestion %}
+                        <tr>
+                            <td>Suggestion</td>
+                            <td>{{ structure_error.suggestion }}</td>
+                        </tr>
+                        {% endif %}
+                    </table>
                 </div>
-
-                <div class="form-row">
-                    <label>Structure</label>
-                    <textarea
-                        name="structure"
-                        rows="14"
-                        placeholder="Paste your POSCAR or CIF here...">{{ structure_text }}</textarea>
-                </div>
-
-                <button type="submit">
-                    Analyze Structure
-                </button>
-
-            </form>
-
-            {% if structure_error %}
-            <div class="prep-panel failed">
-                <div class="prep-title">Structure Validation Failed</div>
-                <table class="compact-table failure-table">
-                    <tr>
-                        <td>Reason</td>
-                        <td>{{ structure_error.message }}</td>
-                    </tr>
-                    {% if structure_error.suggestion %}
-                    <tr>
-                        <td>Suggestion</td>
-                        <td>{{ structure_error.suggestion }}</td>
-                    </tr>
-                    {% endif %}
-                </table>
-            </div>
-            {% endif %}
+                {% endif %}
+            </details>
 
         </section>
 
@@ -1795,6 +1802,7 @@ ul {
             {% if submission_spec %}
             <form action="/monitor" method="post">
                 <textarea class="hidden-field" name="structure">{{ structure_text }}</textarea>
+                <textarea class="hidden-field" name="monitor_state_json">{{ monitor_state_json }}</textarea>
                 <input type="hidden" name="fmt" value="{{ fmt }}">
                 <input type="hidden" name="workflow_spec_json" value="{{ selected_workflow.json }}">
                 <input type="hidden" name="purpose" value="{{ selected_calculation.purpose }}">
@@ -1816,6 +1824,13 @@ ul {
                 <input type="hidden" name="job_id" value="{{ resume_job_id or monitoring_result.job_id }}">
                 <button type="submit">Refresh Queue Status</button>
             </form>
+            {% if monitoring_result and monitoring_result.status == "success" and monitoring_result.summary == "SUCCESS" and not results_summary %}
+            <form action="/resume" method="post">
+                <input type="hidden" name="job_id" value="{{ resume_job_id or monitoring_result.job_id }}">
+                <input type="hidden" name="load_results" value="true">
+                <button type="submit">Load Results</button>
+            </form>
+            {% endif %}
             {% endif %}
 
             {% if monitoring_result %}
@@ -2144,6 +2159,26 @@ ul {
                         <td>Parser</td>
                         <td>{{ results_summary.diagnostics.parser }}</td>
                     </tr>
+                    {% if results_summary.diagnostics.remote_parsing %}
+                    <tr>
+                        <td>Remote source bytes</td>
+                        <td>{{ results_summary.diagnostics.remote_parsing.source_bytes }}</td>
+                    </tr>
+                    <tr>
+                        <td>Compact result bytes</td>
+                        <td>{{ results_summary.diagnostics.remote_parsing.compact_result_bytes }}</td>
+                    </tr>
+                    <tr>
+                        <td>Remote parse time</td>
+                        <td>
+                            {% if results_summary.diagnostics.remote_parsing.remote_parse_elapsed_s is defined %}
+                            {{ results_summary.diagnostics.remote_parsing.remote_parse_elapsed_s }} s
+                            {% else %}
+                            Unknown
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endif %}
                     <tr>
                         <td>OUTCAR parsed</td>
                         <td>{{ "Yes" if results_summary.diagnostics.outcar_parsed else "No" }}</td>
