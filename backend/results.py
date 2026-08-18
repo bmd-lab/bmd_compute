@@ -21,7 +21,11 @@ from backend.calculations.registry import (
     workflow_spec_from_flow_spec,
 )
 from backend.config import DEFAULT_LOGS_DIR, DEFAULT_REMOTE_PYTHON
-from backend.remote import RemoteRunner
+from backend.remote import (
+    REMOTE_OPERATION_BUSY_MESSAGE,
+    RemoteOperationBusy,
+    RemoteRunner,
+)
 from backend.remote_runtime import (
     connected_remote_runner,
     connection_profile_from_submission_spec,
@@ -186,6 +190,14 @@ def load_results_for_completed_job(
             "Check that the remote pymatgen environment can parse the completed VASP outputs.",
             files=locals().get("paths", {}),
             exception=exc.__cause__ or exc,
+        )
+    except RemoteOperationBusy as exc:
+        _log_results("Remote results busy")
+        _log_results("RETURN results")
+        return _failure_result(
+            "Remote Capacity",
+            REMOTE_OPERATION_BUSY_MESSAGE,
+            "Please try again in a few seconds.",
         )
     except Exception as exc:
         _log_results("Results retrieval failed")

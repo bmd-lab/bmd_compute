@@ -3,7 +3,13 @@ from __future__ import annotations
 import re
 from typing import Callable
 
-from backend.remote import JobRecord, RemoteExecutionError, RemoteRunner
+from backend.remote import (
+    JobRecord,
+    REMOTE_OPERATION_BUSY_MESSAGE,
+    RemoteExecutionError,
+    RemoteOperationBusy,
+    RemoteRunner,
+)
 from backend.remote_runtime import (
     connected_remote_runner,
     connection_profile_from_cluster,
@@ -219,6 +225,13 @@ def _classify_failure(
     host = submission_spec.get("cluster", {}).get("remote_host", "the remote cluster")
     username = submission_spec.get("cluster", {}).get("username", "the configured user")
     class_name = exc.__class__.__name__
+
+    if isinstance(exc, RemoteOperationBusy):
+        return (
+            "Remote Capacity",
+            REMOTE_OPERATION_BUSY_MESSAGE,
+            "Please try again in a few seconds.",
+        )
 
     if isinstance(exc, ModuleNotFoundError) and getattr(exc, "name", None) == "paramiko":
         return (

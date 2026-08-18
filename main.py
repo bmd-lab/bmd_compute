@@ -444,6 +444,7 @@ def build_submission_state(
     workflow_spec: WorkflowSpec | None = None,
     execution_resources: ExecutionResources | None = None,
     timestamp: str | None = None,
+    submission_attempt_id: str | None = None,
 ):
     execution_resources = execution_resources or default_execution_resources()
     if workflow_spec is None:
@@ -503,6 +504,7 @@ def build_submission_state(
         walltime=execution_resources.walltime,
         partition=execution_resources.queue,
         account=execution_resources.account,
+        submission_attempt_id=submission_attempt_id,
     )
     generated_inputs["slurm_script"] = preview_slurm_script(submission_spec)
     return summary, calculation_summary, generated_inputs, submission_spec
@@ -668,6 +670,7 @@ def prepare_remote(
     walltime: str | None = Form(None),
     queue: str | None = Form(None),
     created_at: str = Form(...),
+    submission_attempt_id: str | None = Form(None),
     workflow_spec_json: str | None = Form(None),
     workflow: str | None = Form(None),
     method: str | None = Form(None),
@@ -700,6 +703,7 @@ def prepare_remote(
             workflow_spec=workflow_spec,
             execution_resources=execution_resources,
             timestamp=created_at,
+            submission_attempt_id=submission_attempt_id,
         )
     except StructureValidationError as exc:
         return structure_error_response(
@@ -754,6 +758,7 @@ def submit_workflow(
     walltime: str | None = Form(None),
     queue: str | None = Form(None),
     created_at: str = Form(...),
+    submission_attempt_id: str | None = Form(None),
     remote_prepared: str = Form("false"),
     workflow_spec_json: str | None = Form(None),
     workflow: str | None = Form(None),
@@ -787,6 +792,7 @@ def submit_workflow(
             workflow_spec=workflow_spec,
             execution_resources=execution_resources,
             timestamp=created_at,
+            submission_attempt_id=submission_attempt_id,
         )
     except StructureValidationError as exc:
         return structure_error_response(
@@ -943,12 +949,6 @@ def refresh_monitoring(
         submitted_at=submitted_at,
     )
     monitoring_result = monitor_job(job_id, submission_spec=submission_spec)
-    results_summary = None
-    if monitoring_indicates_success(monitoring_result):
-        results_summary = load_results_for_completed_job(
-            monitoring_result,
-            submission_spec=submission_spec,
-        )
 
     return templates.TemplateResponse(
         request=request,
@@ -966,7 +966,7 @@ def refresh_monitoring(
             remote_preparation=remote_preparation,
             submission_result=submission_result,
             monitoring_result=monitoring_result,
-            results_summary=results_summary,
+            results_summary=None,
             collapse_structure_input=True,
         ),
     )

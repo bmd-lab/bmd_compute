@@ -5,7 +5,13 @@ import time
 import traceback
 from typing import Callable
 
-from backend.remote import RemoteExecutionError, RemoteJobStatus, RemoteRunner
+from backend.remote import (
+    REMOTE_OPERATION_BUSY_MESSAGE,
+    RemoteExecutionError,
+    RemoteJobStatus,
+    RemoteOperationBusy,
+    RemoteRunner,
+)
 from backend.remote_runtime import (
     connected_remote_runner,
     connection_profile_from_submission_spec,
@@ -256,7 +262,8 @@ def monitor_job(
     except Exception as exc:
         stage = "SSH Connection" if _looks_like_connection_failure(exc) else "Monitoring"
         result = _exception_result(exc, default_stage=stage)
-        result["exception_debug"] = _exception_debug(exc)
+        if not isinstance(exc, RemoteOperationBusy):
+            result["exception_debug"] = _exception_debug(exc)
         return result
 
     if is_resume and _is_unknown_job(status):
@@ -285,6 +292,14 @@ def _success_result(status: RemoteJobStatus) -> dict:
 
 
 def _exception_result(exc: Exception, *, default_stage: str = "Monitoring") -> dict:
+    if isinstance(exc, RemoteOperationBusy):
+        return _failure_result(
+            "Remote Capacity",
+            REMOTE_OPERATION_BUSY_MESSAGE,
+            "Please try again in a few seconds.",
+            exception_text=str(exc),
+        )
+
     if isinstance(exc, MonitoringStageError):
         return _failure_result(
             exc.stage,

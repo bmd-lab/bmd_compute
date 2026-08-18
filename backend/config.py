@@ -1,5 +1,34 @@
 from __future__ import annotations
 
+import math
+import os
+
+
+def _positive_int_env(name: str, *, default: int) -> int:
+    value = os.environ.get(name)
+    if value is None or value == "":
+        return default
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be a positive integer.") from exc
+    if parsed <= 0:
+        raise RuntimeError(f"{name} must be a positive integer.")
+    return parsed
+
+
+def _positive_float_env(name: str, *, default: float) -> float:
+    value = os.environ.get(name)
+    if value is None or value == "":
+        return default
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be a positive number of seconds.") from exc
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise RuntimeError(f"{name} must be a positive finite number of seconds.")
+    return parsed
+
 
 DEFAULT_SSH_CONFIG_HOST = "powerslurm-bmdguest"
 DEFAULT_REMOTE_HOST = DEFAULT_SSH_CONFIG_HOST
@@ -53,6 +82,17 @@ MODULES = [
     "vasp/rocky8-intel-6.4.1",
 ]
 DEFAULT_MODULES = MODULES
+
+REMOTE_OPERATION_LIMIT_ENV = "BMD_MAX_CONCURRENT_REMOTE_OPERATIONS"
+REMOTE_OPERATION_SLOT_TIMEOUT_ENV = "BMD_REMOTE_OPERATION_SLOT_TIMEOUT_S"
+MAX_CONCURRENT_REMOTE_OPERATIONS = _positive_int_env(
+    REMOTE_OPERATION_LIMIT_ENV,
+    default=4,
+)
+REMOTE_OPERATION_SLOT_TIMEOUT_S = _positive_float_env(
+    REMOTE_OPERATION_SLOT_TIMEOUT_ENV,
+    default=5.0,
+)
 
 DEFAULT_POTCAR_FUNCTIONAL = "PBE_64"
 POTCAR_LINK_MAP = {
@@ -118,9 +158,13 @@ __all__ = [
     "DEFAULT_USERNAME",
     "DEFAULT_VASP_CMD",
     "DEFAULT_VASP_LAUNCHER",
+    "MAX_CONCURRENT_REMOTE_OPERATIONS",
     "MODULES",
     "NOTEBOOK_DEFAULTS",
     "POTCAR_LINK_MAP",
+    "REMOTE_OPERATION_LIMIT_ENV",
+    "REMOTE_OPERATION_SLOT_TIMEOUT_ENV",
+    "REMOTE_OPERATION_SLOT_TIMEOUT_S",
     "SUBMISSION_ENV_KEYS",
     "WORKFLOW_RESOURCE_OVERRIDES",
 ]

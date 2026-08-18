@@ -424,6 +424,8 @@ assert f"#SBATCH --nodes={DEFAULT_RESOURCES['nodes']}" in sbatch_script
 assert f"#SBATCH --ntasks={DEFAULT_RESOURCES['ntasks']}" in sbatch_script
 assert f"#SBATCH --mem={DEFAULT_RESOURCES['mem_gb']}G" in sbatch_script
 assert f"#SBATCH --time={DEFAULT_RESOURCES['walltime']}" in sbatch_script
+assert f"#SBATCH --comment=bmd_attempt:{spec['submission']['attempt_id']}" in sbatch_script
+assert f"export BMD_SUBMISSION_ATTEMPT_ID={spec['submission']['attempt_id']}" in sbatch_script
 assert "export PMG_VASP_PSP_DIR=/bmd-db/potcars" in sbatch_script
 assert "/bmd-db/guest/potcars" not in sbatch_script
 assert "if ! type module >/dev/null 2>&1; then" in sbatch_script

@@ -168,6 +168,7 @@ class RecordingRunner(ParamikoRemoteRunner):
         self.batch_requests = []
         self.directories = []
         self.remote_writes = []
+        self.remote_files = {}
         self.symlinks = []
 
     def ensure_available(self):
@@ -195,7 +196,7 @@ class RecordingRunner(ParamikoRemoteRunner):
         return True
 
     def is_file(self, remote_path):
-        return True
+        return remote_path in self.remote_files
 
     def symlink(self, target, link_name, *, overwrite=True):
         self.symlinks.append((target, link_name, overwrite))
@@ -203,6 +204,10 @@ class RecordingRunner(ParamikoRemoteRunner):
 
     def put_text(self, remote_path, text, *, mode=0o640):
         self.remote_writes.append((remote_path, text, mode))
+        self.remote_files[remote_path] = text
+
+    def read_text(self, remote_path, *, max_bytes=None):
+        return self.remote_files[remote_path]
 
     def submit_batch(self, request):
         self.batch_requests.append(request)
@@ -312,6 +317,7 @@ submission_spec = create_submission_spec(
 )
 
 runner = RecordingRunner()
+runner.submit(submission_spec, dry_run=True)
 record = runner.submit(submission_spec)
 
 assert isinstance(record, JobRecord)
@@ -428,6 +434,7 @@ private_submission_spec = create_submission_spec(
 )
 
 private_runner = RecordingRunner()
+private_runner.submit(private_submission_spec, dry_run=True)
 private_runner.submit(private_submission_spec)
 assert (private_target, private_link, True) in private_runner.symlinks
 assert any(private_link in command for command in private_runner.commands)

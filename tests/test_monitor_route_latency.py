@@ -245,6 +245,64 @@ def test_running_monitor_uses_persisted_state_without_rebuilding(monkeypatch):
     refresh_with_state(monkeypatch, state_summary="RUNNING")
 
 
+def test_completed_monitor_is_monitoring_only_and_shows_load_results(monkeypatch):
+    def fail_results(*args, **kwargs):
+        raise AssertionError("Completed /monitor should not load results automatically")
+
+    monitor_calls = []
+
+    def fake_monitor(job_id, *, submission_spec=None):
+        monitor_calls.append(job_id)
+        assert submission_spec["paths"]["run_dir"] == (
+            "/bmd/flows/vasp_run_static-20260817-120000"
+        )
+        return {
+            "status": "success",
+            "job_id": job_id,
+            "slurm_state": "COMPLETED",
+            "summary": "SUCCESS",
+            "exit_code": "0:0",
+            "brief": f"{job_id}|COMPLETED",
+        }
+
+    monkeypatch.setattr(main, "monitor_job", fake_monitor)
+    monkeypatch.setattr(main, "load_results_for_completed_job", fail_results)
+
+    response = main.refresh_monitoring(
+        request(),
+        structure="Si POSCAR remains preserved",
+        fmt="poscar",
+        purpose="static",
+        theory="pbe",
+        modifiers=None,
+        cpus="24",
+        memory_gb="128",
+        walltime="24:00:00",
+        queue="leeburton-pool",
+        created_at="20260817-120000",
+        job_id="123456",
+        submitted_at="2026-08-17 12:00:00",
+        monitor_state_json=monitor_state(),
+        workflow_spec_json=json.dumps(
+            WorkflowSpec([StageSpec(StageType.STATIC, Theory.PBE)]).to_dict()
+        ),
+    )
+
+    html = response_html(response)
+    assert response.status_code == 200
+    assert monitor_calls == ["123456"]
+    assert response.context["monitoring_result"]["slurm_state"] == "COMPLETED"
+    assert response.context["monitoring_result"]["summary"] == "SUCCESS"
+    assert response.context["results_summary"] is None
+    assert response.context["collapse_structure_input"] is True
+    assert structure_input_is_open(response) is False
+    assert "Si POSCAR remains preserved" in html
+    assert "COMPLETED" in html
+    assert "Load Results" in html
+    assert 'name="load_results" value="true"' in html
+    assert 'action="/resume"' in html
+
+
 def test_home_does_not_touch_results_loading(monkeypatch):
     def slow_results(*args, **kwargs):
         raise AssertionError("GET / should not wait for results work")

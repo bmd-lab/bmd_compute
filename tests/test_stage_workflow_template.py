@@ -57,6 +57,15 @@ assert "grid-template-columns: minmax(0, 1fr);" in source
 assert "grid-template-columns: repeat(4, minmax(140px, 1fr));" in source
 assert "workflow_spec_json" in source[source.index('<form action="/prepare-remote"'):]
 assert "workflow_spec_json" in source[source.index('<form action="/submit"'):]
+prepare_form = source[source.index('<form action="/prepare-remote"'):]
+submit_form = source[source.index('<form action="/submit"'):]
+assert 'name="submission_attempt_id"' in prepare_form
+assert 'name="submission_attempt_id"' in submit_form
+assert "submission_spec.submission.attempt_id" in prepare_form
+assert "submission_spec.submission.attempt_id" in submit_form
+assert "data-submit-calculation-button" in submit_form
+assert 'form[action="/submit"]' in source
+assert 'button.textContent = "Submitting..."' in source
 monitor_form = source[source.index('<form action="/monitor"'):]
 assert "workflow_spec_json" in monitor_form
 assert "monitor_state_json" in monitor_form

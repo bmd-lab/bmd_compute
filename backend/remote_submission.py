@@ -3,7 +3,14 @@ from __future__ import annotations
 import re
 from typing import Callable
 
-from backend.remote import JobRecord, RemoteExecutionError, RemoteRunner
+from backend.remote import (
+    JobRecord,
+    REMOTE_OPERATION_BUSY_MESSAGE,
+    RemoteExecutionError,
+    RemoteOperationBusy,
+    RemoteRunner,
+    SubmissionAttemptError,
+)
 from backend.remote_runtime import connected_remote_runner, connection_profile_from_submission_spec
 
 
@@ -38,7 +45,7 @@ def submit_remote_workflow(
 
 
 def _success_result(record: JobRecord) -> dict:
-    return {
+    result = {
         "status": "success",
         "title": "Submitted",
         "stage": "Submission",
@@ -47,6 +54,12 @@ def _success_result(record: JobRecord) -> dict:
         "job_record": record.to_dict(),
         "ready_for_monitoring": False,
     }
+    if "BMD_ALREADY_SUBMITTED=1" in (record.raw_output or ""):
+        result["already_submitted"] = True
+        result["reason"] = (
+            f"This prepared submission attempt was already submitted as job {record.job_id}."
+        )
+    return result
 
 
 def remembered_successful_submission(
@@ -129,6 +142,12 @@ def _submission_failure_details(exc: Exception) -> dict:
 
 
 def _submission_reason(exc: Exception) -> str:
+    if isinstance(exc, RemoteOperationBusy):
+        return REMOTE_OPERATION_BUSY_MESSAGE
+
+    if isinstance(exc, SubmissionAttemptError):
+        return _clean_message(str(exc) or exc.__class__.__name__)
+
     if isinstance(exc, ModuleNotFoundError) and getattr(exc, "name", None) == "paramiko":
         return "Paramiko is not installed in this Python environment."
 
@@ -142,6 +161,12 @@ def _submission_reason(exc: Exception) -> str:
 def _submission_suggestion(exc: Exception, reason: str | None = None) -> str:
     message = (reason or _submission_reason(exc)).lower()
     class_name = exc.__class__.__name__
+
+    if isinstance(exc, RemoteOperationBusy):
+        return "Please try again in a few seconds."
+
+    if isinstance(exc, SubmissionAttemptError):
+        return exc.suggestion
 
     if isinstance(exc, ModuleNotFoundError) and getattr(exc, "name", None) == "paramiko":
         return "Install the project environment dependencies and try again."

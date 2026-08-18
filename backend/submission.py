@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import posixpath
 import re
 import shlex
 import time
+import uuid
 from copy import deepcopy
 from pathlib import Path
 
@@ -36,6 +39,9 @@ from backend.config import (
 
 
 SUBMISSION_SPEC_FILENAME = "submission.json"
+SUBMISSION_ATTEMPTS_DIRNAME = "submission_attempts"
+SUBMISSION_ATTEMPT_STATE_VERSION = 1
+SUBMISSION_ATTEMPT_COMMENT_PREFIX = "bmd_attempt:"
 REMOTE_BACKEND_PACKAGE_DIR = "backend"
 REMOTE_EXECUTION_MODULE_FILENAME = "execution.py"
 REMOTE_BACKEND_INIT_FILENAME = "__init__.py"
@@ -144,6 +150,93 @@ def _remote_path_equal(left: str | None, right: str | None) -> bool:
 
 def _uses_shared_potcar_repository(potcars_dir: str | None) -> bool:
     return _remote_path_equal(potcars_dir, DEFAULT_SHARED_POTCAR_ROOT)
+
+
+def new_submission_attempt_id() -> str:
+    return str(uuid.uuid4())
+
+
+def _normalized_submission_attempt_id(value: str | None = None) -> str:
+    attempt_id = str(value or "").strip()
+    if not attempt_id:
+        return new_submission_attempt_id()
+    try:
+        return str(uuid.UUID(attempt_id))
+    except ValueError as exc:
+        raise ValueError("Submission attempt ID must be a UUID.") from exc
+
+
+def submission_attempt_metadata(submission_spec: dict) -> dict:
+    paths = submission_spec.get("paths", {})
+    return {
+        "version": SUBMISSION_ATTEMPT_STATE_VERSION,
+        "label": submission_spec.get("label"),
+        "run_name": submission_spec.get("run_name"),
+        "created_at": submission_spec.get("created_at"),
+        "flow_spec": deepcopy(submission_spec.get("flow_spec")),
+        "paths": {
+            "run_dir": paths.get("run_dir"),
+            "remote_script": paths.get("remote_script"),
+            "logs_dir": paths.get("logs_dir"),
+            "flows_dir": paths.get("flows_dir"),
+            "result_dir": paths.get("result_dir"),
+            "stage_dirs": deepcopy(paths.get("stage_dirs", {})),
+        },
+        "cluster": deepcopy(submission_spec.get("cluster")),
+        "resources": deepcopy(submission_spec.get("resources")),
+        "environment": deepcopy(submission_spec.get("environment")),
+        "modules": deepcopy(submission_spec.get("modules")),
+        "runner": deepcopy(submission_spec.get("runner")),
+        "potcar": deepcopy(submission_spec.get("potcar")),
+    }
+
+
+def submission_attempt_fingerprint(submission_spec: dict) -> str:
+    payload = json.dumps(
+        submission_attempt_metadata(submission_spec),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def submission_attempt_comment(submission_spec: dict) -> str:
+    return f"{SUBMISSION_ATTEMPT_COMMENT_PREFIX}{submission_attempt_id(submission_spec)}"
+
+
+def submission_attempt_id(submission_spec: dict) -> str:
+    attempt_id = (
+        (submission_spec.get("submission") or {}).get("attempt_id")
+        or submission_spec.get("submission_attempt_id")
+    )
+    return _normalized_submission_attempt_id(attempt_id)
+
+
+def initialize_submission_attempt(
+    submission_spec: dict,
+    *,
+    attempt_id: str | None = None,
+) -> dict:
+    normalized_attempt_id = _normalized_submission_attempt_id(attempt_id)
+    paths = submission_spec.setdefault("paths", {})
+    logs_dir = str(paths.get("logs_dir") or NOTEBOOK_DEFAULTS["logs_dir"]).rstrip("/")
+    attempts_dir = posixpath.join(logs_dir, SUBMISSION_ATTEMPTS_DIRNAME)
+    state_path = posixpath.join(attempts_dir, f"{normalized_attempt_id}.json")
+    lock_dir = posixpath.join(attempts_dir, f"{normalized_attempt_id}.lock")
+    paths["submission_attempts_dir"] = attempts_dir
+    paths["submission_attempt_state"] = state_path
+    paths["submission_attempt_lock"] = lock_dir
+    directories = paths.setdefault("directories_to_prepare", [])
+    if attempts_dir not in directories:
+        directories.append(attempts_dir)
+
+    submission = submission_spec.setdefault("submission", {})
+    submission["attempt_id"] = normalized_attempt_id
+    submission["attempt_state"] = state_path
+    submission["attempt_lock"] = lock_dir
+    submission["attempt_comment"] = f"{SUBMISSION_ATTEMPT_COMMENT_PREFIX}{normalized_attempt_id}"
+    submission["attempt_fingerprint"] = submission_attempt_fingerprint(submission_spec)
+    return submission_spec
 
 
 def default_resources_for_workflow(workflow: str | None = None) -> dict:
@@ -415,6 +508,7 @@ def build_job_body(submission_spec: dict) -> str:
 
     psp_dir = environment.get("PMG_VASP_PSP_DIR")
     jobflow_config = environment.get("JOBFLOW_CONFIG_FILE")
+    attempt_id = (submission_spec.get("submission") or {}).get("attempt_id")
 
     return f"""
 set -e -o pipefail
@@ -426,6 +520,7 @@ export ATOMATE2_VASP_ZIP_FILES=False
 {_shell_export("VASP_CMD", environment.get("VASP_CMD"))}
 {_shell_export("PMG_VASP_PSP_DIR", psp_dir) if psp_dir else 'echo "[sbatch] PMG_VASP_PSP_DIR not set"'}
 {_shell_export("JOBFLOW_CONFIG_FILE", jobflow_config) if jobflow_config else "true"}
+{_shell_export("BMD_SUBMISSION_ATTEMPT_ID", attempt_id) if attempt_id else "true"}
 echo "[sbatch] Using partition={submission_spec["cluster"]["partition"]} account={submission_spec["cluster"]["account"]}"
 echo "[sbatch] VASP_CMD=$VASP_CMD"
 echo "[sbatch] SLURM_NTASKS=${{SLURM_NTASKS:-<unset>}}"
@@ -451,11 +546,14 @@ def build_sbatch_script(submission_spec: dict) -> str:
     job_body = build_job_body(submission_spec)
     module_block = "\n".join(module_lines)
     export_block = "\n".join(exports)
+    attempt_comment = (submission_spec.get("submission") or {}).get("attempt_comment")
+    comment_line = f"#SBATCH --comment={attempt_comment}\n" if attempt_comment else ""
 
     header = (
         f"#SBATCH -p {cluster['partition']}\n"
         f"#SBATCH --account={cluster['account']}\n"
         f"#SBATCH --job-name={run_name}\n"
+        f"{comment_line}"
         f"#SBATCH --time={resources['walltime']}\n"
         f"#SBATCH --nodes={int(resources['nodes'])}\n"
         f"#SBATCH --ntasks={int(resources['ntasks'])}\n"
@@ -856,6 +954,7 @@ def create_submission_spec(
     jobflow_config_file: str | None = None,
     env: dict | None = None,
     mp_api_key: str | None = None,
+    submission_attempt_id: str | None = None,
 ) -> dict:
     """
     Describe a pending calculation using notebook submission defaults.
@@ -957,7 +1056,7 @@ def create_submission_spec(
     remote_script = posixpath.join(resolved_flows_dir, f"{run_name}.sbatch.sh")
     directories_to_prepare.extend(stage_dirs.values())
 
-    return {
+    spec = {
         "status": "pending",
         "label": sanitized_label,
         "run_name": run_name,
@@ -1039,6 +1138,10 @@ def create_submission_spec(
             "reason": "Specification only; no submission has been performed.",
         },
     }
+    return initialize_submission_attempt(
+        spec,
+        attempt_id=submission_attempt_id,
+    )
 
 
 __all__ = [
@@ -1063,8 +1166,14 @@ __all__ = [
     "default_resources_for_calculation_spec",
     "default_resources_for_workflow_spec",
     "default_resources_for_workflow",
+    "initialize_submission_attempt",
+    "new_submission_attempt_id",
     "parse_sbatch_job_id",
     "remote_preparation_file_groups",
     "sanitize_label",
+    "submission_attempt_comment",
+    "submission_attempt_fingerprint",
+    "submission_attempt_id",
+    "submission_attempt_metadata",
     "summarize_potcar_species",
 ]

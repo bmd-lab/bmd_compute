@@ -78,6 +78,58 @@ class RemoteExecutionError(RuntimeError):
         super().__init__(message)
 
 
+REMOTE_OPERATION_BUSY_MESSAGE = (
+    "BMD Compute is currently handling several remote operations. "
+    "Please try again in a few seconds."
+)
+
+
+class RemoteOperationBusy(RuntimeError):
+    """Raised when the in-process remote-operation capacity is saturated."""
+
+    def __init__(
+        self,
+        *,
+        limit: int,
+        active: int,
+        timeout_s: float,
+    ):
+        self.limit = limit
+        self.active = active
+        self.timeout_s = timeout_s
+        super().__init__(REMOTE_OPERATION_BUSY_MESSAGE)
+
+
+class SubmissionAttemptError(RuntimeError):
+    """Raised when a durable submission attempt cannot be submitted safely."""
+
+    suggestion = (
+        "Refresh the calculation state. If the job may already have been submitted, "
+        "check SLURM before preparing a new submission attempt."
+    )
+
+
+class SubmissionAttemptMismatch(SubmissionAttemptError):
+    """Raised when an attempt id is reused with different calculation metadata."""
+
+    suggestion = "Prepare the calculation again before submitting."
+
+
+class SubmissionAttemptNotPrepared(SubmissionAttemptError):
+    """Raised when submission is requested before durable preparation exists."""
+
+    suggestion = "Run Prepare Remote successfully before submitting the calculation."
+
+
+class SubmissionAttemptInProgress(SubmissionAttemptError):
+    """Raised when an attempt is already or ambiguously being submitted."""
+
+    suggestion = (
+        "Do not press Submit again for this attempt. Check SLURM or resume the "
+        "calculation using the job ID if it appears in the queue."
+    )
+
+
 @dataclass(frozen=True)
 class RemoteConnectionProfile:
     """Connection settings for the cluster, without embedding SSH secrets."""
@@ -409,9 +461,15 @@ __all__ = [
     "RemoteConnectionProfile",
     "RemoteExecutionError",
     "RemoteJobStatus",
+    "RemoteOperationBusy",
+    "REMOTE_OPERATION_BUSY_MESSAGE",
     "RemotePathInfo",
     "RemoteProcess",
     "RemoteRunner",
     "RemoteTransferResult",
     "RemoteTunnel",
+    "SubmissionAttemptError",
+    "SubmissionAttemptInProgress",
+    "SubmissionAttemptMismatch",
+    "SubmissionAttemptNotPrepared",
 ]

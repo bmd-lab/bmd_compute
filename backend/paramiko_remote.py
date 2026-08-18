@@ -25,13 +25,24 @@ from backend.remote import (
     RemoteConnectionProfile,
     RemoteExecutionError,
     RemoteJobStatus,
+    SubmissionAttemptInProgress,
+    SubmissionAttemptMismatch,
+    SubmissionAttemptNotPrepared,
     RemotePathInfo,
     RemoteProcess,
     RemoteRunner,
     RemoteTransferResult,
     RemoteTunnel,
 )
-from backend.submission import parse_sbatch_job_id, remote_preparation_file_groups
+from backend.submission import (
+    SUBMISSION_ATTEMPT_STATE_VERSION,
+    parse_sbatch_job_id,
+    remote_preparation_file_groups,
+    submission_attempt_comment,
+    submission_attempt_fingerprint,
+    submission_attempt_id,
+    submission_attempt_metadata,
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -40,6 +51,9 @@ DEFAULT_CONNECT_TIMEOUT_S = 20
 DEFAULT_REMOTE_COMMAND_TIMEOUT_S = 60
 DEFAULT_MONITOR_COMMAND_TIMEOUT_S = 30
 DEFAULT_SFTP_TIMEOUT_S = 120
+SUBMISSION_ATTEMPT_STATE_WAIT_S = 5.0
+SUBMISSION_ATTEMPT_STATE_POLL_S = 0.1
+SUBMISSION_ATTEMPT_STATE_MAX_BYTES = 1024 * 1024
 
 
 def _paramiko_connect_kwargs(profile: RemoteConnectionProfile, paramiko_module) -> dict:
@@ -762,24 +776,318 @@ class ParamikoRemoteRunner(RemoteRunner):
         self.ensure_available()
         self._preflight(submission_spec)
 
-        output = self._prepare_submission_files(submission_spec)
         if dry_run:
-            return self._job_record(
+            output = self._prepare_submission_files(submission_spec)
+            record = self._job_record(
                 submission_spec,
                 None,
                 output + "DRY RUN\n",
                 status="dry_run",
             )
+            self._write_prepared_submission_attempt_state(submission_spec, record)
+            return record
 
-        batch_result = self.submit_batch(_batch_request_from_submission_spec(submission_spec))
+        state = self._require_existing_submission_attempt(submission_spec)
+        if state.get("state") == "SUBMITTED":
+            return self._job_record_from_submission_attempt_state(
+                submission_spec,
+                state,
+                already_submitted=True,
+            )
+        if state.get("state") == "SUBMITTING":
+            return self._wait_for_submission_attempt_resolution(submission_spec)
+
+        output = self._prepare_submission_files(submission_spec)
+        return self._submit_prepared_submission_attempt(submission_spec, output)
+
+    def _submit_prepared_submission_attempt(
+        self,
+        submission_spec: dict,
+        output: str,
+    ) -> JobRecord:
+        state = self._require_existing_submission_attempt(submission_spec)
+        if state.get("state") == "SUBMITTED":
+            return self._job_record_from_submission_attempt_state(
+                submission_spec,
+                state,
+                already_submitted=True,
+            )
+        if state.get("state") == "SUBMITTING":
+            return self._wait_for_submission_attempt_resolution(submission_spec)
+        if state.get("state") != "PREPARED":
+            raise SubmissionAttemptNotPrepared(
+                f"Submission attempt {submission_attempt_id(submission_spec)} "
+                f"is in state {state.get('state')!r}, not PREPARED."
+            )
+
+        if not self._claim_submission_attempt(submission_spec):
+            return self._wait_for_submission_attempt_resolution(submission_spec)
+
+        try:
+            latest_state = self._require_existing_submission_attempt(submission_spec)
+            if latest_state.get("state") == "SUBMITTED":
+                return self._job_record_from_submission_attempt_state(
+                    submission_spec,
+                    latest_state,
+                    already_submitted=True,
+                )
+            if latest_state.get("state") == "SUBMITTING":
+                raise SubmissionAttemptInProgress(
+                    f"Submission attempt {submission_attempt_id(submission_spec)} "
+                    "is already marked SUBMITTING."
+                )
+
+            self._write_submission_attempt_state(
+                submission_spec,
+                "SUBMITTING",
+                output=output,
+            )
+        except Exception:
+            self._release_submission_attempt_claim(submission_spec)
+            raise
+
+        try:
+            batch_result = self.submit_batch(_batch_request_from_submission_spec(submission_spec))
+        except RemoteExecutionError as exc:
+            self._write_submission_attempt_state(
+                submission_spec,
+                "PREPARED",
+                output=output,
+                last_error=str(exc),
+            )
+            self._release_submission_attempt_claim(submission_spec)
+            raise
+        except Exception as exc:
+            self._write_submission_attempt_state(
+                submission_spec,
+                "SUBMITTING",
+                output=output,
+                last_error=str(exc),
+            )
+            raise SubmissionAttemptInProgress(
+                "BMD Compute could not confirm whether sbatch completed for "
+                f"submission attempt {submission_attempt_id(submission_spec)}. "
+                "It will not submit this attempt again automatically."
+            ) from exc
+
         sbatch_raw = (batch_result.raw_output or "").strip() or batch_result.job_id
         output += f"Submitting with: {batch_result.command}\n"
         output += f"SBATCH_RAW_OUT={sbatch_raw}\n"
 
         job_id = batch_result.job_id
         record = self._job_record(submission_spec, job_id, output)
+        try:
+            self._write_submission_attempt_state(
+                submission_spec,
+                "SUBMITTED",
+                output=record.raw_output,
+                job_id=job_id,
+                job_record=record.to_dict(),
+            )
+            self._release_submission_attempt_claim(submission_spec)
+        except Exception:
+            # sbatch already returned a job id. Keep the attempt conservative:
+            # later duplicate requests will see SUBMITTING/lock state rather
+            # than submitting another job.
+            pass
         self._write_remote_job_record(record)
         return record
+
+    def _write_prepared_submission_attempt_state(
+        self,
+        submission_spec: dict,
+        record: JobRecord,
+    ) -> None:
+        existing_state = self._read_submission_attempt_state(submission_spec)
+        if existing_state:
+            self._ensure_submission_attempt_matches(submission_spec, existing_state)
+            if existing_state.get("state") in {"SUBMITTING", "SUBMITTED"}:
+                return
+
+        self._write_submission_attempt_state(
+            submission_spec,
+            "PREPARED",
+            output=record.raw_output,
+        )
+
+    def _require_existing_submission_attempt(self, submission_spec: dict) -> dict:
+        state = self._read_submission_attempt_state(submission_spec)
+        if not state:
+            raise SubmissionAttemptNotPrepared(
+                f"Submission attempt {submission_attempt_id(submission_spec)} "
+                "has not been prepared on the remote host."
+            )
+        self._ensure_submission_attempt_matches(submission_spec, state)
+        return state
+
+    def _read_submission_attempt_state(self, submission_spec: dict) -> dict | None:
+        path = _submission_attempt_state_path(submission_spec)
+        if not path or not self.is_file(path):
+            return None
+
+        text = self.read_text(path, max_bytes=SUBMISSION_ATTEMPT_STATE_MAX_BYTES)
+        try:
+            state = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise SubmissionAttemptInProgress(
+                f"Submission attempt state at {path} is not valid JSON."
+            ) from exc
+        if not isinstance(state, dict):
+            raise SubmissionAttemptInProgress(
+                f"Submission attempt state at {path} is not a JSON object."
+            )
+        return state
+
+    def _write_submission_attempt_state(
+        self,
+        submission_spec: dict,
+        state: str,
+        *,
+        output: str = "",
+        job_id: str | None = None,
+        job_record: dict | None = None,
+        last_error: str | None = None,
+    ) -> None:
+        payload = {
+            "version": SUBMISSION_ATTEMPT_STATE_VERSION,
+            "attempt_id": submission_attempt_id(submission_spec),
+            "state": state,
+            "fingerprint": submission_attempt_fingerprint(submission_spec),
+            "metadata": submission_attempt_metadata(submission_spec),
+            "attempt_comment": submission_attempt_comment(submission_spec),
+            "run_name": submission_spec.get("run_name"),
+            "run_dir": submission_spec.get("paths", {}).get("run_dir"),
+            "remote_script": submission_spec.get("paths", {}).get("remote_script"),
+            "updated_at": _now_str(),
+            "output": output,
+        }
+        if job_id is not None:
+            payload["job_id"] = str(job_id)
+        if job_record is not None:
+            payload["job_record"] = job_record
+        if last_error:
+            payload["last_error"] = str(last_error)
+
+        self.put_text(
+            _submission_attempt_state_path(submission_spec),
+            json.dumps(payload, indent=2, sort_keys=True),
+        )
+
+    def _ensure_submission_attempt_matches(
+        self,
+        submission_spec: dict,
+        state: Mapping[str, Any],
+    ) -> None:
+        expected_id = submission_attempt_id(submission_spec)
+        actual_id = str(state.get("attempt_id") or "")
+        if actual_id and actual_id != expected_id:
+            raise SubmissionAttemptMismatch(
+                f"Submission attempt state belongs to {actual_id}, not {expected_id}."
+            )
+
+        expected_fingerprint = submission_attempt_fingerprint(submission_spec)
+        actual_fingerprint = str(state.get("fingerprint") or "")
+        if actual_fingerprint != expected_fingerprint:
+            raise SubmissionAttemptMismatch(
+                "Submission attempt ID was reused with different calculation metadata."
+            )
+
+    def _claim_submission_attempt(self, submission_spec: dict) -> bool:
+        lock_dir = _submission_attempt_lock_path(submission_spec)
+        result = self.run(
+            f"mkdir {shlex.quote(lock_dir)}",
+            check=False,
+            modules=False,
+            export_env=False,
+        )
+        return result.ok
+
+    def _release_submission_attempt_claim(self, submission_spec: dict) -> None:
+        lock_dir = _submission_attempt_lock_path(submission_spec)
+        try:
+            self.run(
+                f"rmdir {shlex.quote(lock_dir)}",
+                check=False,
+                modules=False,
+                export_env=False,
+            )
+        except Exception:
+            return
+
+    def _wait_for_submission_attempt_resolution(self, submission_spec: dict) -> JobRecord:
+        deadline = time.monotonic() + SUBMISSION_ATTEMPT_STATE_WAIT_S
+        last_state = None
+        while time.monotonic() <= deadline:
+            state = self._read_submission_attempt_state(submission_spec)
+            if state:
+                self._ensure_submission_attempt_matches(submission_spec, state)
+                last_state = state
+                if state.get("state") == "SUBMITTED":
+                    return self._job_record_from_submission_attempt_state(
+                        submission_spec,
+                        state,
+                        already_submitted=True,
+                    )
+            time.sleep(SUBMISSION_ATTEMPT_STATE_POLL_S)
+
+        if last_state and last_state.get("state") == "PREPARED":
+            raise SubmissionAttemptInProgress(
+                f"Submission attempt {submission_attempt_id(submission_spec)} "
+                "was not submitted by another request. Please press Submit again."
+            )
+
+        raise SubmissionAttemptInProgress(
+            f"Submission attempt {submission_attempt_id(submission_spec)} is already "
+            "being submitted or its submission status is ambiguous."
+        )
+
+    def _job_record_from_submission_attempt_state(
+        self,
+        submission_spec: dict,
+        state: Mapping[str, Any],
+        *,
+        already_submitted: bool,
+    ) -> JobRecord:
+        job_record_data = state.get("job_record")
+        output = str(state.get("output") or "")
+        if already_submitted:
+            output = output.rstrip() + "\nBMD_ALREADY_SUBMITTED=1\n"
+
+        if isinstance(job_record_data, dict):
+            return JobRecord(
+                job_id=str(job_record_data.get("job_id") or state.get("job_id") or ""),
+                run_name=str(job_record_data.get("run_name") or submission_spec["run_name"]),
+                run_dir=str(job_record_data.get("run_dir") or submission_spec["paths"]["run_dir"]),
+                remote_script=str(
+                    job_record_data.get("remote_script")
+                    or submission_spec["paths"]["remote_script"]
+                ),
+                log_paths=dict(
+                    job_record_data.get("log_paths")
+                    or {
+                        "stdout": submission_spec["paths"]["log_out"],
+                        "stderr": submission_spec["paths"]["log_err"],
+                        "slurm_out": submission_spec["paths"]["slurm_out"],
+                        "slurm_err": submission_spec["paths"]["slurm_err"],
+                    }
+                ),
+                cluster=dict(job_record_data.get("cluster") or submission_spec["cluster"]),
+                resources=dict(job_record_data.get("resources") or submission_spec["resources"]),
+                submitted_at=str(job_record_data.get("submitted_at") or state.get("updated_at") or ""),
+                raw_output=output,
+                status=str(job_record_data.get("status") or "submitted"),
+                submission_spec=dict(
+                    job_record_data.get("submission_spec") or submission_spec
+                ),
+                remote_state_path=job_record_data.get("remote_state_path"),
+            )
+
+        return self._job_record(
+            submission_spec,
+            str(state.get("job_id") or ""),
+            output,
+            status="submitted",
+        )
 
     def _prepare_submission_files(self, submission_spec: dict) -> str:
         output_lines = []
@@ -1076,6 +1384,22 @@ def _batch_request_from_submission_spec(submission_spec: dict) -> BatchSubmissio
         mem_gb=int(resources["mem_gb"]),
         walltime=str(resources["walltime"]),
         parsable=True,
+    )
+
+
+def _submission_attempt_state_path(submission_spec: dict) -> str:
+    return str(
+        (submission_spec.get("submission") or {}).get("attempt_state")
+        or submission_spec.get("paths", {}).get("submission_attempt_state")
+        or ""
+    )
+
+
+def _submission_attempt_lock_path(submission_spec: dict) -> str:
+    return str(
+        (submission_spec.get("submission") or {}).get("attempt_lock")
+        or submission_spec.get("paths", {}).get("submission_attempt_lock")
+        or ""
     )
 
 
