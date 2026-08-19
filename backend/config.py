@@ -4,6 +4,26 @@ import math
 import os
 
 
+def _bool_env(name: str, *, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None or value == "":
+        return bool(default)
+
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "t", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "f", "no", "n", "off"}:
+        return False
+
+    raise RuntimeError(
+        f"{name} must be a boolean value: true/false, yes/no, on/off, or 1/0."
+    )
+
+
+def bmd_debug_enabled() -> bool:
+    return _bool_env(BMD_DEBUG_ENV, default=False)
+
+
 def _positive_int_env(name: str, *, default: int) -> int:
     value = os.environ.get(name)
     if value is None or value == "":
@@ -83,6 +103,9 @@ MODULES = [
 ]
 DEFAULT_MODULES = MODULES
 
+BMD_DEBUG_ENV = "BMD_DEBUG"
+BMD_DEBUG = bmd_debug_enabled()
+
 REMOTE_OPERATION_LIMIT_ENV = "BMD_MAX_CONCURRENT_REMOTE_OPERATIONS"
 REMOTE_OPERATION_SLOT_TIMEOUT_ENV = "BMD_REMOTE_OPERATION_SLOT_TIMEOUT_S"
 MAX_CONCURRENT_REMOTE_OPERATIONS = _positive_int_env(
@@ -133,6 +156,8 @@ NOTEBOOK_DEFAULTS = {
 
 
 __all__ = [
+    "BMD_DEBUG",
+    "BMD_DEBUG_ENV",
     "DEFAULT_ACCOUNT",
     "DEFAULT_FLOWS_DIR",
     "DEFAULT_JOBFLOW_CONFIG_FILE",
@@ -167,4 +192,5 @@ __all__ = [
     "REMOTE_OPERATION_SLOT_TIMEOUT_S",
     "SUBMISSION_ENV_KEYS",
     "WORKFLOW_RESOURCE_OVERRIDES",
+    "bmd_debug_enabled",
 ]

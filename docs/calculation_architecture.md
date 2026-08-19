@@ -1,340 +1,230 @@
 # Calculation Architecture
 
-This document describes how BMD Compute represents VASP calculations as scientific intent.
+BMD Compute represents calculations as ordered scientific stages. The user chooses a scientific goal; the backend turns that into a validated stage plan and the corresponding pymatgen/atomate2 inputs.
 
-The goal is to separate what the user wants to calculate from how VASP, pymatgen, atomate2 and Jobflow implement it. The current implementation is intentionally a compatibility layer: it introduces the new architecture without changing existing workflow behaviour.
+The current architecture is stage-first. Legacy `CalculationSpec` objects remain for compatibility, but new multi-stage behavior should be expressed as `WorkflowSpec`.
 
----
+## Core Objects
 
-# Core Concepts
+### CalculationSpec
 
-## Purpose
-
-`Purpose` describes the scientific task.
-
-Examples:
-
-* `relax`
-* `static`
-* `dos`
-* `band_structure`
-* `dielectric`
-
-Purpose should not encode exchange-correlation functionals, INCAR tags, POTCAR names or VASP execution details.
-
-Current compatibility support:
-
-* `static`
-* `relax`
-* `double_relax`
-* `dos`
-* `relax` with the compatibility modifier `ions_only`
-
-## Theory
-
-`Theory` describes the exchange-correlation or electronic-structure method.
-
-Examples:
-
-* `pbe`
-* `r2scan`
-* `hse06`
-
-Theory should map to pymatgen and atomate2 input-set support wherever possible. BMD Compute should not reimplement pymatgen input-set defaults.
-
-Current compatibility support:
-
-* `pbe`, using the existing `PBE_64` POTCAR functional.
-
-## Modifiers
-
-`Modifier` describes optional scientific features layered onto a purpose and theory.
-
-Examples:
-
-* `soc`
-* `dft_u`
-* `spin_polarized`
-* `gamma_only`
-* `ions_only`
-
-Modifiers should remain scientific-intent labels. They should not become free-form INCAR fragments. When a modifier requires VASP settings, the builder should prefer existing pymatgen or atomate2 support before applying Burton Lab overrides.
-
-`ions_only` currently exists as a compatibility modifier for the existing `relax_ions` workflow.
-
----
-
-# CalculationSpec
-
-`CalculationSpec` is the canonical backend object for calculation intent.
+`CalculationSpec` is the compatibility representation for a single scientific purpose:
 
 ```python
 CalculationSpec(
     purpose=Purpose.STATIC,
     theory=Theory.PBE,
     modifiers=frozenset(),
-    label=None,
 )
 ```
 
-It is defined in:
+It should not contain INCAR templates, KPOINTS templates, SLURM resources, or atomate2 maker classes.
 
-```text
-backend/calculations/models.py
+### StageSpec
+
+`StageSpec` is the unit of stage-first calculation intent:
+
+```python
+StageSpec(
+    stage_type=StageType.STATIC,
+    theory=Theory.HSE06,
+    modifiers=frozenset(),
+)
 ```
 
-Responsibilities:
+Each stage owns its type, theory, modifiers, label, and stage-local options.
 
-* normalize user-facing strings into enums
-* carry scientific intent through backend layers
-* avoid storing VASP implementation details
-* provide a stable object that future builders can map to atomate2 makers
+### WorkflowSpec
 
-`CalculationSpec` should not contain:
+`WorkflowSpec` is an ordered list of stages:
 
-* INCAR templates
-* KPOINTS templates
-* atomate2 maker classes
-* pymatgen input-set classes
-* SLURM resources
-* submission or monitoring state
-
----
-
-# Builder
-
-`build_calculation_flow()` is the public construction entry point for calculation intent.
-
-It is defined in:
-
-```text
-backend/calculations/builder.py
+```python
+WorkflowSpec(
+    stages=[
+        StageSpec(StageType.RELAX, Theory.PBE),
+        StageSpec(StageType.STATIC, Theory.HSE06),
+        StageSpec(StageType.BAND_STRUCTURE, Theory.HSE06),
+    ],
+)
 ```
 
-Current behaviour:
+Recommended workflows and custom workflows both serialize to this same object. That keeps workflow construction, generated previews, remote reconstruction, and results handling on one shared path.
+
+## Supported Stage Types
+
+Current stage types are:
+
+- Geometry Optimisation (`relax`)
+- Static Energy (`static`)
+- Density of States (`dos`)
+- Band Structure (`band_structure`)
+
+DOS and Band Structure are terminal analysis stages. Validation requires them to follow a converged Static Energy stage using a compatible theory.
+
+## Theories
+
+Current theory enum values are:
+
+- `pbe`
+- `hse06`
+- `r2scan`
+
+PBE and HSE06 have implemented support. r2SCAN is represented as future intent but is not currently enabled.
+
+HSE06 support is stage-specific:
+
+- Geometry Optimisation: supported, with `PRECFOCK = Fast`
+- Static Energy: supported, with `PRECFOCK = Accurate` and hybrid-compatible smearing
+- Band Structure: supported through atomate2 HSE band primitives when preceded by HSE06 Static Energy
+- DOS: not supported
+
+## Modifiers
+
+Current modifiers are:
+
+- Spin Polarised
+- explicit DFT+U
+- SOC
+- Gamma-only
+- Ions-only
+
+Modifiers are validated by stage and theory. They are not free-form INCAR fragments.
+
+Important rules:
+
+- SOC is available for reviewed PBE Static Energy stages and uses `vasp_ncl`.
+- HSE06 + SOC remains unsupported.
+- DFT+U is explicit and is applied only when selected and when reviewed U values are available for the structure.
+- Spin polarization is supported where the stage registry allows it.
+- Ions-only is a PBE relax-stage compatibility modifier.
+
+## Registry And Capability Model
+
+`backend/calculations/registry.py` answers whether a requested `CalculationSpec`, `StageSpec`, or `WorkflowSpec` is supported.
+
+The registry owns:
+
+- supported purpose/theory/modifier combinations
+- supported stage/theory/modifier combinations
+- stage ordering rules
+- compatible precursor requirements
+- legacy-to-stage mapping
+- user-facing display names and validation messages
+
+The registry should not generate INCAR or KPOINTS settings.
+
+## Theory Policy
+
+`backend/calculations/theory_policy.py` owns centralized theory/stage INCAR amendments.
+
+HSE06 policy is applied by theory plus calculation stage. This avoids workflow-builder special cases and lets mixed workflows such as PBE relax -> HSE06 static -> HSE06 band structure stay stage-local.
+
+Current HSE06 functional policy includes:
 
 ```text
-CalculationSpec
-    ↓
-validate_calculation_spec()
-    ↓
-legacy workflow mapping
-    ↓
-backend.workflows.build_atomate2_flow()
+LHFCALC = True
+AEXX = 0.25
+HFSCREEN = 0.2
+GGA = PE
 ```
 
-This preserves existing behaviour and keeps using the same atomate2 makers as before.
-
-Future behaviour:
+Stage-specific HSE06 amendments include:
 
 ```text
-CalculationSpec
-    ↓
-validated Purpose / Theory / Modifiers
-    ↓
-atomate2 maker selection
-    ↓
-pymatgen VaspInputSet selection
-    ↓
-small Burton Lab override policy
-    ↓
-Jobflow Flow
+Relax:          PRECFOCK = Fast
+Static:         PRECFOCK = Accurate, ISMEAR = 0
+Band Structure: atomate2 HSE band path with HSE-compatible stage settings
 ```
 
-The builder owns orchestration. It should not become a repository of copied pymatgen defaults or VASP input templates.
+## Resource Policy
 
----
+Execution resources are modeled separately from scientific theory in `backend/calculations/resources.py`.
 
-# Registry
+Current allow-lists:
 
-The registry validates supported combinations and translates between new and legacy representations during the compatibility phase.
+- CPUs: `24, 48, 72, 96, 120, 144, 168, 192`
+- Memory GB: `32, 64, 96, 128, 160, 192, 224, 256, 320, 384, 512`
+- Queue: `leeburton-pool`
 
-It is defined in:
+Defaults:
 
 ```text
-backend/calculations/registry.py
+nodes = 1
+ntasks = 24
+memory = 128 GB
+walltime = 72:00:00
+queue = leeburton-pool
+account = power-leeburton-users_v2
 ```
 
-Current responsibilities:
+The account is fixed backend policy and is not user-editable.
 
-* validate that a `CalculationSpec` is supported
-* map legacy workflow strings to `CalculationSpec`
-* map `CalculationSpec` back to legacy workflow names
-* map supported theories to legacy POTCAR functionals
+Automatic NCORE is resource-derived and stage-specific. It currently applies to Relax, Static, and DOS stages. Band Structure stages omit automatic NCORE until parallel band-structure performance is separately benchmarked.
 
-Current compatibility mapping:
+## Generated Input Previews
+
+Generated inputs are pre-submission policy previews. They show the INCAR, KPOINTS, POSCAR, POTCAR symbols, and SLURM/script policy BMD Compute intends to use before remote preparation.
+
+For downstream stages after a relaxation, the preview cannot know the future relaxed structure. At runtime, stage chaining uses the previous stage output as the input structure.
+
+Preview generation and remote execution should share the same stage builders for policy-sensitive inputs. New modifiers and theory amendments should include tests comparing preview and reconstructed execution paths.
+
+## Stage Directories
+
+Multi-stage workflows preserve every stage output in separate directories.
+
+Examples:
 
 ```text
-(static,       pbe, no modifiers)        -> static
-(relax,        pbe, no modifiers)        -> relax
-(double_relax, pbe, no modifiers)        -> double_relax
-(dos,          pbe, no modifiers)        -> dos
-(relax,        pbe, ions_only modifier)  -> relax_ions
+stage_01/
+stage_02/
+stage_03/
 ```
 
-Future responsibilities:
-
-* define supported purpose/theory/modifier combinations
-* reject unsupported combinations before atomate2 construction
-* route supported combinations to the correct builder strategy
-* provide metadata to the browser without embedding scientific logic in templates
-
-The registry should answer "is this calculation supported?" It should not generate INCAR settings directly.
-
----
-
-# Data Files
-
-## presets.yaml
-
-Located at:
+The legacy Double Geometry Optimisation workflow keeps its historical names:
 
 ```text
-backend/calculations/presets.yaml
+relax_01/
+relax_02/
 ```
 
-This file contains display and UI metadata:
+These names are internal execution/result details. The UI presents the scientific calculation plan rather than implementation-level job names.
 
-* display names
-* enabled or disabled status
-* short descriptions
-* default legacy POTCAR functional for compatibility
+## Submission And Execution
 
-It should remain declarative metadata. It should not instantiate Python classes or duplicate pymatgen defaults.
+Submission state includes the serialized `WorkflowSpec`, resources, environment, cluster policy, remote paths, and provenance.
 
-## overrides.yaml
+Remote execution reconstructs the workflow from `submission.json`, configures atomate2/Custodian, and runs the stages in order. The sbatch allocation controls `SLURM_NTASKS`; the VASP command resolver expands the runtime task count before Custodian receives argv.
 
-Located at:
+Submission idempotency is enforced by server-side state in the remote logs area. Repeated submit attempts with the same attempt id should not create duplicate SLURM jobs once a submission has reached the protected state.
 
-```text
-backend/calculations/overrides.yaml
-```
+## Results
 
-This file is reserved for Burton Lab override policy only.
+Generic results include final structure and total energy information where available.
 
-Allowed content:
+Workflow-specific scientific visualizations are plugged into a generic result-rendering path:
 
-* small INCAR overrides required by Burton Lab policy
-* small KPOINTS policy overrides
-* documented lab-specific deviations from pymatgen or atomate2 defaults
+- Density of States: pymatgen-parsed DOS Plotly visualization
+- Band Structure: pymatgen-parsed band structure Plotly visualization with high-symmetry labels, spin-aware legends, Fermi-level alignment, and default `[-10, 10]` eV viewport
 
-Disallowed content:
+Result parsing runs remotely where possible and returns JSON-safe compact payloads to the web process.
 
-* full INCAR templates
-* copied pymatgen input-set definitions
-* copied atomate2 maker defaults
-* workflow logic
-* SLURM or deployment settings
+## Current And Future Boundary
 
----
+Supported now:
 
-# Relationship To pymatgen And atomate2
+- PBE relax/static/relax-static/double-relax/DOS/band-structure workflows
+- HSE06 relax/static/relax-static stages and workflows
+- HSE06 band structure with an HSE06 static electronic precursor
+- reviewed PBE static SOC workflows
+- explicit DFT+U when available from the input set
 
-BMD Compute should use pymatgen and atomate2 as the authoritative implementation of VASP scientific defaults.
+Future or deliberately unsupported:
 
-```text
-Purpose / Theory / Modifiers
-    describe intent
-
-atomate2 makers
-    construct Jobflow jobs and flows
-
-pymatgen VaspInputSets
-    generate VASP input files
-
-Burton Lab overrides
-    apply small local policy only where necessary
-```
-
-The design principle is:
-
-```text
-Prefer inheritance from pymatgen and atomate2 over local duplication.
-```
-
-When pymatgen adds or improves an input set, BMD Compute should be able to update the mapping layer and inherit the improvement. Local override code should shrink over time, not grow into a parallel input-set system.
-
----
-
-# UML-Style Data Flow
-
-```text
-+-------------------+
-| Browser Form      |
-| workflow + method |
-+---------+---------+
-          |
-          v
-+-------------------+
-| FastAPI Controller|
-| parse request     |
-+---------+---------+
-          |
-          v
-+-------------------+
-| CalculationSpec   |
-| Purpose           |
-| Theory            |
-| Modifiers         |
-+---------+---------+
-          |
-          v
-+-------------------+
-| Registry          |
-| validate support  |
-| legacy mapping    |
-+---------+---------+
-          |
-          v
-+-------------------+
-| Builder           |
-| compatibility     |
-| delegation        |
-+---------+---------+
-          |
-          v
-+-------------------+
-| backend.workflows |
-| existing makers   |
-+---------+---------+
-          |
-          v
-+-------------------+
-| atomate2 Makers   |
-| Jobflow Flow      |
-+---------+---------+
-          |
-          v
-+-------------------+
-| pymatgen          |
-| VaspInputSets     |
-+-------------------+
-```
-
-Current compatibility path:
-
-```text
-CalculationSpec -> Registry -> Builder -> backend.workflows -> atomate2
-```
-
-Target path:
-
-```text
-CalculationSpec -> Registry -> Builder -> atomate2 makers -> pymatgen input sets
-```
-
----
-
-# Migration Plan
-
-Future PRs should complete the migration in small steps:
-
-1. Use `presets.yaml` to drive browser labels and enabled options.
-2. Add explicit registry entries for band structure and dielectric calculations.
-3. Map `Theory` values directly to atomate2 and pymatgen-supported input-set options.
-4. Add modifier handling only where atomate2 or pymatgen does not already provide a complete abstraction.
-5. Move `SubmissionSpec.flow_spec` toward `CalculationSpec` while preserving backwards compatibility for existing submitted jobs.
-6. Update remote execution packaging so `backend/calculations/` is available on the cluster.
-7. Retire legacy workflow strings once browser, submission and remote execution all use `CalculationSpec`.
-
-Throughout the migration, every PR should preserve existing validated notebook behaviour unless it explicitly changes a scientific policy.
+- HSE06 DOS
+- HSE06 + SOC
+- r2SCAN
+- Dielectric/optics
+- GW
+- arbitrary user INCAR editing
+- non-linear jobflow directory semantics beyond the current linear stage chains

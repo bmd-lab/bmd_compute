@@ -31,6 +31,10 @@ from backend.calculations.theory_policy import (
     theory_default_potcar_functional,
     theory_incar_settings,
 )
+from backend.calculations.vasp_stage_definitions import (
+    describe_stage,
+    list_stage_definitions,
+)
 
 __all__ = [
     "CalculationSpec",
@@ -51,8 +55,10 @@ __all__ = [
     "calculation_spec_from_flow_spec",
     "calculation_spec_from_legacy",
     "default_execution_resources",
+    "describe_stage",
     "legacy_potcar_functional_from_spec",
     "legacy_workflow_from_spec",
+    "list_stage_definitions",
     "ncore_for_execution_resources",
     "normalize_execution_resources",
     "theory_default_potcar_functional",

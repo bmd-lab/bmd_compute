@@ -1,13 +1,6 @@
 import os
 import shlex
 
-ENCUT_STATIC_PREP_DEFAULT = 520
-# BMD workflow policy from the validated reference notebook:
-# relax stages use 580 eV and final static-style stages use at least 620 eV.
-ENCUT_RELAX_DEFAULT = 580
-ENCUT_STATIC_FINAL_DEFAULT = 620
-BAND_STRUCTURE_LINE_DENSITY_DEFAULT = 40
-HSE_BAND_STRUCTURE_RECIPROCAL_DENSITY_DEFAULT = 64
 DFT_U_INCAR_KEYS = (
     "LDAU",
     "LDAUTYPE",
@@ -43,6 +36,15 @@ from backend.calculations.resources import (
     stage_allows_automatic_ncore,
 )
 from backend.calculations.custodian_policy import hse_band_structure_run_vasp_kwargs
+from backend.calculations.vasp_stage_definitions import (
+    BAND_STRUCTURE_LINE_DENSITY_DEFAULT,
+    HSE_BAND_STRUCTURE_RECIPROCAL_DENSITY_DEFAULT,
+    apply_hse_band_structure_base_incar_settings,
+    apply_relax_compatibility_incar_settings,
+    apply_stage_base_incar_settings,
+    apply_stage_restart_incar_settings,
+    apply_static_compatibility_incar_settings,
+)
 from backend.calculations.registry import (
     CalculationValidationError,
     calculation_stage_directories,
@@ -58,6 +60,7 @@ from backend.calculations.registry import (
 from backend.calculations.theory_policy import (
     CalculationStage,
     apply_theory_incar_settings,
+    theory_incar_settings,
     theory_uses_hybrid_functional,
 )
 
@@ -84,30 +87,7 @@ def _is_hse_incar(settings):
 
 
 def incar_static(settings, allow_ncore=True):
-    user_settings = dict(settings or {})
-
-    for key in ("GGA", "ENAUG", "LMIXTAU"):
-        user_settings.setdefault(key, None)
-
-    user_settings.setdefault("ISMEAR", -5)
-    if user_settings.get("ISMEAR", -5) == -5:
-        user_settings.setdefault("SIGMA", None)
-
-    user_settings.setdefault("EDIFF", 1e-6)
-    user_settings.setdefault("ALGO", "Normal")
-
-    for key, value in {
-        "NEDOS": 3001,
-        "LORBIT": 11,
-        "LVTOT": True,
-        "LAECHG": True,
-        "LCHARG": True,
-        "LWAVE": True,
-        "LELF": True,
-    }.items():
-        user_settings.setdefault(key, value)
-
-    return user_settings
+    return apply_static_compatibility_incar_settings(settings)
 
 
 def incar_relax(settings, user=None):
@@ -115,28 +95,19 @@ def incar_relax(settings, user=None):
     INCAR for relax steps, preserving the reference notebook defaults.
     """
 
-    user_settings = dict(settings or {})
     explicit_user_settings = dict(user or {})
-
-    if "LCHARG" not in explicit_user_settings:
-        user_settings["LCHARG"] = False
-    if "LWAVE" not in explicit_user_settings:
-        user_settings["LWAVE"] = False
-
-    for key in ("LAECHG", "LVTOT", "LELF", "LVHAR", "LORBIT"):
-        if key not in explicit_user_settings:
-            user_settings[key] = None
-
-    for key in ("GGA", "ENAUG", "LMIXTAU"):
-        user_settings.setdefault(key, None)
-
-    user_settings.setdefault("ALGO", "Fast")
-    user_settings.setdefault("ADDGRID", True)
-    user_settings.setdefault("EDIFFG", -0.01)
+    user_settings = apply_relax_compatibility_incar_settings(
+        settings,
+        explicit_user_settings=explicit_user_settings,
+    )
 
     if _is_hse_incar(user_settings) or _is_hse_incar(explicit_user_settings):
-        user_settings.setdefault("PRECFOCK", "Fast")
-        user_settings.setdefault("ALGO", "Damped")
+        hse_relax_settings = theory_incar_settings(
+            Theory.HSE06,
+            CalculationStage.RELAX,
+        )
+        user_settings.setdefault("PRECFOCK", hse_relax_settings["PRECFOCK"])
+        user_settings.setdefault("ALGO", hse_relax_settings["ALGO"])
 
     return user_settings
 
@@ -625,10 +596,6 @@ def build_relax_input_set_generator(
     )
     if Modifier.SOC in calculation_modifiers:
         user_incar = apply_soc_magmom_settings(user_incar, structure=structure)
-    user_incar.setdefault("ENCUT", ENCUT_RELAX_DEFAULT)
-    user_incar.setdefault("EDIFF", 1e-6)
-    user_incar.setdefault("ADDGRID", True)
-    user_incar.setdefault("EDIFFG", -0.01)
     if isif is not None:
         user_incar["ISIF"] = isif
     policy_theory = Theory.from_value(theory)
@@ -636,6 +603,11 @@ def build_relax_input_set_generator(
         user_incar,
         theory=policy_theory,
         stage=CalculationStage.RELAX,
+    )
+    user_incar = apply_stage_base_incar_settings(
+        StageType.RELAX,
+        user_incar,
+        explicit_user_settings=incar,
     )
     user_incar = apply_stage_resource_incar_settings(
         user_incar,
@@ -650,7 +622,7 @@ def build_relax_input_set_generator(
             kpoints,
             modifiers=calculation_modifiers,
         ),
-        user_incar_settings=incar_relax(user_incar, user=incar),
+        user_incar_settings=user_incar,
     )
 
 
@@ -871,31 +843,11 @@ def _static_user_incar_settings(
         for key in ("KPAR", "NPAR"):
             user_incar.pop(key, None)
 
-    if intent == "prep":
-        user_incar.setdefault("LWAVE", True)
-        user_incar.setdefault("LCHARG", True)
-        for key in ("LVTOT", "LELF", "LVHAR", "LAECHG"):
-            user_incar.setdefault(key, False)
-        try:
-            encut_now = int(float(user_incar.get("ENCUT", 0)))
-        except Exception:
-            encut_now = 0
-        user_incar["ENCUT"] = max(encut_now, ENCUT_STATIC_PREP_DEFAULT)
-    else:
-        user_incar.setdefault("LWAVE", False)
-        user_incar.setdefault("LCHARG", True)
-        user_incar.setdefault("ISMEAR", -5)
-        user_incar.setdefault("SIGMA", 0.05)
-        user_incar.setdefault("NEDOS", 4001)
-        user_incar.setdefault("LORBIT", 11)
-        user_incar.setdefault("LREAL", False)
-        user_incar.setdefault("PREC", "Accurate")
-        user_incar.setdefault("ADDGRID", True)
-        try:
-            encut_now = int(float(user_incar.get("ENCUT", 0)))
-        except Exception:
-            encut_now = 0
-        user_incar["ENCUT"] = max(encut_now, ENCUT_STATIC_FINAL_DEFAULT)
+    user_incar = apply_stage_base_incar_settings(
+        StageType.STATIC,
+        user_incar,
+        intent=intent,
+    )
 
     if prep_for_gw:
         user_incar["LWAVE"] = True
@@ -914,7 +866,7 @@ def _static_user_incar_settings(
             resources=resources,
         )
 
-    return incar_static(user_incar, allow_ncore=not prep_for_gw)
+    return user_incar
 
 
 def _static_restart_incar_settings(
@@ -939,8 +891,7 @@ def _static_restart_incar_settings(
         structure=structure,
         magmom_structure=magmom_structure,
     )
-    settings["ICHARG"] = 11
-    return settings
+    return apply_stage_restart_incar_settings(resource_stage_type, settings)
 
 
 def _hse_band_structure_incar_settings(
@@ -963,19 +914,7 @@ def _hse_band_structure_incar_settings(
     if Modifier.SOC in calculation_modifiers and structure is not None:
         user_incar = apply_soc_magmom_settings(user_incar, structure=structure)
 
-    for key in ("ENAUG", "LMIXTAU"):
-        user_incar.setdefault(key, None)
-
-    user_incar.setdefault("ADDGRID", True)
-    user_incar.setdefault("EDIFF", 1e-6)
-    user_incar.setdefault("LORBIT", 11)
-    user_incar.setdefault("LREAL", False)
-    user_incar.setdefault("PREC", "Accurate")
-    try:
-        encut_now = int(float(user_incar.get("ENCUT", 0)))
-    except Exception:
-        encut_now = 0
-    user_incar["ENCUT"] = max(encut_now, ENCUT_STATIC_FINAL_DEFAULT)
+    user_incar = apply_hse_band_structure_base_incar_settings(user_incar)
 
     user_incar = apply_theory_incar_settings(
         user_incar,

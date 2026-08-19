@@ -34,6 +34,33 @@ No CRITICAL issue was found in the reviewed tree. The biggest remaining risks ar
 
 Overall recommendation: keep the scientific workflow architecture stable and spend the next pass on operational hardening: make completed-result loading explicitly user-triggered everywhere, add bounded remote-operation concurrency, define the production auth model, and update deployment/onboarding docs.
 
+## 1A. Post-Review Status Update - 2026-08-19
+
+This section reconciles the original 2026-08-18 review against the current repository after the operational-hardening follow-up work. The original findings remain below for historical context.
+
+Resolved or substantially reduced:
+
+- `/monitor` is now monitoring-only. Refresh Queue Status queries scheduler state and returns `results_summary=None`; completed result parsing is reached through the explicit Load Results action.
+- Legitimate concurrent SSH-backed requests are bounded inside a single BMD Compute process by `RemoteOperationLimiter`, with defaults `BMD_MAX_CONCURRENT_REMOTE_OPERATIONS=4` and `BMD_REMOTE_OPERATION_SLOT_TIMEOUT_S=5`.
+- Submission idempotency is implemented with remote-side submission-attempt state and locking, so repeated submit requests with the same attempt id should not create duplicate SLURM jobs.
+- Production traceback exposure is controlled by debug mode. The normal production path should show user-facing errors rather than raw Python tracebacks.
+- Submission provenance is recorded in `submission.json`, including schema version, Git/source state when available, local scientific package versions, workflow/resources, POTCAR identity metadata, and per-stage VASP executable policy.
+- Documentation now describes the current stage-first, HSE06, SOC, DOS, Band Structure, monitoring, result-loading, resource, and deployment behavior.
+
+Accepted deployment policy, not an accidental omission:
+
+- The current access model is VPN/university-network bound use of BMD Compute by authorized students through a constrained shared `bmdguest` identity on PowerSLURM.
+- There is still no app-level authentication, SSO, CSRF protection, or private per-user job ownership boundary. That is acceptable only for the current VPN-bound lab service. Public exposure without authentication remains unsafe.
+- Resume by Job ID is a shared-service recovery feature, not an ownership or privacy boundary.
+
+Still future or still worth tracking:
+
+- Paramiko host-key policy should be reviewed before broader production exposure.
+- A durable job database/history is still future work.
+- The SSH concurrency limit and results cache are process-local; multiple Uvicorn workers need a cross-process design if used.
+- `main.py` remains thicker than the long-term FastAPI-thin-controller target.
+- Exact dependency locking remains future work; `environment.yml` is setup metadata, not a reproducibility lock file.
+
 ## 2. What Has Improved Since Previous Review
 
 Major previous problem areas are now fixed or sharply reduced:

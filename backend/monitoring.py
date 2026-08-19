@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 import time
 import traceback
@@ -12,11 +13,15 @@ from backend.remote import (
     RemoteOperationBusy,
     RemoteRunner,
 )
+from backend.config import bmd_debug_enabled
 from backend.remote_runtime import (
     connected_remote_runner,
     connection_profile_from_submission_spec,
     default_connection_profile,
 )
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class MonitoringStageError(RuntimeError):
@@ -261,6 +266,7 @@ def monitor_job(
             status = runner.query_job(stripped_job_id)
     except Exception as exc:
         stage = "SSH Connection" if _looks_like_connection_failure(exc) else "Monitoring"
+        LOGGER.exception("Remote monitoring failed at %s.", stage)
         result = _exception_result(exc, default_stage=stage)
         if not isinstance(exc, RemoteOperationBusy):
             result["exception_debug"] = _exception_debug(exc)
@@ -321,9 +327,14 @@ def _exception_result(exc: Exception, *, default_stage: str = "Monitoring") -> d
             )
             if item
         )
+        reason = (
+            _clean_message(output)
+            if bmd_debug_enabled()
+            else "BMD Compute could not check the queue status."
+        )
         return _failure_result(
             default_stage,
-            _clean_message(output),
+            reason,
             "Check SLURM command availability and the remote cluster connection.",
             command=exc.result.command,
             stdout=exc.result.stdout,
@@ -356,7 +367,11 @@ def _exception_result(exc: Exception, *, default_stage: str = "Monitoring") -> d
 
     return _failure_result(
         default_stage,
-        _clean_message(str(exc) or class_name),
+        (
+            _clean_message(str(exc) or class_name)
+            if bmd_debug_enabled()
+            else "BMD Compute could not check the queue status."
+        ),
         "Check the remote cluster environment and try again.",
         exception_text=str(exc) or class_name,
     )

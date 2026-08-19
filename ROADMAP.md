@@ -1,146 +1,125 @@
 # BMD Compute Roadmap
 
-The roadmap is organized around complete scientific capabilities rather than
-technical tasks. Each completed phase should leave BMD Compute in a usable
-state.
+This roadmap tracks complete scientific and operational capabilities. It should reflect the current repository, not the original prototype state.
 
----
+## Done
 
-# Phase 0 - Project Foundation - Done
+### Project Foundation
 
-- [x] FastAPI project
-- [x] Git repository
-- [x] GitHub repository
-- [x] SSH authentication path
-- [x] Project structure
-- [x] AGENTS.md
-- [x] ROADMAP.md
-- [x] Reference notebook
-- [x] Basic web interface
+- [x] FastAPI/Jinja browser application
+- [x] backend package split for structures, calculations, workflows, submission, monitoring, results, and remote infrastructure
+- [x] AGENTS.md architecture guidance
+- [x] reference notebook retained as historical scientific evidence
+- [x] pytest configuration with cache provider disabled for the Windows/Codex sandbox
 
----
+### Structure And Workflow Construction
 
-# Phase 1 - Structure Analysis - Done
+- [x] POSCAR and CIF input parsing through pymatgen
+- [x] structure summary
+- [x] stage-first `WorkflowSpec`
+- [x] reusable `StageSpec`
+- [x] `CalculationSpec` compatibility layer
+- [x] recommended workflow selector
+- [x] custom ordered stage cards
+- [x] generated VASP input previews
+- [x] generated SLURM/script policy preview
+- [x] stage-local theory/modifier selection
 
-Goal: accept crystallographic input through the browser and present a
-scientific summary.
+### Scientific Workflows
 
-- [x] Paste POSCAR
-- [x] Paste CIF
-- [x] Parse structure
-- [x] Structure summary backend
-- [x] Browser to FastAPI to backend integration
-- [x] Formula
-- [x] Reduced formula
-- [x] Number of atoms
-- [x] Volume
-- [x] Density
-- [x] Lattice parameters
-- [x] Lattice angles
-- [x] Space group
-- [x] Crystal system
-- [x] User-facing validation errors for malformed POSCAR input
+- [x] PBE Geometry Optimisation
+- [x] PBE Static Energy
+- [x] PBE Double Geometry Optimisation
+- [x] PBE Geometry Optimisation -> Static Energy
+- [x] PBE Density of States
+- [x] PBE Band Structure
+- [x] HSE06 Geometry Optimisation
+- [x] HSE06 Static Energy
+- [x] HSE06 Geometry Optimisation -> Static Energy
+- [x] HSE06 Band Structure with HSE06 Static Energy precursor
+- [x] Spin Polarised modifier for reviewed stages
+- [x] explicit DFT+U modifier where reviewed U values exist
+- [x] SOC for reviewed PBE Static Energy workflows
 
----
+### Remote Preparation, Submission, And Monitoring
 
-# Phase 2 - Calculation Construction - Done
+- [x] Paramiko-backed `RemoteRunner`
+- [x] OpenSSH config resolution for host aliases, user, port, identity files, and proxy commands
+- [x] SFTP-based generated input transfer
+- [x] large generated input transfer without shell argument expansion
+- [x] PowerSLURM sbatch preparation
+- [x] VASP command resolution preserving `SLURM_NTASKS`
+- [x] stage-local `vasp_std` / `vasp_ncl` routing
+- [x] server-side submission idempotency
+- [x] monitoring through scheduler/accounting queries
+- [x] Resume Existing Calculation by SLURM job ID
+- [x] Refresh Queue Status as monitoring-only
+- [x] explicit Load Results action
 
-Goal: replace notebook workflow construction while remaining entirely local.
+### Results And Visualization
 
-Backend:
+- [x] final structure and total energy summary
+- [x] remote-side pymatgen result parsing
+- [x] JSON-safe remote parser boundary
+- [x] bounded completed-result cache
+- [x] workflow-specific result payloads
+- [x] interactive DOS Plotly visualization
+- [x] interactive Band Structure Plotly visualization
+- [x] high-symmetry label rendering
+- [x] spin-aware band-structure legends
+- [x] default Band Structure `[-10, 10]` eV viewport
+- [x] Download PNG controls for Plotly scientific visualizations
 
-- [x] Extract workflow construction from notebook
-- [x] Introduce `CalculationSpec`
-- [x] Build PBE static Atomate2 Flow
-- [x] Build PBE relaxation Atomate2 Flow
-- [x] Support spin-polarized modifier for implemented PBE workflows
-- [x] Generate VASP input previews without reading POTCAR files locally
-- [x] Backend smoke tests
+### UI And Operational Polish
 
-Browser:
+- [x] BMD Lab-aligned light theme
+- [x] full-width stage-first Scientific Specification panel
+- [x] Execution Resources above Scientific Specification
+- [x] backend-defined CPU and memory selectors
+- [x] fixed non-editable account policy
+- [x] collapsed Structure Input after resume/monitor/results actions
+- [x] production traceback hiding unless debug mode is enabled
+- [x] deterministic SSH cleanup
+- [x] bounded process-local SSH concurrency
+- [x] structured submission provenance
 
-- [x] Progressive calculation section
-- [x] Calculation selector
-- [x] Build Calculation button
-- [x] Scientific summary
-- [x] Generated INCAR, KPOINTS, and POSCAR previews
-- [ ] Display generated Jobflow graph
+## Current Accepted Deployment Policy
 
----
+- [x] TAU VPN/university-network bounded access model
+- [x] shared constrained `bmdguest` identity for PowerSLURM operations
+- [x] no public exposure of the Uvicorn port
+- [x] Resume by Job ID treated as shared-service recovery, not private ownership
 
-# Phase 3 - Remote Preparation And Submission - First Pass Done
+This is acceptable for the current lab on-ramp deployment. It is not a public Internet security model.
 
-Goal: replace notebook submission.
+## Near-Term Hardening
 
-- [x] SubmissionSpec
-- [x] RemoteRunner abstraction
-- [x] Paramiko-backed remote runner
-- [x] Verified remote preparation dry run
-- [x] Upload remote execution package
-- [x] Write sbatch script
-- [x] PowerSLURM submission
-- [x] Receive SLURM job ID
-- [x] Persist best-effort remote JobRecord
-- [ ] Harden real-cluster error handling based on more production failures
-- [ ] Add cancellation when needed
+- [ ] document the production service wrapper used on the TAU VM when finalized
+- [ ] decide whether to add a reverse proxy and HTTPS termination in front of Uvicorn
+- [ ] decide whether app-level authentication is required if access moves beyond the current VPN-bound model
+- [ ] decide whether CSRF protection is required for the eventual deployment topology
+- [ ] add durable job history if students need a persistent dashboard
+- [ ] add cancellation support when operationally needed
+- [ ] add download/archive controls for selected output files
+- [ ] improve exact production dependency locking
+- [ ] record POTCAR hashes if the lab decides that provenance should include them
 
----
+## Future Scientific Workflows
 
-# Phase 4 - Monitoring - First Pass Done
+- [ ] r2SCAN policy selection and validation
+- [ ] Dielectric/optics
+- [ ] HSE06 DOS, only after a reviewed native implementation is identified
+- [ ] broader SOC workflows, only after separate review
+- [ ] GW
+- [ ] Elastic constants
+- [ ] Equation of state
+- [ ] Phonons
+- [ ] NEB
+- [ ] LOBSTER / bonding analysis
 
-Goal: replace notebook monitoring.
+## Architectural Debt To Watch
 
-- [x] Query `squeue`
-- [x] Query `scontrol`
-- [x] Query `sacct` for completed jobs
-- [x] Running, pending, success, failure classification
-- [x] Resume existing calculation by SLURM job ID
-- [x] Browser refresh flow
-- [x] Error reporting for malformed IDs, SSH failures, and scheduler failures
-- [ ] Job history
-- [ ] Background/live watcher
-
----
-
-# Phase 5 - Results - In Progress
-
-Goal: replace notebook parsing and visualization.
-
-- [x] Detect completed successful calculations
-- [x] Resolve BMD run directory from submission state or remote JobRecord
-- [x] Read CONTCAR, OUTCAR, and vasprun.xml
-- [x] Parse final energy, energy per atom, convergence, and final formula
-- [x] Final structure viewer
-- [x] Results diagnostics
-- [ ] Download outputs
-- [ ] Dedicated results page or richer results panel
-- [ ] Additional result visualizations
-
----
-
-# Phase 6 - Scientific Workflows
-
-Goal: expand supported Atomate2 workflows.
-
-- [x] PBE static
-- [x] PBE relaxation
-- [x] PBE spin-polarized static and relaxation
-- [ ] Relax to static
-- [ ] Density of States
-- [ ] Band Structure
-- [ ] Dielectric
-- [ ] r2SCAN
-- [ ] HSE06
-- [ ] Additional Atomate2 workflows
-
----
-
-# Phase 7 - Deployment
-
-Goal: deploy BMD Compute as the primary interface.
-
-- [ ] Authentication
-- [ ] Multi-user support
-- [ ] Persistent application database
-- [ ] Production deployment
-- [ ] Integration with BMD Lab website
+- [ ] extract more route orchestration out of `main.py` into backend application services
+- [ ] decide how non-linear jobflow detours/additions should map to stage directories before exposing workflows that need them
+- [ ] replace process-local cache/limits with durable or cross-process mechanisms before running multiple Uvicorn workers
+- [ ] add a durable application database only when state requirements justify it

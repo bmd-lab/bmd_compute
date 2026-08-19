@@ -36,6 +36,7 @@ from backend.config import (
     SUBMISSION_ENV_KEYS,
     WORKFLOW_RESOURCE_OVERRIDES,
 )
+from backend.provenance import build_submission_provenance
 
 
 SUBMISSION_SPEC_FILENAME = "submission.json"
@@ -1138,6 +1139,7 @@ def create_submission_spec(
             "reason": "Specification only; no submission has been performed.",
         },
     }
+    spec["provenance"] = build_submission_provenance(spec)
     return initialize_submission_attempt(
         spec,
         attempt_id=submission_attempt_id,

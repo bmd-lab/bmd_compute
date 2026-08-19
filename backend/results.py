@@ -20,7 +20,7 @@ from backend.calculations.registry import (
     workflow_result_stage_directory,
     workflow_spec_from_flow_spec,
 )
-from backend.config import DEFAULT_LOGS_DIR, DEFAULT_REMOTE_PYTHON
+from backend.config import DEFAULT_LOGS_DIR, DEFAULT_REMOTE_PYTHON, bmd_debug_enabled
 from backend.remote import (
     REMOTE_OPERATION_BUSY_MESSAGE,
     RemoteOperationBusy,
@@ -183,6 +183,7 @@ def load_results_for_completed_job(
                 _log_results("Result file reads complete")
     except RemoteResultExtractionError as exc:
         _log_results("Remote results parsing failed")
+        LOGGER.exception("Remote result parser failed.")
         _log_results("RETURN results")
         return _failure_result(
             "Results Parsing",
@@ -201,6 +202,7 @@ def load_results_for_completed_job(
         )
     except Exception as exc:
         _log_results("Results retrieval failed")
+        LOGGER.exception("Results retrieval failed.")
         _log_results("RETURN results")
         return _failure_result(
             "Results Retrieval",
@@ -217,6 +219,7 @@ def load_results_for_completed_job(
             _log_results("Result file parsing complete")
         except Exception as exc:
             _log_results("Results parsing failed")
+            LOGGER.exception("Local result parsing failed.")
             _log_results("RETURN results")
             return _failure_result(
                 "Results Parsing",
@@ -784,6 +787,8 @@ def _failure_result(
         "suggestion": suggestion,
         "files": files or {},
     }
+    if exception is not None and not bmd_debug_enabled():
+        result["display_reason"] = "Results could not be loaded."
     if exception is not None:
         result["exception_text"] = str(exception)
         result["traceback"] = "".join(

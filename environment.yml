@@ -1,28 +1,16 @@
 name: bmd_compute
 
 channels:
-
-* conda-forge
+  - conda-forge
 
 dependencies:
-
-* python=3.12
-
-* fastapi
-
-* uvicorn
-
-* jinja2
-
-* python-multipart
-
-* pymatgen
-
-* atomate2
-
-* jobflow
-
-* paramiko
-
-* pip
-
+  - python=3.12
+  - fastapi
+  - uvicorn
+  - jinja2
+  - python-multipart
+  - pymatgen
+  - atomate2
+  - jobflow
+  - paramiko
+  - pip

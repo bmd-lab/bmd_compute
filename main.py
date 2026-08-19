@@ -4,6 +4,7 @@ from copy import deepcopy
 from fastapi import FastAPI, Form, Request
 from fastapi.templating import Jinja2Templates
 
+from backend.config import bmd_debug_enabled
 from backend.calculations.builder import build_calculation_flow
 from backend.calculations.models import (
     CalculationSpec,
@@ -111,6 +112,7 @@ def page_context(
         "structure_error": structure_error,
         "calculation_error": calculation_error,
         "collapse_structure_input": collapse_structure_input,
+        "bmd_debug": bmd_debug_enabled(),
     }
 
 

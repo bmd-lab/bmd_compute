@@ -8,6 +8,7 @@ import re
 import shlex
 import subprocess
 import time
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -797,15 +798,17 @@ class ParamikoRemoteRunner(RemoteRunner):
         if state.get("state") == "SUBMITTING":
             return self._wait_for_submission_attempt_resolution(submission_spec)
 
-        output = self._prepare_submission_files(submission_spec)
-        return self._submit_prepared_submission_attempt(submission_spec, output)
+        output = _prepared_submission_attempt_output(state)
+        return self._submit_prepared_submission_attempt(submission_spec, state, output)
 
     def _submit_prepared_submission_attempt(
         self,
         submission_spec: dict,
+        prepared_state: Mapping[str, Any],
         output: str,
     ) -> JobRecord:
-        state = self._require_existing_submission_attempt(submission_spec)
+        state = dict(prepared_state)
+        self._ensure_submission_attempt_matches(submission_spec, state)
         if state.get("state") == "SUBMITTED":
             return self._job_record_from_submission_attempt_state(
                 submission_spec,
@@ -841,6 +844,7 @@ class ParamikoRemoteRunner(RemoteRunner):
                 submission_spec,
                 "SUBMITTING",
                 output=output,
+                provenance=state.get("provenance"),
             )
         except Exception:
             self._release_submission_attempt_claim(submission_spec)
@@ -854,6 +858,7 @@ class ParamikoRemoteRunner(RemoteRunner):
                 "PREPARED",
                 output=output,
                 last_error=str(exc),
+                provenance=state.get("provenance"),
             )
             self._release_submission_attempt_claim(submission_spec)
             raise
@@ -863,6 +868,7 @@ class ParamikoRemoteRunner(RemoteRunner):
                 "SUBMITTING",
                 output=output,
                 last_error=str(exc),
+                provenance=state.get("provenance"),
             )
             raise SubmissionAttemptInProgress(
                 "BMD Compute could not confirm whether sbatch completed for "
@@ -875,7 +881,11 @@ class ParamikoRemoteRunner(RemoteRunner):
         output += f"SBATCH_RAW_OUT={sbatch_raw}\n"
 
         job_id = batch_result.job_id
-        record = self._job_record(submission_spec, job_id, output)
+        record = self._job_record(
+            _submission_spec_with_prepared_provenance(submission_spec, state),
+            job_id,
+            output,
+        )
         try:
             self._write_submission_attempt_state(
                 submission_spec,
@@ -883,6 +893,7 @@ class ParamikoRemoteRunner(RemoteRunner):
                 output=record.raw_output,
                 job_id=job_id,
                 job_record=record.to_dict(),
+                provenance=state.get("provenance"),
             )
             self._release_submission_attempt_claim(submission_spec)
         except Exception:
@@ -947,6 +958,7 @@ class ParamikoRemoteRunner(RemoteRunner):
         job_id: str | None = None,
         job_record: dict | None = None,
         last_error: str | None = None,
+        provenance: dict | None = None,
     ) -> None:
         payload = {
             "version": SUBMISSION_ATTEMPT_STATE_VERSION,
@@ -960,6 +972,9 @@ class ParamikoRemoteRunner(RemoteRunner):
             "remote_script": submission_spec.get("paths", {}).get("remote_script"),
             "updated_at": _now_str(),
             "output": output,
+            "provenance": provenance if provenance is not None else deepcopy(
+                submission_spec.get("provenance")
+            ),
         }
         if job_id is not None:
             payload["job_id"] = str(job_id)
@@ -1401,6 +1416,27 @@ def _submission_attempt_lock_path(submission_spec: dict) -> str:
         or submission_spec.get("paths", {}).get("submission_attempt_lock")
         or ""
     )
+
+
+def _prepared_submission_attempt_output(state: Mapping[str, Any]) -> str:
+    output = str(state.get("output") or "")
+    lines = output.splitlines()
+    if lines and lines[-1].strip() == "DRY RUN":
+        lines = lines[:-1]
+        return "\n".join(lines).rstrip() + "\n"
+    return output
+
+
+def _submission_spec_with_prepared_provenance(
+    submission_spec: dict,
+    state: Mapping[str, Any],
+) -> dict:
+    prepared_provenance = state.get("provenance")
+    if prepared_provenance is None:
+        return submission_spec
+    prepared_spec = deepcopy(submission_spec)
+    prepared_spec["provenance"] = deepcopy(prepared_provenance)
+    return prepared_spec
 
 
 def _preparation_failure_result(stage: str, reason: str, command: str) -> RemoteCommandResult:

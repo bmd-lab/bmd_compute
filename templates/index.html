@@ -1746,7 +1746,7 @@ ul {
                             <td>SLURM Output</td>
                             <td>No stdout or stderr was returned by sbatch.</td>
                         </tr>
-                        {% else %}
+                        {% elif bmd_debug %}
                             {% if submission_result.stdout %}
                             <tr>
                                 <td>stdout</td>
@@ -1900,6 +1900,7 @@ ul {
                             <td>Reason</td>
                             <td>{{ monitoring_result.reason }}</td>
                         </tr>
+                        {% if bmd_debug %}
                         <tr>
                             <td>Command</td>
                             <td class="log-output">{{ monitoring_result.command or "None" }}</td>
@@ -1916,7 +1917,8 @@ ul {
                             <td>Exception</td>
                             <td class="log-output">{{ monitoring_result.exception_text or "No exception text captured." }}</td>
                         </tr>
-                        {% if monitoring_result.exception_debug %}
+                        {% endif %}
+                        {% if bmd_debug and monitoring_result.exception_debug %}
                         <tr>
                             <td>Exception Type</td>
                             <td class="log-output">{{ monitoring_result.exception_debug["type"] }}</td>
@@ -2211,25 +2213,25 @@ ul {
                     </tr>
                     <tr>
                         <td>Reason</td>
-                        <td>{{ results_summary.reason }}</td>
+                        <td>{{ results_summary.display_reason or results_summary.reason }}</td>
                     </tr>
                     <tr>
                         <td>Suggestion</td>
                         <td>{{ results_summary.suggestion }}</td>
                     </tr>
-                    {% if results_summary.files %}
+                    {% if bmd_debug and results_summary.files %}
                     <tr>
                         <td>Files</td>
                         <td class="log-output">{{ results_summary.files }}</td>
                     </tr>
                     {% endif %}
-                    {% if results_summary.exception_text %}
+                    {% if bmd_debug and results_summary.exception_text %}
                     <tr>
                         <td>Exception</td>
                         <td class="log-output">{{ results_summary.exception_text }}</td>
                     </tr>
                     {% endif %}
-                    {% if results_summary.traceback %}
+                    {% if bmd_debug and results_summary.traceback %}
                     <tr>
                         <td>Traceback</td>
                         <td class="log-output">{{ results_summary.traceback }}</td>

@@ -290,3 +290,29 @@ def test_same_attempt_id_with_different_resources_is_rejected():
         IdempotencyRunner(shared).submit(tampered_spec)
 
     assert shared.sbatch_calls == 0
+
+
+def test_duplicate_submit_does_not_rewrite_prepared_provenance_snapshot():
+    shared = SharedRemoteState()
+    prepared_spec = _submission_spec()
+    prepared_spec["provenance"]["bmd_compute"]["source"]["git_commit"] = "original"
+    _prepare(shared, prepared_spec)
+    first = IdempotencyRunner(shared).submit(prepared_spec)
+
+    later_spec = _submission_spec(attempt_id=prepared_spec["submission"]["attempt_id"])
+    later_spec["provenance"]["bmd_compute"]["source"]["git_commit"] = "newer"
+    duplicate = IdempotencyRunner(shared).submit(later_spec)
+
+    uploaded_submission = json.loads(
+        shared.files[f"{prepared_spec['paths']['run_dir']}/submission.json"]
+    )
+    attempt_state = _attempt_state(shared, prepared_spec)
+
+    assert duplicate.job_id == first.job_id
+    assert shared.sbatch_calls == 1
+    assert uploaded_submission["provenance"]["bmd_compute"]["source"]["git_commit"] == "original"
+    assert attempt_state["provenance"]["bmd_compute"]["source"]["git_commit"] == "original"
+    assert (
+        attempt_state["job_record"]["submission_spec"]["provenance"]["bmd_compute"]["source"]["git_commit"]
+        == "original"
+    )
