@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from backend.calculations.models import StageType, Theory
-from backend.calculations.resources import stage_allows_automatic_ncore
+from backend.calculations.resource_policy import stage_allows_automatic_ncore
 from backend.calculations.theory_policy import (
     CalculationStage,
     theory_incar_settings,
@@ -320,12 +320,12 @@ def describe_stage(stage_type: StageType | str, theory: Theory | str | None = No
         "kpoints_policy": _kpoints_description(definition.kpoints_policy, atomate2),
         "resource_policy": {
             "automatic_ncore_eligible": stage_allows_automatic_ncore(definition.stage_type),
-            "source": "backend.calculations.resources.stage_allows_automatic_ncore",
+            "source": "backend.calculations.resource_policy.stage_allows_automatic_ncore",
         },
         "implementation_source": {
             "stage_definition": _STAGE_DEFINITION_SOURCE,
             "theory_policy": "backend.calculations.theory_policy",
-            "resource_policy": "backend.calculations.resources",
+            "resource_policy": "backend.calculations.resource_policy",
             "workflow_builder": "backend.workflows",
         },
     }

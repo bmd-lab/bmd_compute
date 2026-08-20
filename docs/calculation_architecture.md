@@ -228,3 +228,14 @@ Future or deliberately unsupported:
 - GW
 - arbitrary user INCAR editing
 - non-linear jobflow directory semantics beyond the current linear stage chains
+## Executable Capability JSON
+
+BMD Compute exposes its executable stage capability description through a small read-only JSON producer:
+
+```bash
+python -m backend.calculations.capabilities
+```
+
+The command serializes the existing stage introspection layer (`list_stage_definitions()` and `describe_stage()`) and does not create a second capability registry. The payload is versioned with `schema_version = 1`, includes producer provenance when Git information is available, and is intended for internal BMD ecosystem consumers such as BMD Agent.
+
+The contract describes what BMD Compute currently implements and can execute. It is not a scientific-methodology authority and does not claim that a capability is validated, adopted, or a BMD standard. Scientific validation status, evidence, and adopted methodology belong outside BMD Compute, currently intended for BMDex.
