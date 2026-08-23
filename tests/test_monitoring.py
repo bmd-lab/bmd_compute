@@ -49,13 +49,14 @@ def test_classify_slurm_state_matches_notebook_rules():
 def test_parse_scontrol_output_extracts_monitoring_fields():
     output = (
         "JobId=12345 JobName=TiO2-static\n"
-        "   JobState=RUNNING Reason=None StdOut=/logs/job.out WorkDir=/flows/run\n"
+        "   JobState=RUNNING Reason=None StdOut=/logs/job.out StdErr=/logs/job.err WorkDir=/flows/run\n"
     )
 
     parsed = parse_scontrol_output(output)
 
     assert parsed["state"] == "RUNNING"
     assert parsed["stdout"] == "/logs/job.out"
+    assert parsed["stderr"] == "/logs/job.err"
     assert parsed["workdir"] == "/flows/run"
     assert parsed["jobname"] == "TiO2-static"
 
@@ -63,7 +64,7 @@ def test_parse_scontrol_output_extracts_monitoring_fields():
 def test_parse_sacct_row_prefers_matching_job_id():
     output = (
         "999|FAILED|1:0|other|/logs/other.out|/flows/other\n"
-        "12345|COMPLETED|0:0|TiO2-static|/logs/job.out|/flows/run\n"
+        "12345|COMPLETED|0:0|TiO2-static|/logs/job.out|/logs/job.err|/flows/run\n"
     )
 
     parsed = parse_sacct_row("12345.batch", output)
@@ -72,6 +73,7 @@ def test_parse_sacct_row_prefers_matching_job_id():
     assert parsed["exit"] == "0:0"
     assert parsed["jobname"] == "TiO2-static"
     assert parsed["stdout"] == "/logs/job.out"
+    assert parsed["stderr"] == "/logs/job.err"
     assert parsed["workdir"] == "/flows/run"
 
 
@@ -79,8 +81,8 @@ def test_remote_job_status_merges_squeue_scontrol_and_sacct():
     status = remote_job_status_from_slurm_outputs(
         "12345",
         squeue_output="",
-        scontrol_output="JobId=12345 JobName=TiO2-static JobState=COMPLETED StdOut=/logs/current.out WorkDir=/flows/current",
-        sacct_output="12345|COMPLETED|0:0|TiO2-static|/logs/final.out|/flows/final",
+        scontrol_output="JobId=12345 JobName=TiO2-static JobState=COMPLETED StdOut=/logs/current.out StdErr=/logs/current.err WorkDir=/flows/current",
+        sacct_output="12345|COMPLETED|0:0|TiO2-static|/logs/final.out|/logs/final.err|/flows/final",
         sacct_brief_output="12345|TiO2-static|COMPLETED|00:02:10|2026|2026|leeburton-pool",
     )
 
@@ -89,6 +91,7 @@ def test_remote_job_status_merges_squeue_scontrol_and_sacct():
     assert status.state == "COMPLETED"
     assert status.exit_code == "0:0"
     assert status.stdout_path == "/logs/final.out"
+    assert status.stderr_path == "/logs/final.err"
     assert status.workdir == "/flows/final"
     assert status.job_name == "TiO2-static"
     assert status.raw["summary"] == "SUCCESS"

@@ -1879,6 +1879,10 @@ ul {
                             <td class="mono">{{ monitoring_result.stdout_path or "Unknown" }}</td>
                         </tr>
                         <tr>
+                            <td>Stderr</td>
+                            <td class="mono">{{ monitoring_result.stderr_path or "Unknown" }}</td>
+                        </tr>
+                        <tr>
                             <td>Work Directory</td>
                             <td class="mono">{{ monitoring_result.workdir or "Unknown" }}</td>
                         </tr>

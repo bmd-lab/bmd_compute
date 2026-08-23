@@ -221,6 +221,7 @@ class RemoteJobStatus:
     state: str
     exit_code: str | None = None
     stdout_path: str | None = None
+    stderr_path: str | None = None
     workdir: str | None = None
     job_name: str | None = None
     raw: dict[str, Any] = field(default_factory=dict)

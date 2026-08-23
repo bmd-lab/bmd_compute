@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from typing import Callable
 
+from backend.submission import REMOTE_RUNTIME_PREFLIGHT_STEP
 from backend.remote import (
     JobRecord,
     REMOTE_OPERATION_BUSY_MESSAGE,
@@ -26,6 +27,7 @@ SUCCESS_STEPS = [
     "submission.json uploaded",
     "Execution module uploaded",
     "run_job.py uploaded",
+    REMOTE_RUNTIME_PREFLIGHT_STEP,
     "POTCAR links prepared",
     "Submission script written",
     "Ready for submission",
@@ -37,6 +39,7 @@ REMOTE_STATE_STEPS = [
     "submission.json uploaded",
     "Execution module uploaded",
     "run_job.py uploaded",
+    REMOTE_RUNTIME_PREFLIGHT_STEP,
     "POTCAR links prepared",
     "Submission script written",
     "Ready for submission",
@@ -157,6 +160,7 @@ def _required_remote_state_steps(submission_spec: dict) -> list[str]:
         "submission.json uploaded",
         "Execution module uploaded",
         "run_job.py uploaded",
+        REMOTE_RUNTIME_PREFLIGHT_STEP,
     ]
 
     if submission_spec.get("potcar", {}).get("symlink_targets"):
@@ -340,6 +344,8 @@ def _suggestion_for_stage(stage: str) -> str:
         return "Check permissions and available space for the configured remote working directories."
     if stage in {"submission.json uploaded", "Execution module uploaded", "run_job.py uploaded"}:
         return "Check write permissions for the remote run directory."
+    if stage == REMOTE_RUNTIME_PREFLIGHT_STEP:
+        return "Check the uploaded BMD Compute runtime package and the configured remote Python environment."
     if stage == "POTCAR links prepared":
         return "Check the configured POTCAR directory and whether existing paths can be replaced by symlinks."
     if stage == "Submission script written":

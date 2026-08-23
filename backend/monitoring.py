@@ -112,6 +112,7 @@ def parse_scontrol_output(output: str) -> dict:
     return {
         "state": pick(r"JobState=([^ \n]+)"),
         "stdout": pick(r"StdOut=([^ \n]+)"),
+        "stderr": pick(r"StdErr=([^ \n]+)"),
         "workdir": pick(r"WorkDir=([^ \n]+)"),
         "jobname": pick(r"JobName=([^ \n]+)"),
     }
@@ -127,6 +128,15 @@ def parse_sacct_row(job_id: str, output: str) -> dict:
 
     for line in (output or "").splitlines()[:6]:
         parts = line.split("|")
+        if parts and parts[0] in wanted and len(parts) >= 7:
+            return {
+                "state": parts[1],
+                "exit": parts[2],
+                "jobname": parts[3],
+                "stdout": parts[4],
+                "stderr": parts[5],
+                "workdir": parts[6],
+            }
         if parts and parts[0] in wanted and len(parts) >= 6:
             return {
                 "state": parts[1],
@@ -180,6 +190,7 @@ def remote_job_status_from_slurm_outputs(
     state = squeue_state or scontrol_info.get("state") or sacct_info.get("state") or "UNKNOWN"
     exit_code = sacct_info.get("exit") or None
     stdout_path = sacct_info.get("stdout") or scontrol_info.get("stdout") or None
+    stderr_path = sacct_info.get("stderr") or scontrol_info.get("stderr") or None
     workdir = sacct_info.get("workdir") or scontrol_info.get("workdir") or None
     job_name = sacct_info.get("jobname") or scontrol_info.get("jobname") or None
     try:
@@ -210,6 +221,7 @@ def remote_job_status_from_slurm_outputs(
         state=state,
         exit_code=exit_code,
         stdout_path=stdout_path,
+        stderr_path=stderr_path,
         workdir=workdir,
         job_name=job_name,
         raw={
@@ -289,6 +301,7 @@ def _success_result(status: RemoteJobStatus) -> dict:
         "summary": summary,
         "exit_code": status.exit_code,
         "stdout_path": status.stdout_path,
+        "stderr_path": status.stderr_path,
         "workdir": status.workdir,
         "job_name": status.job_name,
         "brief": status.raw.get("brief", ""),

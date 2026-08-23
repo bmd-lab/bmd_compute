@@ -9,7 +9,6 @@ import shlex
 import time
 import uuid
 from copy import deepcopy
-from pathlib import Path
 
 from backend.calculations.models import CalculationSpec, WorkflowSpec
 from backend.calculations.registry import (
@@ -37,28 +36,23 @@ from backend.config import (
     WORKFLOW_RESOURCE_OVERRIDES,
 )
 from backend.provenance import build_submission_provenance
+from backend.runtime_package import (
+    RUNTIME_PACKAGE_DIR,
+    build_runtime_package_sources,
+    runtime_package_relative_paths,
+)
 
 
 SUBMISSION_SPEC_FILENAME = "submission.json"
 SUBMISSION_ATTEMPTS_DIRNAME = "submission_attempts"
 SUBMISSION_ATTEMPT_STATE_VERSION = 1
 SUBMISSION_ATTEMPT_COMMENT_PREFIX = "bmd_attempt:"
-REMOTE_BACKEND_PACKAGE_DIR = "backend"
+REMOTE_BACKEND_PACKAGE_DIR = RUNTIME_PACKAGE_DIR
 REMOTE_EXECUTION_MODULE_FILENAME = "execution.py"
 REMOTE_BACKEND_INIT_FILENAME = "__init__.py"
-REMOTE_BACKEND_MODULE_FILENAMES = (
-    "config.py",
-    REMOTE_EXECUTION_MODULE_FILENAME,
-    "calculations/__init__.py",
-    "calculations/builder.py",
-    "calculations/custodian_policy.py",
-    "calculations/models.py",
-    "calculations/resources.py",
-    "calculations/registry.py",
-    "calculations/theory_policy.py",
-    "parser.py",
-    "workflows.py",
-)
+REMOTE_BACKEND_MODULE_FILENAMES = runtime_package_relative_paths()
+REMOTE_RUNTIME_PREFLIGHT_STEP = "Runtime import preflight"
+REMOTE_RUNTIME_PREFLIGHT_TIMEOUT_S = 60
 
 MP_RECOMMENDED_POTCAR_SYMBOLS = {
     "Ba": "Ba_sv",
@@ -412,11 +406,7 @@ def build_execution_module_source() -> str:
 
 
 def build_backend_module_sources() -> dict[str, str]:
-    backend_dir = Path(__file__).resolve().parent
-    return {
-        filename: (backend_dir / filename).read_text(encoding="utf-8")
-        for filename in REMOTE_BACKEND_MODULE_FILENAMES
-    }
+    return build_runtime_package_sources()
 
 
 def _run_job_path(submission_spec: dict) -> str:
@@ -465,7 +455,7 @@ def _execution_module_path(submission_spec: dict) -> str:
 def _backend_module_paths(submission_spec: dict) -> dict[str, str]:
     paths = {
         filename: posixpath.join(_remote_backend_dir(submission_spec), filename)
-        for filename in REMOTE_BACKEND_MODULE_FILENAMES
+        for filename in build_backend_module_sources()
     }
     paths[REMOTE_EXECUTION_MODULE_FILENAME] = _execution_module_path(submission_spec)
     return paths
@@ -532,6 +522,10 @@ test -f {shlex.quote(run_job_path)} || {{ echo "[sbatch] Missing run_job.py at {
 test -f {shlex.quote(submission_json_path)} || {{ echo "[sbatch] Missing submission.json at {submission_json_path}"; exit 1; }}
 {backend_module_checks}
 export BMD_SUBMISSION_SPEC={shlex.quote(submission_json_path)}
+echo "[sbatch] Runner stdout: {runner['stdout']}"
+echo "[sbatch] Runner stderr: {runner['stderr']}"
+echo "[sbatch] SLURM stdout: {paths['slurm_out']}"
+echo "[sbatch] SLURM stderr: {paths['slurm_err']}"
 {shlex.quote(runner["python"])} -u {shlex.quote(runner["script_name"])} 1>{shlex.quote(runner["stdout"])} 2>{shlex.quote(runner["stderr"])}
 echo "Done. Logs:"; echo {shlex.quote(runner["stdout"])}; echo {shlex.quote(runner["stderr"])}
 """.lstrip()
@@ -593,6 +587,33 @@ ls -ld "$PMG_VASP_PSP_DIR"/POT_* >/dev/null 2>&1 || echo "[warn] No POT_* dir fo
     return body.rstrip() + "\n"
 
 
+def build_remote_runtime_preflight_source(submission_spec: dict) -> str:
+    submission_json_path = _submission_json_path(submission_spec)
+    return f"""
+import json
+import sys
+import traceback
+
+try:
+    import backend.execution
+    import backend.workflows
+    from backend.calculations.registry import (
+        validate_workflow_spec,
+        workflow_spec_from_flow_spec,
+    )
+
+    with open({submission_json_path!r}, "r", encoding="utf-8") as handle:
+        spec = json.load(handle)
+    workflow_spec = workflow_spec_from_flow_spec(spec.get("flow_spec") or {{}})
+    validate_workflow_spec(workflow_spec)
+except Exception:
+    traceback.print_exc(file=sys.stderr)
+    sys.exit(1)
+
+print("BMD_RUNTIME_PREFLIGHT_OK=backend.execution,backend.workflows")
+""".strip()
+
+
 def remote_preparation_file_groups(submission_spec: dict) -> list[dict]:
     """Return the remote files that must be uploaded before sbatch submission.
 
@@ -629,7 +650,7 @@ def remote_preparation_file_groups(submission_spec: dict) -> list[dict]:
                         "text": backend_module_sources[filename],
                         "mode": 0o640,
                     }
-                    for filename in REMOTE_BACKEND_MODULE_FILENAMES
+                    for filename in sorted(backend_module_sources)
                 ],
             ],
         },
@@ -865,7 +886,7 @@ def _backend_module_write_commands(
     verify: bool = True,
 ) -> str:
     lines = []
-    for filename in REMOTE_BACKEND_MODULE_FILENAMES:
+    for filename in sorted(module_sources):
         path = module_paths[filename]
         source = module_sources[filename]
         parent = posixpath.dirname(path)
@@ -884,7 +905,7 @@ def _backend_module_write_commands(
 def _backend_module_verify_commands(module_paths: dict[str, str], stage: str) -> str:
     return "\n".join(
         f"verify_file {shlex.quote(stage)} {shlex.quote(module_paths[filename])}"
-        for filename in REMOTE_BACKEND_MODULE_FILENAMES
+        for filename in sorted(module_paths)
     )
 
 
@@ -1157,9 +1178,12 @@ __all__ = [
     "REMOTE_BACKEND_MODULE_FILENAMES",
     "REMOTE_BACKEND_PACKAGE_DIR",
     "REMOTE_EXECUTION_MODULE_FILENAME",
+    "REMOTE_RUNTIME_PREFLIGHT_STEP",
+    "REMOTE_RUNTIME_PREFLIGHT_TIMEOUT_S",
     "SUBMISSION_SPEC_FILENAME",
     "build_backend_module_sources",
     "build_execution_module_source",
+    "build_remote_runtime_preflight_source",
     "build_slurm_preview_script",
     "build_sbatch_script",
     "build_run_job_script",

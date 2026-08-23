@@ -135,6 +135,22 @@ def test_provenance_does_not_record_secrets_or_private_key_contents():
     assert "BEGIN OPENSSH PRIVATE KEY" not in payload
 
 
+def test_packaged_runtime_source_manifest_is_recorded_without_source_contents():
+    spec = _submission_spec()
+    runtime_source = spec["provenance"]["bmd_compute"]["runtime_source"]
+    manifest = runtime_source["manifest"]
+
+    assert runtime_source["status"] == "available"
+    assert runtime_source["package_dir"] == "backend"
+    assert runtime_source["hash_algorithm"] == "sha256"
+    assert runtime_source["files_count"] == len(manifest)
+    assert "execution.py" in manifest
+    assert "workflows.py" in manifest
+    assert "calculations/resource_policy.py" in manifest
+    assert re.fullmatch(r"[0-9a-f]{64}", manifest["calculations/resource_policy.py"])
+    assert "def run_submission" not in json.dumps(runtime_source)
+
+
 def test_remote_execution_provenance_is_marked_deferred_at_submission_time():
     spec = _submission_spec()
     remote = spec["provenance"]["python_environment"]["remote_execution"]

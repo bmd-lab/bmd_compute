@@ -36,7 +36,10 @@ from backend.remote import (
     RemoteTunnel,
 )
 from backend.submission import (
+    REMOTE_RUNTIME_PREFLIGHT_STEP,
+    REMOTE_RUNTIME_PREFLIGHT_TIMEOUT_S,
     SUBMISSION_ATTEMPT_STATE_VERSION,
+    build_remote_runtime_preflight_source,
     parse_sbatch_job_id,
     remote_preparation_file_groups,
     submission_attempt_comment,
@@ -1125,6 +1128,9 @@ class ParamikoRemoteRunner(RemoteRunner):
             self._upload_preparation_file_group(group)
             output_lines.append(f"PREP_OK={group['step']}")
 
+        self._run_remote_runtime_preflight(submission_spec)
+        output_lines.append(f"PREP_OK={REMOTE_RUNTIME_PREFLIGHT_STEP}")
+
         if submission_spec.get("potcar", {}).get("symlink_targets"):
             self._prepare_potcar_symlinks(submission_spec)
             output_lines.append("PREP_OK=POTCAR links prepared")
@@ -1135,6 +1141,40 @@ class ParamikoRemoteRunner(RemoteRunner):
 
         output_lines.append("PREP_OK=Ready for submission")
         return "\n".join(output_lines) + "\n"
+
+    def _run_remote_runtime_preflight(self, submission_spec: dict) -> None:
+        run_dir = submission_spec["paths"]["run_dir"]
+        runner = submission_spec["runner"]
+        python = str(runner["python"])
+        source = build_remote_runtime_preflight_source(submission_spec)
+        command = (
+            f"cd {shlex.quote(run_dir)}\n"
+            f"{shlex.quote(python)} - <<'PY'\n"
+            f"{source}\n"
+            "PY"
+        )
+
+        def action() -> None:
+            result = self.run(
+                command,
+                check=False,
+                modules=False,
+                export_env=False,
+                timeout_s=REMOTE_RUNTIME_PREFLIGHT_TIMEOUT_S,
+            )
+            if not result.ok:
+                reason = (
+                    (result.stderr or "").strip()
+                    or (result.stdout or "").strip()
+                    or "Remote runtime import preflight failed."
+                )
+                self._raise_preparation_failure(
+                    REMOTE_RUNTIME_PREFLIGHT_STEP,
+                    reason,
+                    result.command,
+                )
+
+        self._run_preparation_step(REMOTE_RUNTIME_PREFLIGHT_STEP, action)
 
     def _prepare_remote_directories(self, submission_spec: dict) -> None:
         def action() -> None:
@@ -1256,7 +1296,7 @@ class ParamikoRemoteRunner(RemoteRunner):
             sacct_command = (
                 "/usr/bin/sacct -X -P -n "
                 f"-j {shlex.quote(stripped_job_id)} "
-                "--format JobIDRaw,State,ExitCode,JobName,StdOut,WorkDir"
+                "--format JobIDRaw,State,ExitCode,JobName,StdOut,StdErr,WorkDir"
             )
             sacct_brief_command = (
                 "/usr/bin/sacct -X -n -P "

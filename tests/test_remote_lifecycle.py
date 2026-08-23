@@ -361,6 +361,7 @@ class LifecyclePrepareRunner:
                 "PREP_OK=submission.json uploaded\n"
                 "PREP_OK=Execution module uploaded\n"
                 "PREP_OK=run_job.py uploaded\n"
+                "PREP_OK=Runtime import preflight\n"
                 "PREP_OK=Submission script written\n"
                 "PREP_OK=Ready for submission\n"
             ),

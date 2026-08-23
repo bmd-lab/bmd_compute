@@ -447,6 +447,11 @@ assert "which mpirun" in sbatch_script
 assert f"which {DEFAULT_REMOTE_PYTHON}" in sbatch_script
 assert f"{DEFAULT_REMOTE_PYTHON} --version" in sbatch_script
 assert f"{DEFAULT_REMOTE_PYTHON} -u run_job.py" in sbatch_script
+assert f"[sbatch] Runner stdout: {spec['paths']['log_out']}" in sbatch_script
+assert f"[sbatch] Runner stderr: {spec['paths']['log_err']}" in sbatch_script
+assert f"[sbatch] SLURM stdout: {spec['paths']['slurm_out']}" in sbatch_script
+assert f"[sbatch] SLURM stderr: {spec['paths']['slurm_err']}" in sbatch_script
+assert sbatch_script.index("[sbatch] Runner stderr:") < sbatch_script.index(f"{DEFAULT_REMOTE_PYTHON} -u run_job.py")
 assert "\npython --version" not in sbatch_script
 assert "/bmd/lee/envs" not in sbatch_script
 
@@ -463,19 +468,28 @@ assert "RelaxMaker" not in execution_module_source
 assert "StaticSetGenerator" not in execution_module_source
 
 backend_module_sources = build_backend_module_sources()
-assert set(backend_module_sources) == {
+backend_module_names = set(backend_module_sources)
+assert backend_module_names >= {
     "config.py",
     "calculations/__init__.py",
     "calculations/builder.py",
     "calculations/custodian_policy.py",
     "calculations/models.py",
+    "calculations/resource_policy.py",
     "calculations/resources.py",
     "calculations/registry.py",
     "calculations/theory_policy.py",
+    "calculations/vasp_stage_definitions.py",
     "execution.py",
     "parser.py",
+    "runtime_package.py",
     "workflows.py",
 }
+assert all(name.endswith(".py") for name in backend_module_names)
+assert all("__pycache__" not in name for name in backend_module_names)
+assert all(not name.startswith("tests/") for name in backend_module_names)
+assert "calculations/overrides.yaml" not in backend_module_names
+assert "calculations/presets.yaml" not in backend_module_names
 assert "class CalculationSpec" in backend_module_sources["calculations/models.py"]
 assert (
     "def hse_band_structure_run_vasp_kwargs"
@@ -483,6 +497,8 @@ assert (
 )
 assert "ALLOWED_MEMORY_GB" in backend_module_sources["calculations/resources.py"]
 assert "def ncore_for_execution_resources" in backend_module_sources["calculations/resources.py"]
+assert "AUTOMATIC_NCORE_STAGE_TYPES" in backend_module_sources["calculations/resource_policy.py"]
+assert "def describe_stage" in backend_module_sources["calculations/vasp_stage_definitions.py"]
 assert "def calculation_spec_from_flow_spec" in backend_module_sources["calculations/registry.py"]
 assert "def theory_incar_settings" in backend_module_sources["calculations/theory_policy.py"]
 assert "def structure_from_spec" in backend_module_sources["parser.py"]

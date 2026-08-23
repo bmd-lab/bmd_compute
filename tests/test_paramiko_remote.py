@@ -383,6 +383,7 @@ assert "PREP_OK=Working directory created" in dry_record.raw_output
 assert "PREP_OK=submission.json uploaded" in dry_record.raw_output
 assert "PREP_OK=Execution module uploaded" in dry_record.raw_output
 assert "PREP_OK=run_job.py uploaded" in dry_record.raw_output
+assert "PREP_OK=Runtime import preflight" in dry_record.raw_output
 assert "PREP_OK=Submission script written" in dry_record.raw_output
 assert "PREP_OK=Ready for submission" in dry_record.raw_output
 
@@ -414,6 +415,7 @@ large_record = large_runner.submit(large_submission_spec, dry_run=True)
 large_submission_json = f"{large_submission_spec['paths']['run_dir']}/submission.json"
 large_files = large_runner.fake_client.sftp.files
 assert large_record.status == "dry_run"
+assert "PREP_OK=Runtime import preflight" in large_record.raw_output
 assert "PREP_OK=Ready for submission" in large_record.raw_output
 large_uploaded_spec = json.loads(large_files[large_submission_json])
 assert large_uploaded_spec["flow_spec"]["generated_input_regression_payload"] == large_payload
@@ -476,7 +478,7 @@ class QueryRunner(ParamikoRemoteRunner):
         elif "/usr/bin/squeue" in command:
             key = "squeue"
             stdout = self.outputs.get("squeue", "")
-        elif "JobIDRaw,State,ExitCode,JobName,StdOut,WorkDir" in command:
+        elif "JobIDRaw,State,ExitCode,JobName,StdOut,StdErr,WorkDir" in command:
             key = "sacct"
             stdout = self.outputs.get("sacct", "")
         elif "JobID,JobName%30,State,Elapsed,Start,End,Partition%20" in command:
@@ -519,7 +521,7 @@ completed_query_runner = QueryRunner(
     {
         "scontrol": "",
         "squeue": "",
-        "sacct": "123456|COMPLETED|0:0|TiO2-static|/logs/final.out|/flows/run\n",
+        "sacct": "123456|COMPLETED|0:0|TiO2-static|/logs/final.out|/logs/final.err|/flows/run\n",
         "sacct_brief": "123456|TiO2-static|COMPLETED|00:02:10|2026-07-14T10:00|2026-07-14T10:02|leeburton-pool\n",
     }
 )
@@ -530,6 +532,7 @@ assert completed_status.state == "COMPLETED"
 assert completed_status.exit_code == "0:0"
 assert completed_status.raw["summary"] == "SUCCESS"
 assert completed_status.stdout_path == "/logs/final.out"
+assert completed_status.stderr_path == "/logs/final.err"
 assert "TiO2-static" in completed_status.raw["brief"]
 assert len(completed_query_runner.commands) == 4
 assert any("/usr/bin/sacct" in command for command in completed_query_runner.commands)
@@ -545,7 +548,7 @@ completed_after_scontrol_miss_runner = QueryRunner(
     {
         "scontrol": "",
         "squeue": "",
-        "sacct": "123456|COMPLETED|0:0|TiO2-static|/logs/final.out|/flows/run\n",
+        "sacct": "123456|COMPLETED|0:0|TiO2-static|/logs/final.out|/logs/final.err|/flows/run\n",
         "sacct_brief": "123456|TiO2-static|COMPLETED|00:02:10|2026-07-14T10:00|2026-07-14T10:02|leeburton-pool\n",
         "returncodes": {"scontrol": 1},
         "stderr": {"scontrol": "slurm_load_jobs error: Invalid job id specified\n"},

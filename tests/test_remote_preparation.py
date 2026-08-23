@@ -34,6 +34,7 @@ verified_output = "\n".join(
         "PREP_OK=submission.json uploaded",
         "PREP_OK=Execution module uploaded",
         "PREP_OK=run_job.py uploaded",
+        "PREP_OK=Runtime import preflight",
         "PREP_OK=Submission script written",
         "PREP_OK=Ready for submission",
         "DRY RUN",
@@ -262,6 +263,51 @@ assert run_job_failure["stage"] == "run_job.py uploaded"
 assert "Expected file does not exist" in run_job_failure["reason"]
 assert run_job_failure["steps"][-1] == {
     "label": "run_job.py uploaded",
+    "state": "failed",
+}
+
+
+class RuntimePreflightFailureRunner:
+    def __init__(self):
+        self.closed = False
+
+    def connect(self, profile):
+        return None
+
+    def submit(self, spec, dry_run=False):
+        result = RemoteCommandResult(
+            command="runtime preflight",
+            returncode=42,
+            stdout=(
+                "PREP_OK=Remote directories prepared\n"
+                "PREP_OK=Working directory created\n"
+                "PREP_OK=submission.json uploaded\n"
+                "PREP_OK=Execution module uploaded\n"
+                "PREP_OK=run_job.py uploaded\n"
+                "PREP_FAILED_STAGE=Runtime import preflight\n"
+                "PREP_FAILED_REASON=ModuleNotFoundError: No module named "
+                "'backend.calculations.resource_policy'\n"
+            ),
+        )
+        raise RemoteExecutionError(result)
+
+    def close(self):
+        self.closed = True
+
+
+runtime_preflight_failure_runner = RuntimePreflightFailureRunner()
+runtime_preflight_failure = prepare_remote_submission(
+    submission_spec,
+    runner_factory=lambda: runtime_preflight_failure_runner,
+)
+
+assert runtime_preflight_failure_runner.closed is True
+assert runtime_preflight_failure["status"] == "failed"
+assert runtime_preflight_failure["ready_for_submission"] is False
+assert runtime_preflight_failure["stage"] == "Runtime import preflight"
+assert "resource_policy" in runtime_preflight_failure["reason"]
+assert runtime_preflight_failure["steps"][-1] == {
+    "label": "Runtime import preflight",
     "state": "failed",
 }
 

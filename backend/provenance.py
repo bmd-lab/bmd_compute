@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.workflows import vasp_command_for_modifiers, vasp_executable_for_modifiers
+from backend.runtime_package import runtime_package_manifest_metadata
 
 
 PROVENANCE_SCHEMA_VERSION = 1
@@ -35,6 +36,7 @@ def build_submission_provenance(submission_spec: dict) -> dict:
         "schema_version": PROVENANCE_SCHEMA_VERSION,
         "bmd_compute": {
             "source": source_metadata(),
+            "runtime_source": runtime_package_manifest_metadata(),
         },
         "python_environment": {
             "preparation": preparation_python_environment(),
