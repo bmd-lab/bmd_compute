@@ -35,6 +35,7 @@ from backend.calculations.resources import (
     ncore_for_execution_resources,
     stage_allows_automatic_ncore,
 )
+from backend.calculations.dispersion import dispersion_method_from_options
 from backend.calculations.custodian_policy import hse_band_structure_run_vasp_kwargs
 from backend.calculations.vasp_stage_definitions import (
     BAND_STRUCTURE_LINE_DENSITY_DEFAULT,
@@ -571,6 +572,19 @@ def apply_soc_magmom_settings(user_incar, *, structure) -> dict:
     return settings
 
 
+def dispersion_method_for_stage(stage: StageSpec) -> str | None:
+    if Modifier.DISPERSION not in stage.modifiers:
+        return None
+    return dispersion_method_from_options(stage.options)
+
+
+def _dispersion_vdw_for_modifiers(modifiers, method=None) -> str | None:
+    calculation_modifiers = calculation_modifiers_from_options(modifiers=modifiers)
+    if Modifier.DISPERSION not in calculation_modifiers:
+        return None
+    return dispersion_method_from_options({"dispersion": {"method": method}})
+
+
 def build_relax_input_set_generator(
     structure,
     *,
@@ -582,6 +596,7 @@ def build_relax_input_set_generator(
     incar=None,
     kpoints=None,
     potcar_functional="PBE_64",
+    dispersion_method=None,
 ):
     from atomate2.vasp.sets.core import RelaxSetGenerator
 
@@ -614,8 +629,10 @@ def build_relax_input_set_generator(
         stage_type=StageType.RELAX,
         resources=resources,
     )
+    vdw = _dispersion_vdw_for_modifiers(calculation_modifiers, dispersion_method)
 
     return RelaxSetGenerator(
+        vdw=vdw,
         user_potcar_functional=potcar_functional,
         user_kpoints_settings=ksettings_for_modifiers(
             structure,
@@ -639,6 +656,7 @@ def build_relax_flow(
     incar=None,
     kpoints=None,
     potcar_functional="PBE_64",
+    dispersion_method=None,
 ):
     from atomate2.vasp.jobs.core import RelaxMaker
     from jobflow import Flow
@@ -653,6 +671,7 @@ def build_relax_flow(
         incar=incar,
         kpoints=kpoints,
         potcar_functional=potcar_functional,
+        dispersion_method=dispersion_method,
     )
     maker = RelaxMaker(
         input_set_generator=generator,
@@ -676,6 +695,7 @@ def build_double_relax_flow(
     incar=None,
     kpoints=None,
     potcar_functional="PBE_64",
+    dispersion_method=None,
 ):
     from atomate2.vasp.jobs.core import RelaxMaker
     from jobflow import Flow
@@ -693,6 +713,7 @@ def build_double_relax_flow(
         incar=incar,
         kpoints=kpoints,
         potcar_functional=potcar_functional,
+        dispersion_method=dispersion_method,
     )
     first_maker = RelaxMaker(
         input_set_generator=first_generator,
@@ -709,6 +730,7 @@ def build_double_relax_flow(
         incar=incar,
         kpoints=kpoints,
         potcar_functional=potcar_functional,
+        dispersion_method=dispersion_method,
     )
     second_maker = RelaxMaker(
         input_set_generator=second_generator,
@@ -740,6 +762,7 @@ def build_relax_static_flow(
     incar=None,
     kpoints=None,
     potcar_functional="PBE_64",
+    dispersion_method=None,
 ):
     from atomate2.vasp.jobs.core import RelaxMaker, StaticMaker
     from jobflow import Flow
@@ -763,6 +786,7 @@ def build_relax_static_flow(
         incar=incar,
         kpoints=kpoints,
         potcar_functional=potcar_functional,
+        dispersion_method=dispersion_method,
     )
     relax_job = RelaxMaker(
         input_set_generator=relax_generator,
@@ -781,6 +805,7 @@ def build_relax_static_flow(
         incar=incar,
         kpoints=kpoints,
         potcar_functional=potcar_functional,
+        dispersion_method=dispersion_method,
     )
     static_job = StaticMaker(
         input_set_generator=static_generator,
@@ -943,6 +968,7 @@ def build_static_input_set_generator(
     kpoints=None,
     potcar_functional="PBE_64",
     magmom_structure=None,
+    dispersion_method=None,
 ):
     from atomate2.vasp.sets.core import StaticSetGenerator
 
@@ -962,7 +988,10 @@ def build_static_input_set_generator(
         magmom_structure=magmom_structure,
     )
 
+    vdw = _dispersion_vdw_for_modifiers(calculation_modifiers, dispersion_method)
+
     return StaticSetGenerator(
+        vdw=vdw,
         user_potcar_functional=potcar_functional,
         user_kpoints_settings=ksettings_for_modifiers(
             structure,
@@ -987,6 +1016,7 @@ def build_static_flow(
     incar=None,
     kpoints=None,
     potcar_functional="PBE_64",
+    dispersion_method=None,
 ):
     from atomate2.vasp.jobs.core import StaticMaker
     from jobflow import Flow
@@ -1008,6 +1038,7 @@ def build_static_flow(
         incar=incar,
         kpoints=kpoints,
         potcar_functional=potcar_functional,
+        dispersion_method=dispersion_method,
     )
     maker = StaticMaker(
         input_set_generator=generator,
@@ -1418,6 +1449,7 @@ def build_atomate2_flow_for_workflow_spec(
             else _single_stage_job_name(stage, user_incar)
         )
         spin_polarized = Modifier.SPIN_POLARIZED in stage.modifiers
+        stage_dispersion_method = dispersion_method_for_stage(stage)
         run_vasp_kwargs = run_vasp_kwargs_for_modifiers(stage.modifiers)
 
         if stage.stage_type is StageType.RELAX:
@@ -1431,6 +1463,7 @@ def build_atomate2_flow_for_workflow_spec(
                 incar=user_incar,
                 kpoints=stage_kpoints,
                 potcar_functional=potcar_functional,
+                dispersion_method=stage_dispersion_method,
             )
             job = RelaxMaker(
                 input_set_generator=generator,
@@ -1451,6 +1484,7 @@ def build_atomate2_flow_for_workflow_spec(
                 kpoints=stage_kpoints,
                 potcar_functional=potcar_functional,
                 magmom_structure=structure,
+                dispersion_method=stage_dispersion_method,
             )
             maker = StaticMaker(
                 input_set_generator=generator,
@@ -1565,6 +1599,7 @@ def build_vasp_input_set_generator_for_spec(
             incar=user_incar,
             kpoints=kpoints,
             potcar_functional=potcar_functional,
+            dispersion_method=dispersion_method_from_options({}),
         )
 
     if calculation_spec.purpose in (Purpose.RELAX, Purpose.DOUBLE_RELAX):
@@ -1578,6 +1613,7 @@ def build_vasp_input_set_generator_for_spec(
             incar=user_incar,
             kpoints=kpoints,
             potcar_functional=potcar_functional,
+            dispersion_method=dispersion_method_from_options({}),
         )
 
     if calculation_spec.purpose is Purpose.RELAX_STATIC:
@@ -1592,6 +1628,7 @@ def build_vasp_input_set_generator_for_spec(
             incar=user_incar,
             kpoints=kpoints,
             potcar_functional=potcar_functional,
+            dispersion_method=dispersion_method_from_options({}),
         )
 
     if calculation_spec.purpose is Purpose.DOS:
@@ -1674,6 +1711,7 @@ def build_atomate2_flow_for_spec(
             incar=user_incar,
             kpoints=kpoints,
             potcar_functional=potcar_functional,
+            dispersion_method=dispersion_method_from_options({}),
         )
 
     if calculation_spec.purpose is Purpose.RELAX:
@@ -1688,6 +1726,7 @@ def build_atomate2_flow_for_spec(
             incar=user_incar,
             kpoints=kpoints,
             potcar_functional=potcar_functional,
+            dispersion_method=dispersion_method_from_options({}),
         )
 
     if calculation_spec.purpose is Purpose.RELAX_STATIC:
@@ -1701,6 +1740,7 @@ def build_atomate2_flow_for_spec(
             incar=user_incar,
             kpoints=kpoints,
             potcar_functional=potcar_functional,
+            dispersion_method=dispersion_method_from_options({}),
         )
 
     if calculation_spec.purpose is Purpose.DOUBLE_RELAX:
@@ -1713,6 +1753,7 @@ def build_atomate2_flow_for_spec(
             incar=user_incar,
             kpoints=kpoints,
             potcar_functional=potcar_functional,
+            dispersion_method=dispersion_method_from_options({}),
         )
 
     if calculation_spec.purpose is Purpose.DOS:

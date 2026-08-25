@@ -360,6 +360,7 @@ def selected_workflow_context(workflow_spec: WorkflowSpec) -> dict:
                 "modifiers": sorted(
                     modifier.value for modifier in stage.modifiers
                 ),
+                "options": dict(stage.options or {}),
                 "modifier_labels": [
                     modifier_display_name(modifier)
                     for modifier in sorted(

@@ -29,6 +29,7 @@ from backend.workflows import (
     validate_input_set_for_modifiers,
     vasp_executable_for_modifiers,
     apply_stage_artifact_incar_settings,
+    dispersion_method_for_stage,
     workflow_stage_artifact_policies,
 )
 
@@ -190,6 +191,7 @@ def _input_set_for_stage(
             incar=user_incar,
             kpoints=stage_kpoints,
             potcar_functional=potcar_functional,
+            dispersion_method=dispersion_method_for_stage(stage),
         )
     elif stage.stage_type is StageType.STATIC:
         generator = build_static_input_set_generator(
@@ -202,6 +204,7 @@ def _input_set_for_stage(
             incar=user_incar,
             kpoints=stage_kpoints,
             potcar_functional=potcar_functional,
+            dispersion_method=dispersion_method_for_stage(stage),
         )
     elif stage.stage_type is StageType.DOS:
         generator = build_dos_input_set_generator(

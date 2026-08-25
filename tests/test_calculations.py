@@ -152,16 +152,23 @@ assert [option["label"] for option in form_options["modifiers"]] == [
     "Spin Polarised",
     "Spin-Orbit Coupling (SOC)",
     "DFT+U",
+    "Dispersion correction",
     "Gamma-only",
 ]
 modifier_options = {option["value"]: option for option in form_options["modifiers"]}
-for modifier in ("spin_polarized", "dft_u", "gamma_only"):
+for modifier in ("spin_polarized", "dft_u", "dispersion", "gamma_only"):
     assert modifier_options[modifier]["enabled"] is True
 assert modifier_options["spin_polarized"]["tooltip"] == ""
 assert modifier_options["gamma_only"]["tooltip"] == ""
 assert modifier_options["dft_u"]["tooltip"] == "DFT+U is applied only when explicitly selected."
+assert "DFT-D3" in modifier_options["dispersion"]["tooltip"]
 assert modifier_options["soc"]["enabled"] is True
 assert "vasp_ncl" in modifier_options["soc"]["tooltip"]
+assert form_options["default_dispersion_method"] == "dftd3-bj"
+assert form_options["dispersion_methods"] == [
+    {"value": "dftd3", "label": "DFT-D3"},
+    {"value": "dftd3-bj", "label": "DFT-D3(BJ)"},
+]
 
 spin_static_spec = CalculationSpec(Purpose.STATIC, Theory.PBE, {Modifier.SPIN_POLARIZED})
 spin_relax_spec = CalculationSpec(Purpose.RELAX, Theory.PBE, {Modifier.SPIN_POLARIZED})

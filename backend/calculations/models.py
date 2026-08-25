@@ -46,6 +46,7 @@ class Theory(_IntentEnum):
 class Modifier(_IntentEnum):
     SOC = "soc"
     DFT_U = "dft_u"
+    DISPERSION = "dispersion"
     SPIN_POLARIZED = "spin_polarized"
     GAMMA_ONLY = "gamma_only"
     IONS_ONLY = "ions_only"
