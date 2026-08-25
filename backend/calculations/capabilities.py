@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from backend.calculations.dispersion import dispersion_modifier_policy
 from backend.calculations.models import Theory
 from backend.calculations.vasp_stage_definitions import (
     describe_stage,
@@ -35,9 +36,11 @@ def build_capability_payload(
         "contract": {
             "base_stage_definitions": "Theory-neutral stage definitions from list_stage_definitions().",
             "capabilities": "Supported stage/theory descriptions from describe_stage(); unsupported combinations are not invented.",
+            "modifier_policies": "Stage-local executable modifiers with controlled options; unsupported pairings are not invented.",
         },
         "base_stage_definitions": base_stage_definitions,
         "capabilities": _supported_stage_theory_capabilities(base_stage_definitions),
+        "modifier_policies": [dispersion_modifier_policy()],
     }
 
 

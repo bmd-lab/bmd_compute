@@ -12,12 +12,17 @@ assert 'data-workflow-stage' in source
 assert 'data-stage-type' in source
 assert 'data-stage-theory' in source
 assert 'data-stage-modifier' in source
+assert 'data-stage-dispersion-method' in source
+assert 'data-dispersion-control' in source
 assert 'id="add-workflow-stage"' in source
 assert "Recommended Workflow" in source
 assert "Custom Workflow" in source
 assert "Calculation Type" in source
 assert "Level of Theory" in source
 assert "Advanced Options" in source
+assert "Dispersion correction" in source
+assert "default_dispersion_method" in source
+assert "dispersion_methods" in source
 assert 'id="structure-input-details"' in source
 structure_details_block = source[
     source.index('id="structure-input-details"'):
@@ -69,6 +74,8 @@ assert 'button.textContent = "Submitting..."' in source
 monitor_form = source[source.index('<form action="/monitor"'):]
 assert "workflow_spec_json" in monitor_form
 assert "monitor_state_json" in monitor_form
+assert "stageOptions.dispersion" in source
+assert "updateDispersionControls" in source
 resume_monitoring_block = source[source.index('{% else %}\n            <form action="/resume"'):]
 assert 'name="load_results" value="true"' in resume_monitoring_block
 assert "Load Results" in resume_monitoring_block

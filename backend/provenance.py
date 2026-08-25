@@ -162,6 +162,7 @@ def stage_vasp_provenance(workflow_spec: dict, environment: dict) -> list[dict]:
             "stage_type": _json_safe_scalar(stage.get("stage_type")),
             "theory": _json_safe_scalar(stage.get("theory")),
             "modifiers": _json_safe_value(modifiers),
+            "options": _json_safe_value(stage.get("options") or {}),
             "executable": vasp_executable_for_modifiers(modifiers),
             "command_template": vasp_command_for_modifiers(
                 modifiers,
@@ -181,6 +182,7 @@ def stage_order_provenance(workflow_spec: dict) -> list[dict]:
             "stage_type": _json_safe_scalar(stage.get("stage_type")),
             "theory": _json_safe_scalar(stage.get("theory")),
             "modifiers": _json_safe_value(stage.get("modifiers") or []),
+            "options": _json_safe_value(stage.get("options") or {}),
         }
         for index, stage in enumerate(stages, start=1)
         if isinstance(stage, dict)

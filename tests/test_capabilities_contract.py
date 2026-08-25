@@ -43,6 +43,7 @@ def test_capability_payload_has_versioned_contract_and_provenance_shape():
     assert payload["contract"] == {
         "base_stage_definitions": "Theory-neutral stage definitions from list_stage_definitions().",
         "capabilities": "Supported stage/theory descriptions from describe_stage(); unsupported combinations are not invented.",
+        "modifier_policies": "Stage-local executable modifiers with controlled options; unsupported pairings are not invented.",
     }
     assert payload["source"] == {
         "repository": "bmd_compute",
@@ -115,6 +116,21 @@ def test_hse_band_structure_description_survives_contract():
     assert hse_band["applicable_theory_amendments"]["LHFCALC"] is True
     assert hse_band["theory_stage_bmd_incar_amendments"]["encut_floor"] == 620
     assert "custodian_policy" not in hse_band["kpoints_policy"]["default_parameters"]
+
+
+def test_dispersion_modifier_policy_survives_contract():
+    payload = build_capability_payload(include_provenance=False)
+    policy = payload["modifier_policies"][0]
+
+    assert policy["modifier"] == "dispersion"
+    assert policy["default_method"] == "dftd3-bj"
+    assert policy["methods"] == [
+        {"value": "dftd3", "label": "DFT-D3", "incar_effect": {"IVDW": 11}},
+        {"value": "dftd3-bj", "label": "DFT-D3(BJ)", "incar_effect": {"IVDW": 12}},
+    ]
+    assert policy["phase_1_support"]["theories"] == ["pbe"]
+    assert policy["phase_1_support"]["stage_types"] == ["relax", "static"]
+    assert policy["phase_1_support"]["blocked_with_modifiers"] == ["soc"]
 
 
 def test_capability_payload_is_json_safe_and_deterministic():

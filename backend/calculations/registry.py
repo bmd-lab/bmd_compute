@@ -11,6 +11,12 @@ from backend.calculations.models import (
     Theory,
     WorkflowSpec,
 )
+from backend.calculations.dispersion import (
+    DEFAULT_DISPERSION_METHOD,
+    DISPERSION_OPTION_KEY,
+    dispersion_method_from_options,
+    dispersion_method_options,
+)
 from backend.calculations.theory_policy import (
     CalculationStage,
     theory_default_potcar_functional,
@@ -29,6 +35,15 @@ class CalculationValidationError(ValueError):
 _ACTIVE_UI_MODIFIERS = (
     Modifier.SPIN_POLARIZED,
     Modifier.DFT_U,
+    Modifier.DISPERSION,
+    Modifier.GAMMA_ONLY,
+)
+
+_PBE_RELAX_STATIC_MODIFIERS = _ACTIVE_UI_MODIFIERS
+
+_PBE_ANALYSIS_WORKFLOW_MODIFIERS = (
+    Modifier.SPIN_POLARIZED,
+    Modifier.DFT_U,
     Modifier.GAMMA_ONLY,
 )
 
@@ -36,6 +51,7 @@ _PBE_STATIC_MODIFIERS = (
     Modifier.SPIN_POLARIZED,
     Modifier.SOC,
     Modifier.DFT_U,
+    Modifier.DISPERSION,
     Modifier.GAMMA_ONLY,
 )
 
@@ -62,15 +78,14 @@ def _build_supported_compatibility_workflows() -> dict[
     supported: dict[tuple[Purpose, Theory, frozenset[Modifier]], str] = {}
 
     for modifiers in _modifier_subsets(_PBE_STATIC_MODIFIERS):
+        if Modifier.SOC in modifiers and Modifier.DISPERSION in modifiers:
+            continue
         supported[(Purpose.STATIC, Theory.PBE, modifiers)] = "static"
 
-    for modifiers in _modifier_subsets(_ACTIVE_UI_MODIFIERS):
+    for modifiers in _modifier_subsets(_PBE_RELAX_STATIC_MODIFIERS):
         supported[(Purpose.RELAX, Theory.PBE, modifiers)] = "relax"
         supported[(Purpose.RELAX_STATIC, Theory.PBE, modifiers)] = "relax_static"
         supported[(Purpose.DOUBLE_RELAX, Theory.PBE, modifiers)] = "double_relax"
-        supported[(Purpose.DOS, Theory.PBE, modifiers)] = "dos"
-        if Modifier.GAMMA_ONLY not in modifiers:
-            supported[(Purpose.BAND_STRUCTURE, Theory.PBE, modifiers)] = "band_structure"
         supported[
             (
                 Purpose.RELAX,
@@ -78,6 +93,11 @@ def _build_supported_compatibility_workflows() -> dict[
                 frozenset({*modifiers, Modifier.IONS_ONLY}),
             )
         ] = "relax_ions"
+
+    for modifiers in _modifier_subsets(_PBE_ANALYSIS_WORKFLOW_MODIFIERS):
+        supported[(Purpose.DOS, Theory.PBE, modifiers)] = "dos"
+        if Modifier.GAMMA_ONLY not in modifiers:
+            supported[(Purpose.BAND_STRUCTURE, Theory.PBE, modifiers)] = "band_structure"
 
     for modifiers in _modifier_subsets(_HSE06_SINGLE_STAGE_MODIFIERS):
         supported[(Purpose.RELAX, Theory.HSE06, modifiers)] = "relax"
@@ -182,6 +202,7 @@ _MODIFIER_DISPLAY_NAMES = {
     Modifier.SPIN_POLARIZED: "Spin Polarised",
     Modifier.SOC: "Spin-Orbit Coupling (SOC)",
     Modifier.DFT_U: "DFT+U",
+    Modifier.DISPERSION: "Dispersion correction",
     Modifier.GAMMA_ONLY: "Gamma-only",
     Modifier.IONS_ONLY: "Ions only",
 }
@@ -192,6 +213,7 @@ _MODIFIER_TOOLTIPS = {
         "SOC is available for reviewed PBE Static Energy stages and runs with vasp_ncl."
     ),
     Modifier.DFT_U: "DFT+U is applied only when explicitly selected.",
+    Modifier.DISPERSION: "DFT-D3 or DFT-D3(BJ) dispersion for PBE Geometry Optimisation and Static Energy stages.",
 }
 
 _UI_HIDDEN_MODIFIERS = {
@@ -202,6 +224,7 @@ _UI_MODIFIER_ORDER = (
     Modifier.SPIN_POLARIZED,
     Modifier.SOC,
     Modifier.DFT_U,
+    Modifier.DISPERSION,
     Modifier.GAMMA_ONLY,
 )
 
@@ -329,6 +352,8 @@ def validate_workflow_spec(workflow: WorkflowSpec) -> WorkflowSpec:
             "Add at least one calculation stage.",
             suggestion="Choose a recommended workflow, or add a stage in Custom Workflow.",
         )
+
+    _validate_dispersion_workflow_consistency(normalized)
 
     for index, stage in enumerate(normalized.stages):
         stage_number = index + 1
@@ -468,6 +493,8 @@ def calculation_spec_from_workflow_spec(workflow: WorkflowSpec) -> CalculationSp
     normalized = validate_workflow_spec(workflow)
     stages = normalized.stages
     stage_types = tuple(stage.stage_type for stage in stages)
+    if any(stage.options for stage in stages):
+        return None
 
     def same_stage_policy() -> tuple[Theory, frozenset[Modifier]] | None:
         if not stages:
@@ -618,6 +645,71 @@ def _validate_stage_support(stage: StageSpec) -> None:
             suggestion="Adjust the advanced options, or choose PBE for this stage.",
         )
 
+    _validate_dispersion_stage_support(stage)
+
+
+def _stage_dispersion_method(stage: StageSpec) -> str | None:
+    if Modifier.DISPERSION not in stage.modifiers:
+        return None
+    return dispersion_method_from_options(stage.options)
+
+
+def _validate_dispersion_stage_support(stage: StageSpec) -> None:
+    has_dispersion_option = DISPERSION_OPTION_KEY in dict(stage.options or {})
+    has_dispersion_modifier = Modifier.DISPERSION in stage.modifiers
+    if has_dispersion_option and not has_dispersion_modifier:
+        raise CalculationValidationError(
+            "Dispersion correction options require the Dispersion correction advanced option.",
+            suggestion="Enable Dispersion correction or remove the stage-local dispersion option.",
+        )
+    if not has_dispersion_modifier:
+        return
+
+    if stage.theory is not Theory.PBE:
+        raise CalculationValidationError(
+            "Dispersion correction is currently available for PBE Geometry Optimisation and Static Energy stages only.",
+            suggestion="Use PBE for this dispersion-corrected stage, or remove Dispersion correction.",
+        )
+    if Modifier.SOC in stage.modifiers:
+        raise CalculationValidationError(
+            "Dispersion correction is not available together with Spin-Orbit Coupling (SOC) yet.",
+            suggestion="Remove either Dispersion correction or SOC for this stage.",
+        )
+    if stage.stage_type not in {StageType.RELAX, StageType.STATIC}:
+        raise CalculationValidationError(
+            "Dispersion correction is applied only to PBE Geometry Optimisation and Static Energy stages in Phase 1.",
+            suggestion="Apply dispersion to the PBE precursor relax/static stages, not directly to DOS or Band Structure.",
+        )
+    try:
+        _stage_dispersion_method(stage)
+    except ValueError as exc:
+        raise CalculationValidationError(
+            str(exc),
+            suggestion="Choose DFT-D3 or DFT-D3(BJ).",
+        ) from exc
+
+
+def _validate_dispersion_workflow_consistency(workflow: WorkflowSpec) -> None:
+    relax_static_types = {StageType.RELAX, StageType.STATIC}
+    for previous_stage, current_stage in zip(workflow.stages, workflow.stages[1:]):
+        if (
+            previous_stage.stage_type not in relax_static_types
+            or current_stage.stage_type not in relax_static_types
+        ):
+            continue
+        previous_method = _stage_dispersion_method(previous_stage)
+        current_method = _stage_dispersion_method(current_stage)
+        if previous_method == current_method:
+            continue
+        if previous_method or current_method:
+            raise CalculationValidationError(
+                "Use the same dispersion correction across connected PBE relax/static stages.",
+                suggestion=(
+                    "Enable the same DFT-D3 or DFT-D3(BJ) option on each connected "
+                    "Geometry Optimisation and Static Energy stage, or remove dispersion."
+                ),
+            )
+
 
 def _supported_modifiers_for_stage(
     stage_type: StageType,
@@ -629,6 +721,8 @@ def _supported_modifiers_for_stage(
             supported.add(Modifier.SOC)
         if stage_type is StageType.RELAX:
             supported.add(Modifier.IONS_ONLY)
+        if stage_type in _TERMINAL_ANALYSIS_STAGES:
+            supported.discard(Modifier.DISPERSION)
         if stage_type is StageType.BAND_STRUCTURE:
             supported.discard(Modifier.GAMMA_ONLY)
         return frozenset(supported)
@@ -760,6 +854,8 @@ def calculation_form_options() -> dict:
             for modifier in _UI_MODIFIER_ORDER
             if modifier not in _UI_HIDDEN_MODIFIERS
         ],
+        "dispersion_methods": list(dispersion_method_options()),
+        "default_dispersion_method": DEFAULT_DISPERSION_METHOD,
         "stage_types": [
             {
                 "value": stage_type.value,
@@ -803,6 +899,13 @@ def _unsupported_combination_error(
         return CalculationValidationError(
             f"{theory_label} is not available in BMD Compute yet. Combination: {combination}.",
             suggestion="Choose PBE for this calculation.",
+        )
+
+    if Modifier.DISPERSION in modifiers and Modifier.SOC in modifiers:
+        return CalculationValidationError(
+            f"{purpose_label} with {theory_label} is not available with Dispersion correction and Spin-Orbit Coupling (SOC). "
+            f"Combination: {combination}.",
+            suggestion="Remove either Dispersion correction or SOC for this calculation.",
         )
 
     if purpose not in supported_purposes:
