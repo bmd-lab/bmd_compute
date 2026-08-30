@@ -150,25 +150,23 @@ assert [option["label"] for option in form_options["purposes"]] == [
 assert [option["label"] for option in form_options["theories"]] == ["PBE", "HSE06"]
 assert [option["label"] for option in form_options["modifiers"]] == [
     "Spin Polarised",
-    "Spin-Orbit Coupling (SOC)",
     "DFT+U",
-    "Dispersion correction",
+    "van der Waals correction",
+    "Spin-Orbit Coupling (SOC)",
     "Gamma-only",
 ]
 modifier_options = {option["value"]: option for option in form_options["modifiers"]}
-for modifier in ("spin_polarized", "dft_u", "dispersion", "gamma_only"):
+for modifier in ("spin_polarized", "dft_u", "van_der_waals", "gamma_only"):
     assert modifier_options[modifier]["enabled"] is True
+assert "dispersion" not in modifier_options
+assert "dispersion_methods" not in form_options
+assert "default_dispersion_method" not in form_options
 assert modifier_options["spin_polarized"]["tooltip"] == ""
 assert modifier_options["gamma_only"]["tooltip"] == ""
 assert modifier_options["dft_u"]["tooltip"] == "DFT+U is applied only when explicitly selected."
-assert "DFT-D3" in modifier_options["dispersion"]["tooltip"]
+assert modifier_options["van_der_waals"]["tooltip"] == "Adds the DFT-D3 dispersion correction with Becke-Johnson damping (VASP IVDW=12)."
 assert modifier_options["soc"]["enabled"] is True
 assert "vasp_ncl" in modifier_options["soc"]["tooltip"]
-assert form_options["default_dispersion_method"] == "dftd3-bj"
-assert form_options["dispersion_methods"] == [
-    {"value": "dftd3", "label": "DFT-D3"},
-    {"value": "dftd3-bj", "label": "DFT-D3(BJ)"},
-]
 
 spin_static_spec = CalculationSpec(Purpose.STATIC, Theory.PBE, {Modifier.SPIN_POLARIZED})
 spin_relax_spec = CalculationSpec(Purpose.RELAX, Theory.PBE, {Modifier.SPIN_POLARIZED})
@@ -200,6 +198,10 @@ pbe_soc_dos_spec = CalculationSpec(Purpose.DOS, Theory.PBE, {Modifier.SOC})
 pbe_soc_band_spec = CalculationSpec(Purpose.BAND_STRUCTURE, Theory.PBE, {Modifier.SOC})
 dft_u_relax_spec = CalculationSpec(Purpose.RELAX, Theory.PBE, {Modifier.DFT_U})
 gamma_static_spec = CalculationSpec(Purpose.STATIC, Theory.PBE, {Modifier.GAMMA_ONLY})
+vdw_static_spec = CalculationSpec(Purpose.STATIC, Theory.PBE, {Modifier.VAN_DER_WAALS})
+vdw_relax_spec = CalculationSpec(Purpose.RELAX, Theory.PBE, {Modifier.VAN_DER_WAALS})
+vdw_relax_static_spec = CalculationSpec(Purpose.RELAX_STATIC, Theory.PBE, {Modifier.VAN_DER_WAALS})
+legacy_dispersion_static_spec = CalculationSpec(Purpose.STATIC, Theory.PBE, {Modifier.DISPERSION})
 hse_static_spec = CalculationSpec(Purpose.STATIC, Theory.HSE06)
 hse_spin_static_spec = CalculationSpec(
     Purpose.STATIC,
@@ -259,6 +261,10 @@ assert validate_calculation_spec(spin_band_spec) == spin_band_spec
 assert validate_calculation_spec(soc_static_spec) == soc_static_spec
 assert validate_calculation_spec(dft_u_relax_spec) == dft_u_relax_spec
 assert validate_calculation_spec(gamma_static_spec) == gamma_static_spec
+assert validate_calculation_spec(vdw_static_spec) == vdw_static_spec
+assert validate_calculation_spec(vdw_relax_spec) == vdw_relax_spec
+assert validate_calculation_spec(vdw_relax_static_spec) == vdw_relax_static_spec
+assert validate_calculation_spec(legacy_dispersion_static_spec) == legacy_dispersion_static_spec
 assert validate_calculation_spec(hse_static_spec) == hse_static_spec
 assert validate_calculation_spec(hse_relax_spec) == hse_relax_spec
 assert validate_calculation_spec(hse_relax_static_spec) == hse_relax_static_spec
@@ -277,6 +283,9 @@ assert legacy_workflow_from_spec(spin_band_spec) == "band_structure"
 assert legacy_workflow_from_spec(soc_static_spec) == "static"
 assert legacy_workflow_from_spec(dft_u_relax_spec) == "relax"
 assert legacy_workflow_from_spec(gamma_static_spec) == "static"
+assert legacy_workflow_from_spec(vdw_static_spec) == "static"
+assert legacy_workflow_from_spec(vdw_relax_spec) == "relax"
+assert legacy_workflow_from_spec(vdw_relax_static_spec) == "relax_static"
 try:
     validate_calculation_spec(gamma_band_spec)
 except CalculationValidationError as exc:

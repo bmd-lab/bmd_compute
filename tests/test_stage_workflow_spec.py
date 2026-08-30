@@ -200,7 +200,15 @@ double_relax_workflow = WorkflowSpec(
     ],
     recipe="double_relax",
 )
+vdw_relax_static_workflow = WorkflowSpec(
+    [
+        StageSpec(StageType.RELAX, Theory.PBE, {Modifier.VAN_DER_WAALS}),
+        StageSpec(StageType.STATIC, Theory.PBE, {Modifier.VAN_DER_WAALS}),
+    ],
+    recipe="custom",
+)
 assert workflow_stage_directories(double_relax_workflow) == ("relax_01", "relax_02")
+assert validate_workflow_spec(vdw_relax_static_workflow) == vdw_relax_static_workflow
 assert workflow_stage_directories(dos_workflow) == ("stage_01", "stage_02", "stage_03")
 assert workflow_result_file_keys(dos_workflow) == ("doscar",)
 assert workflow_result_file_keys(band_workflow) == ("kpoints",)
@@ -310,6 +318,12 @@ with fake_atomate2_and_jobflow():
         label="Si-soc",
         resources={"ntasks": 24},
     )
+    vdw_flow = build_atomate2_flow_for_workflow_spec(
+        "initial_structure",
+        vdw_relax_static_workflow,
+        label="Si-vdw",
+        resources={"ntasks": 24},
+    )
     soc_generated_inputs = preview_generated_inputs(
         "initial_structure",
         soc_static_workflow,
@@ -406,6 +420,11 @@ assert "LSORBIT = True" in soc_stage_3
 assert "GGA_COMPAT = False" in soc_stage_3
 assert "ISPIN" not in soc_stage_3
 assert "LELF" not in soc_stage_3
+
+assert [job.name for job in vdw_flow.jobs] == ["stage_01", "stage_02"]
+assert vdw_flow.jobs[1].structure == vdw_flow.jobs[0].output.structure
+assert vdw_flow.jobs[0].input_set_generator.kwargs["vdw"] == "dftd3-bj"
+assert vdw_flow.jobs[1].input_set_generator.kwargs["vdw"] == "dftd3-bj"
 
 summary = summarize_workflow(mixed_flow, mixed_relax_static)
 assert summary["calculation_type"] == "Geometry Optimisation + Static Energy"

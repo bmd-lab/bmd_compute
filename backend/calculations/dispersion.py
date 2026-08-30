@@ -5,9 +5,11 @@ from typing import Any, Mapping
 
 DISPERSION_OPTION_KEY = "dispersion"
 DISPERSION_METHOD_KEY = "method"
-DEFAULT_DISPERSION_METHOD = "dftd3-bj"
+VAN_DER_WAALS_VDW_METHOD = "dftd3-bj"
+VAN_DER_WAALS_INCAR_EFFECT = {"IVDW": 12}
+DEFAULT_DISPERSION_METHOD = VAN_DER_WAALS_VDW_METHOD
 
-_DISPERSION_METHODS = (
+_LEGACY_DISPERSION_METHODS = (
     {
         "value": "dftd3",
         "label": "DFT-D3",
@@ -32,9 +34,9 @@ _METHOD_ALIASES = {
 }
 
 
-def dispersion_method_options(*, include_incar_effect: bool = False) -> tuple[dict[str, Any], ...]:
+def legacy_dispersion_method_options(*, include_incar_effect: bool = False) -> tuple[dict[str, Any], ...]:
     options = []
-    for method in _DISPERSION_METHODS:
+    for method in _LEGACY_DISPERSION_METHODS:
         payload = {
             "value": method["value"],
             "label": method["label"],
@@ -45,6 +47,10 @@ def dispersion_method_options(*, include_incar_effect: bool = False) -> tuple[di
     return tuple(options)
 
 
+def dispersion_method_options(*, include_incar_effect: bool = False) -> tuple[dict[str, Any], ...]:
+    return legacy_dispersion_method_options(include_incar_effect=include_incar_effect)
+
+
 def normalize_dispersion_method(value: str | None) -> str:
     if value is None or str(value).strip() == "":
         return DEFAULT_DISPERSION_METHOD
@@ -53,8 +59,8 @@ def normalize_dispersion_method(value: str | None) -> str:
     try:
         return _METHOD_ALIASES[normalized]
     except KeyError as exc:
-        supported = ", ".join(method["label"] for method in _DISPERSION_METHODS)
-        raise ValueError(f"Unsupported dispersion correction {value!r}. Choose {supported}.") from exc
+        supported = ", ".join(method["label"] for method in _LEGACY_DISPERSION_METHODS)
+        raise ValueError(f"Unsupported legacy dispersion correction {value!r}. Choose {supported}.") from exc
 
 
 def dispersion_method_from_options(options: Mapping[str, Any] | None) -> str:
@@ -75,16 +81,15 @@ def dispersion_option_payload(method: str | None = None) -> dict[str, dict[str, 
     }
 
 
-def dispersion_modifier_policy() -> dict[str, Any]:
+def van_der_waals_modifier_policy() -> dict[str, Any]:
     return {
-        "modifier": "dispersion",
-        "label": "Dispersion correction",
-        "option_key": DISPERSION_OPTION_KEY,
-        "method_key": DISPERSION_METHOD_KEY,
-        "default_method": DEFAULT_DISPERSION_METHOD,
-        "methods": list(dispersion_method_options(include_incar_effect=True)),
+        "modifier": "van_der_waals",
+        "label": "van der Waals correction",
+        "description": "Adds the DFT-D3 dispersion correction with Becke-Johnson damping.",
+        "incar_effect": dict(VAN_DER_WAALS_INCAR_EFFECT),
         "upstream_interface": {
             "atomate2_pymatgen_generator_keyword": "vdw",
+            "keyword_value": VAN_DER_WAALS_VDW_METHOD,
         },
         "phase_1_support": {
             "theories": ["pbe"],
@@ -92,16 +97,31 @@ def dispersion_modifier_policy() -> dict[str, Any]:
             "blocked_with_modifiers": ["soc"],
             "blocked_terminal_stage_types": ["dos", "band_structure"],
         },
+        "legacy_serialized_modifier": {
+            "modifier": "dispersion",
+            "option_key": DISPERSION_OPTION_KEY,
+            "method_key": DISPERSION_METHOD_KEY,
+            "methods": list(legacy_dispersion_method_options(include_incar_effect=True)),
+            "new_workflows_emit": False,
+        },
     }
+
+
+def dispersion_modifier_policy() -> dict[str, Any]:
+    return van_der_waals_modifier_policy()
 
 
 __all__ = [
     "DEFAULT_DISPERSION_METHOD",
     "DISPERSION_METHOD_KEY",
     "DISPERSION_OPTION_KEY",
+    "VAN_DER_WAALS_INCAR_EFFECT",
+    "VAN_DER_WAALS_VDW_METHOD",
     "dispersion_method_from_options",
     "dispersion_method_options",
     "dispersion_modifier_policy",
     "dispersion_option_payload",
+    "legacy_dispersion_method_options",
     "normalize_dispersion_method",
+    "van_der_waals_modifier_policy",
 ]

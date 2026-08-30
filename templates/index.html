@@ -614,25 +614,6 @@ ul {
     cursor: not-allowed;
 }
 
-.modifier-detail {
-    border-top: 1px solid var(--bmd-border);
-    display: grid;
-    gap: 8px;
-    margin: 0 14px 14px;
-    padding-top: 12px;
-}
-
-.modifier-detail label {
-    color: var(--bmd-text-muted);
-    font-size: 12px;
-    font-weight: 700;
-    margin: 0;
-}
-
-.modifier-detail select:disabled {
-    cursor: not-allowed;
-    opacity: 0.55;
-}
 
 .callout {
     background: var(--bmd-surface-secondary);
@@ -1227,22 +1208,6 @@ ul {
                                                             <span>{{ option.label }}</span>
                                                         </label>
                                                         {% endfor %}
-                                                    </div>
-                                                    {% set stage_dispersion_options = stage.options.get("dispersion", {}) %}
-                                                    {% set stage_dispersion_method = stage_dispersion_options.get("method", calculation_options.default_dispersion_method) if stage_dispersion_options is mapping else calculation_options.default_dispersion_method %}
-                                                    <div class="modifier-detail" data-dispersion-control>
-                                                        <label>Dispersion correction</label>
-                                                        <select
-                                                            data-stage-dispersion-method
-                                                            {% if "dispersion" not in stage.modifiers %}disabled{% endif %}>
-                                                            {% for option in calculation_options.dispersion_methods %}
-                                                            <option
-                                                                value="{{ option.value }}"
-                                                                {% if stage_dispersion_method == option.value %}selected{% endif %}>
-                                                                {{ option.label }}
-                                                            </option>
-                                                            {% endfor %}
-                                                        </select>
                                                     </div>
                                                 </details>
                                             </div>
@@ -2383,8 +2348,6 @@ document.addEventListener("DOMContentLoaded", function () {
     var stageTypes = options.stage_types || [];
     var theories = options.theories || [];
     var modifiers = options.modifiers || [];
-    var dispersionMethods = options.dispersion_methods || [];
-    var defaultDispersionMethod = options.default_dispersion_method || ((dispersionMethods[0] || {}).value) || "dftd3-bj";
     var recipes = options.recipes || [];
 
     function escapeHtml(value) {
@@ -2422,33 +2385,10 @@ document.addEventListener("DOMContentLoaded", function () {
         }).join("");
     }
 
-    function dispersionMethodMarkup(selectedValue, disabled) {
-        var selected = selectedValue || defaultDispersionMethod;
-        var disabledAttribute = disabled ? " disabled" : "";
-        return '<div class="modifier-detail" data-dispersion-control>' +
-            '<label>Dispersion correction</label>' +
-            '<select data-stage-dispersion-method' + disabledAttribute + '>' +
-                dispersionMethods.map(function (method) {
-                    var selectedAttribute = method.value === selected ? " selected" : "";
-                    return '<option value="' + escapeHtml(method.value) + '"' + selectedAttribute + '>' +
-                        escapeHtml(method.label) +
-                        '</option>';
-                }).join("") +
-            '</select>' +
-        '</div>';
-    }
-
-    function stageHasDispersion(selectedModifiers) {
-        return (selectedModifiers || []).indexOf("dispersion") !== -1;
-    }
-
     function stageMarkup(stage, index) {
         var stageType = stage.stage_type || "static";
         var theory = stage.theory || "pbe";
         var selectedModifiers = stage.modifiers || [];
-        var stageOptions = stage.options || {};
-        var stageDispersion = stageOptions.dispersion || {};
-        var selectedDispersionMethod = stageDispersion.method || defaultDispersionMethod;
         return '<div class="workflow-stage-card" data-workflow-stage>' +
             '<div class="workflow-stage-card-header">' +
                 '<div class="workflow-stage-heading">' +
@@ -2471,7 +2411,6 @@ document.addEventListener("DOMContentLoaded", function () {
                     '<details class="disclosure settings-panel">' +
                         '<summary aria-label="Toggle advanced options"></summary>' +
                         '<div class="option-list">' + modifierMarkup(selectedModifiers) + '</div>' +
-                        dispersionMethodMarkup(selectedDispersionMethod, !stageHasDispersion(selectedModifiers)) +
                     '</details>' +
                 '</div>' +
             '</div>' +
@@ -2492,37 +2431,16 @@ document.addEventListener("DOMContentLoaded", function () {
                 ).map(function (input) {
                     return input.value;
                 });
-                var stageOptions = {};
-                if (stageHasDispersion(selectedModifiers)) {
-                    var dispersionSelect = card.querySelector("[data-stage-dispersion-method]");
-                    stageOptions.dispersion = {
-                        method: dispersionSelect ? dispersionSelect.value : defaultDispersionMethod
-                    };
-                }
                 return {
                     stage_type: stageType ? stageType.value : "static",
                     theory: theory ? theory.value : "pbe",
                     modifiers: selectedModifiers,
                     label: null,
-                    options: stageOptions
+                    options: {}
                 };
             }
         );
     }
-
-    function updateDispersionControls() {
-        Array.prototype.forEach.call(
-            stageList.querySelectorAll("[data-workflow-stage]"),
-            function (card) {
-                var checkbox = card.querySelector('[data-stage-modifier][value="dispersion"]');
-                var select = card.querySelector("[data-stage-dispersion-method]");
-                if (select) {
-                    select.disabled = !(checkbox && checkbox.checked && !checkbox.disabled);
-                }
-            }
-        );
-    }
-
     function updateStageNumbers() {
         Array.prototype.forEach.call(
             stageList.querySelectorAll("[data-stage-number]"),
@@ -2534,7 +2452,6 @@ document.addEventListener("DOMContentLoaded", function () {
 
     function updateHiddenWorkflow() {
         updateStageNumbers();
-        updateDispersionControls();
         hiddenWorkflow.value = JSON.stringify({
             stages: readStages(),
             label: null,

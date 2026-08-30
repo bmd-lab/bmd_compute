@@ -84,6 +84,7 @@ Current modifiers are:
 
 - Spin Polarised
 - explicit DFT+U
+- van der Waals correction
 - SOC
 - Gamma-only
 - Ions-only
@@ -95,6 +96,7 @@ Important rules:
 - SOC is available for reviewed PBE Static Energy stages and uses `vasp_ncl`.
 - HSE06 + SOC remains unsupported.
 - DFT+U is explicit and is applied only when selected and when reviewed U values are available for the structure.
+- van der Waals correction is optional for PBE Geometry Optimisation and Static Energy stages and is implemented as DFT-D3(BJ), VASP `IVDW = 12`.
 - Spin polarization is supported where the stage registry allows it.
 - Ions-only is a PBE relax-stage compatibility modifier.
 
@@ -218,6 +220,7 @@ Supported now:
 - HSE06 band structure with an HSE06 static electronic precursor
 - reviewed PBE static SOC workflows
 - explicit DFT+U when available from the input set
+- optional PBE van der Waals correction implemented as DFT-D3(BJ), VASP `IVDW = 12`
 
 Future or deliberately unsupported:
 

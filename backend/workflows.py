@@ -35,7 +35,10 @@ from backend.calculations.resources import (
     ncore_for_execution_resources,
     stage_allows_automatic_ncore,
 )
-from backend.calculations.dispersion import dispersion_method_from_options
+from backend.calculations.dispersion import (
+    VAN_DER_WAALS_VDW_METHOD,
+    dispersion_method_from_options,
+)
 from backend.calculations.custodian_policy import hse_band_structure_run_vasp_kwargs
 from backend.calculations.vasp_stage_definitions import (
     BAND_STRUCTURE_LINE_DENSITY_DEFAULT,
@@ -573,13 +576,17 @@ def apply_soc_magmom_settings(user_incar, *, structure) -> dict:
 
 
 def dispersion_method_for_stage(stage: StageSpec) -> str | None:
-    if Modifier.DISPERSION not in stage.modifiers:
-        return None
-    return dispersion_method_from_options(stage.options)
+    if Modifier.VAN_DER_WAALS in stage.modifiers:
+        return VAN_DER_WAALS_VDW_METHOD
+    if Modifier.DISPERSION in stage.modifiers:
+        return dispersion_method_from_options(stage.options)
+    return None
 
 
 def _dispersion_vdw_for_modifiers(modifiers, method=None) -> str | None:
     calculation_modifiers = calculation_modifiers_from_options(modifiers=modifiers)
+    if Modifier.VAN_DER_WAALS in calculation_modifiers:
+        return VAN_DER_WAALS_VDW_METHOD
     if Modifier.DISPERSION not in calculation_modifiers:
         return None
     return dispersion_method_from_options({"dispersion": {"method": method}})

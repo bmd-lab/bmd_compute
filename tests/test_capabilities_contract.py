@@ -118,19 +118,23 @@ def test_hse_band_structure_description_survives_contract():
     assert "custodian_policy" not in hse_band["kpoints_policy"]["default_parameters"]
 
 
-def test_dispersion_modifier_policy_survives_contract():
+def test_van_der_waals_modifier_policy_survives_contract():
     payload = build_capability_payload(include_provenance=False)
     policy = payload["modifier_policies"][0]
 
-    assert policy["modifier"] == "dispersion"
-    assert policy["default_method"] == "dftd3-bj"
-    assert policy["methods"] == [
-        {"value": "dftd3", "label": "DFT-D3", "incar_effect": {"IVDW": 11}},
-        {"value": "dftd3-bj", "label": "DFT-D3(BJ)", "incar_effect": {"IVDW": 12}},
-    ]
+    assert policy["modifier"] == "van_der_waals"
+    assert policy["label"] == "van der Waals correction"
+    assert policy["incar_effect"] == {"IVDW": 12}
+    assert policy["upstream_interface"]["keyword_value"] == "dftd3-bj"
+    assert "methods" not in policy
     assert policy["phase_1_support"]["theories"] == ["pbe"]
     assert policy["phase_1_support"]["stage_types"] == ["relax", "static"]
     assert policy["phase_1_support"]["blocked_with_modifiers"] == ["soc"]
+    assert policy["legacy_serialized_modifier"]["modifier"] == "dispersion"
+    assert policy["legacy_serialized_modifier"]["methods"] == [
+        {"value": "dftd3", "label": "DFT-D3", "incar_effect": {"IVDW": 11}},
+        {"value": "dftd3-bj", "label": "DFT-D3(BJ)", "incar_effect": {"IVDW": 12}},
+    ]
 
 
 def test_capability_payload_is_json_safe_and_deterministic():

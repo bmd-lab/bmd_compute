@@ -46,10 +46,35 @@ class Theory(_IntentEnum):
 class Modifier(_IntentEnum):
     SOC = "soc"
     DFT_U = "dft_u"
+    VAN_DER_WAALS = "van_der_waals"
+    # Legacy serialized value from the temporary multi-method D3 UI. Keep this
+    # readable so existing submission.json provenance remains inspectable.
     DISPERSION = "dispersion"
     SPIN_POLARIZED = "spin_polarized"
     GAMMA_ONLY = "gamma_only"
     IONS_ONLY = "ions_only"
+
+    @classmethod
+    def from_value(cls, value):
+        normalized = (
+            str(value or "")
+            .strip()
+            .lower()
+            .replace("-", "_")
+            .replace(" ", "_")
+            .replace("+", "_")
+            .replace("polarised", "polarized")
+        )
+        if normalized in {
+            "vdw",
+            "vdw_correction",
+            "van_der_waals",
+            "van_der_waals_correction",
+        }:
+            return cls.VAN_DER_WAALS
+        if normalized == "dispersion_correction":
+            return cls.DISPERSION
+        return super().from_value(value)
 
 
 class StageType(_IntentEnum):

@@ -58,6 +58,14 @@ Primary primitives:
 - ordered relax and static stages
 - runtime static stage consumes the relaxed structure from the preceding relax stage
 
+### PBE van der Waals correction
+
+Status: implemented, tests only.
+
+BMD Compute exposes one optional beginner-facing modifier named `van der Waals correction`. It uses the upstream atomate2/pymatgen `vdw` input-set option with `dftd3-bj`, producing VASP `IVDW = 12`.
+
+This is an executable BMD Compute policy. Scientific validation or adoption of D3(BJ) for a material class belongs outside BMD Compute, currently intended for BMDex.
+
 ### PBE Density of States
 
 Status: implemented with workflow-specific results.
