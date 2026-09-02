@@ -107,15 +107,21 @@ def preview_generated_inputs(
     }
 
 
-def _preview_workflow_inputs(
+def generated_input_stage_previews(
     structure,
-    workflow_spec: WorkflowSpec,
+    spec: CalculationSpec | WorkflowSpec,
     *,
-    incar: dict | None,
-    kpoints: dict | None,
-    resources,
-    potcar_functional: str,
-) -> dict:
+    incar: dict | None = None,
+    kpoints: dict | None = None,
+    resources=None,
+    potcar_functional: str = "PBE_64",
+) -> tuple[dict, ...]:
+    if isinstance(spec, WorkflowSpec):
+        workflow_spec = validate_workflow_spec(spec)
+    else:
+        calculation_spec = validate_calculation_spec(spec)
+        workflow_spec = workflow_spec_from_calculation_spec(calculation_spec)
+
     stage_directories = workflow_stage_directories(workflow_spec)
     stage_artifacts = workflow_stage_artifact_policies(workflow_spec)
     stage_previews = []
@@ -142,9 +148,31 @@ def _preview_workflow_inputs(
                 "theory_label": theory_display_name(stage.theory),
                 "vasp_executable": vasp_executable_for_modifiers(stage.modifiers),
                 "artifact_policy": stage_artifacts[index],
+                "stage_spec": stage,
                 "input_set": input_set,
             }
         )
+
+    return tuple(stage_previews)
+
+
+def _preview_workflow_inputs(
+    structure,
+    workflow_spec: WorkflowSpec,
+    *,
+    incar: dict | None,
+    kpoints: dict | None,
+    resources,
+    potcar_functional: str,
+) -> dict:
+    stage_previews = generated_input_stage_previews(
+        structure,
+        workflow_spec,
+        incar=incar,
+        kpoints=kpoints,
+        resources=resources,
+        potcar_functional=potcar_functional,
+    )
 
     return {
         "incar": _combined_stage_input_text(stage_previews, "incar"),
@@ -350,6 +378,7 @@ def preview_slurm_script(submission_spec: dict) -> str:
 
 
 __all__ = [
+    "generated_input_stage_previews",
     "preview_generated_inputs",
     "preview_slurm_script",
 ]
