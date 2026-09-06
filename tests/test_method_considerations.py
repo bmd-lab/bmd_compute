@@ -7,15 +7,18 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from pymatgen.core import Lattice, Structure
 
 from backend.calculations.input_reference import build_input_reference_payload
 from backend.calculations.method_considerations import (
     ALREADY_SELECTED,
-    BI_PRESENT_DETECTION_ID,
-    BI_SOC_CONSIDERATION_ID,
     NOT_SELECTED,
+    POLICY_VERSION,
+    SOC_HEAVY_ELEMENTS_CONSIDERATION_ID,
     SOC_RECOMMENDED_STATUS,
+    SOC_TRIGGER_CLASSES,
+    SOC_TRIGGER_ELEMENT_CLASSES,
     UNSUPPORTED_FOR_WORKFLOW,
     WORKFLOW_NOT_PROVIDED,
     detect_structure_features,
@@ -26,15 +29,19 @@ from backend.calculations.models import Modifier, StageSpec, StageType, Theory, 
 from backend.parser import parse_structure
 
 
-BI_POSCAR = """Bi
-4.75
-1.0 0.0 0.0
-0.0 1.0 0.0
-0.0 0.0 1.0
-Bi
-1
+BI2SE3_POSCAR = """Bi2Se3
+1.0
+5.0 0.0 0.0
+0.0 5.0 0.0
+0.0 0.0 5.0
+Bi Se
+2 3
 direct
 0.0 0.0 0.0
+0.25 0.25 0.25
+0.5 0.5 0.5
+0.75 0.75 0.75
+0.125 0.625 0.375
 """
 
 SI_POSCAR_WITH_BI_COMMENT = """Bi appears only in this POSCAR comment
@@ -50,8 +57,20 @@ direct
 """
 
 
-def bi_structure() -> Structure:
-    return Structure(Lattice.cubic(4.75), ["Bi"], [[0, 0, 0]])
+def structure_for_symbols(symbols: list[str]) -> Structure:
+    coords = [
+        [
+            (index * 0.173) % 1,
+            (index * 0.317) % 1,
+            (index * 0.463) % 1,
+        ]
+        for index, _ in enumerate(symbols)
+    ]
+    return Structure(Lattice.cubic(max(5, len(symbols) + 3)), symbols, coords)
+
+
+def bi2se3_structure() -> Structure:
+    return structure_for_symbols(["Bi", "Bi", "Se", "Se", "Se"])
 
 
 def si_structure() -> Structure:
@@ -73,30 +92,121 @@ def only_consideration(structure, *, workflow=None):
     return considerations[0]
 
 
-def test_bi_structure_produces_factual_bi_detection():
-    detections = detect_structure_features(bi_structure())
+def detection_id(symbol: str) -> str:
+    return f"element.{symbol.lower()}.present"
+
+
+def test_soc_policy_v2_membership_is_explicit_and_centralized():
+    assert POLICY_VERSION == 2
+    assert SOC_TRIGGER_CLASSES == {
+        "4d_transition_metals": ("Y", "Zr", "Nb", "Mo", "Tc", "Ru", "Rh", "Pd", "Ag", "Cd"),
+        "5d_transition_metals": ("Hf", "Ta", "W", "Re", "Os", "Ir", "Pt", "Au", "Hg"),
+        "lanthanides": (
+            "La",
+            "Ce",
+            "Pr",
+            "Nd",
+            "Pm",
+            "Sm",
+            "Eu",
+            "Gd",
+            "Tb",
+            "Dy",
+            "Ho",
+            "Er",
+            "Tm",
+            "Yb",
+            "Lu",
+        ),
+        "actinides": (
+            "Ac",
+            "Th",
+            "Pa",
+            "U",
+            "Np",
+            "Pu",
+            "Am",
+            "Cm",
+            "Bk",
+            "Cf",
+            "Es",
+            "Fm",
+            "Md",
+            "No",
+            "Lr",
+        ),
+        "heavy_p_block": ("Tl", "Pb", "Bi", "Po"),
+    }
+    assert SOC_TRIGGER_ELEMENT_CLASSES["Bi"] == ("heavy_p_block",)
+    assert SOC_TRIGGER_ELEMENT_CLASSES["Pt"] == ("5d_transition_metals",)
+
+
+@pytest.mark.parametrize(
+    ("symbol", "class_name"),
+    [
+        ("Mo", "4d_transition_metals"),
+        ("Pt", "5d_transition_metals"),
+        ("Eu", "lanthanides"),
+        ("U", "actinides"),
+        ("Pb", "heavy_p_block"),
+        ("Bi", "heavy_p_block"),
+        ("Y", "4d_transition_metals"),
+        ("Cd", "4d_transition_metals"),
+        ("Hf", "5d_transition_metals"),
+        ("Hg", "5d_transition_metals"),
+        ("La", "lanthanides"),
+        ("Lu", "lanthanides"),
+        ("Ac", "actinides"),
+        ("Lr", "actinides"),
+        ("Tl", "heavy_p_block"),
+        ("Po", "heavy_p_block"),
+    ],
+)
+def test_policy_v2_trigger_elements_produce_element_level_detections(symbol, class_name):
+    detections = detect_structure_features(structure_for_symbols([symbol]))
 
     assert len(detections) == 1
     detection = detections[0]
-    assert detection.id == BI_PRESENT_DETECTION_ID
+    assert detection.id == detection_id(symbol)
     assert detection.type == "element_present"
-    assert detection.element == "Bi"
+    assert detection.element == symbol
     assert detection.observed is True
+    assert detection.soc_trigger_classes == (class_name,)
     assert detection.observed_evidence == {
-        "element": "Bi",
-        "elements": ["Bi"],
+        "element": symbol,
+        "elements": [symbol],
+        "soc_trigger_classes": [class_name],
     }
     assert detection.to_dict()["source"] == "pymatgen.Structure.composition.elements"
 
 
-def test_bi_detection_produces_single_conservative_soc_consideration():
-    consideration = only_consideration(bi_structure())
+@pytest.mark.parametrize("symbol", ["Si", "O", "Fe", "Sc", "Ti", "Zn", "Sr", "In", "Ba"])
+def test_policy_v2_non_trigger_elements_produce_no_soc_consideration(symbol):
+    structure = structure_for_symbols([symbol])
 
-    assert consideration.id == BI_SOC_CONSIDERATION_ID
+    assert detect_structure_features(structure) == ()
+    assert method_considerations_for_structure(structure) == ()
+    assert method_consideration_payload(structure)["considerations"] == []
+
+
+def test_bi_is_detected_from_actual_structure_species_not_poscar_comments():
+    structure = parse_structure(SI_POSCAR_WITH_BI_COMMENT, "poscar")
+
+    assert structure.composition.reduced_formula == "Si"
+    assert detect_structure_features(structure) == ()
+    assert method_considerations_for_structure(structure) == ()
+
+
+def test_heavy_element_detection_produces_single_conservative_soc_consideration():
+    consideration = only_consideration(bi2se3_structure())
+
+    assert consideration.id == SOC_HEAVY_ELEMENTS_CONSIDERATION_ID
     assert consideration.method == "soc"
     assert consideration.modifier == "soc"
     assert consideration.status == SOC_RECOMMENDED_STATUS
-    assert consideration.trigger_detection_id == BI_PRESENT_DETECTION_ID
+    assert consideration.trigger_detection_ids == (detection_id("Bi"),)
+    assert consideration.trigger_elements == ("Bi",)
+    assert consideration.trigger_classes == ("heavy_p_block",)
     assert consideration.selection_state == WORKFLOW_NOT_PROVIDED
     assert consideration.applicable_stage_types == ("static",)
     assert consideration.bmd_compute_support["supported_stage_capabilities"] == [
@@ -116,41 +226,59 @@ def test_bi_detection_produces_single_conservative_soc_consideration():
         "unsupported_selected_stage_indices": [],
     }
     reason = consideration.reason.lower()
-    assert "may be relevant" in reason
-    assert "required" not in reason
-    assert "necessary" not in reason
-    assert "invalid" not in reason
-    assert consideration.policy_source["policy_version"] == 1
-    assert consideration.policy_source["rule_id"] == BI_SOC_CONSIDERATION_ID
+    assert "may be important" in reason
+    for forbidden in ("required", "necessary", "mandatory", "invalid"):
+        assert forbidden not in reason
+    assert consideration.policy_source["policy_version"] == 2
+    assert consideration.policy_source["rule_id"] == SOC_HEAVY_ELEMENTS_CONSIDERATION_ID
+    assert "composition-based screening" in consideration.limitations[0]
 
 
-def test_si_structure_produces_no_bi_triggered_consideration():
-    assert detect_structure_features(si_structure()) == ()
-    assert method_considerations_for_structure(si_structure()) == ()
-    assert method_consideration_payload(si_structure())["considerations"] == []
+def test_multi_trigger_structure_produces_one_aggregate_soc_consideration():
+    structure = structure_for_symbols(["Bi", "Pt", "Se"])
+    payload = method_consideration_payload(structure)
+
+    assert [detection["id"] for detection in payload["detections"]] == [
+        detection_id("Bi"),
+        detection_id("Pt"),
+    ]
+    assert len(payload["considerations"]) == 1
+    consideration = payload["considerations"][0]
+    assert consideration["id"] == SOC_HEAVY_ELEMENTS_CONSIDERATION_ID
+    assert consideration["trigger_elements"] == ["Bi", "Pt"]
+    assert consideration["trigger_detection_ids"] == [
+        detection_id("Bi"),
+        detection_id("Pt"),
+    ]
+    assert consideration["trigger_classes"] == [
+        "5d_transition_metals",
+        "heavy_p_block",
+    ]
+    assert consideration["observed_evidence"]["trigger_elements"] == ["Bi", "Pt"]
+    assert consideration["observed_evidence"]["trigger_classes"] == [
+        "5d_transition_metals",
+        "heavy_p_block",
+    ]
+    assert [
+        detection["element"]
+        for detection in consideration["observed_evidence"]["detections"]
+    ] == ["Bi", "Pt"]
+    assert "Se" not in consideration["trigger_elements"]
 
 
-def test_bi_is_detected_from_actual_structure_species_not_poscar_comments():
-    structure = parse_structure(SI_POSCAR_WITH_BI_COMMENT, "poscar")
-
-    assert structure.composition.reduced_formula == "Si"
-    assert detect_structure_features(structure) == ()
-    assert method_considerations_for_structure(structure) == ()
-
-
-def test_bi_without_workflow_remains_structure_first_without_workflow_guessing():
-    payload = method_consideration_payload(bi_structure())
+def test_heavy_element_without_workflow_remains_structure_first_without_workflow_guessing():
+    payload = method_consideration_payload(bi2se3_structure())
     consideration = payload["considerations"][0]
 
-    assert payload["detections"][0]["id"] == BI_PRESENT_DETECTION_ID
+    assert payload["detections"][0]["id"] == detection_id("Bi")
     assert consideration["selection_state"] == WORKFLOW_NOT_PROVIDED
     assert consideration["bmd_compute_support"]["workflow"]["provided"] is False
     assert consideration["bmd_compute_support"]["workflow"]["supported_stage_indices"] == []
 
 
-def test_bi_compatible_workflow_without_soc_is_not_selected():
+def test_heavy_element_compatible_workflow_without_soc_is_not_selected():
     consideration = only_consideration(
-        bi_structure(),
+        bi2se3_structure(),
         workflow=pbe_static_workflow(),
     )
 
@@ -160,15 +288,20 @@ def test_bi_compatible_workflow_without_soc_is_not_selected():
     assert consideration.bmd_compute_support["workflow"]["selected_stage_indices"] == []
 
 
-def test_bi_compatible_workflow_with_soc_is_already_selected():
+def test_heavy_element_compatible_workflow_with_soc_is_already_selected():
+    workflow = pbe_static_workflow(soc=True)
+    before = workflow.to_dict()
+
     consideration = only_consideration(
-        bi_structure(),
-        workflow=pbe_static_workflow(soc=True),
+        bi2se3_structure(),
+        workflow=workflow,
     )
 
     assert consideration.selection_state == ALREADY_SELECTED
     assert consideration.bmd_compute_support["workflow"]["supported_stage_indices"] == [1]
     assert consideration.bmd_compute_support["workflow"]["selected_stage_indices"] == [1]
+    assert workflow.to_dict() == before
+    assert workflow.stages[0].modifiers == frozenset({Modifier.SOC})
 
 
 def test_incompatible_workflow_support_is_represented_without_workflow_changes():
@@ -177,7 +310,7 @@ def test_incompatible_workflow_support_is_represented_without_workflow_changes()
         WorkflowSpec([StageSpec(StageType.STATIC, Theory.HSE06)]),
     ):
         before = workflow.to_dict()
-        consideration = only_consideration(bi_structure(), workflow=workflow)
+        consideration = only_consideration(bi2se3_structure(), workflow=workflow)
 
         assert consideration.selection_state == UNSUPPORTED_FOR_WORKFLOW
         assert consideration.bmd_compute_support["workflow"]["support_status"] == (
@@ -188,7 +321,7 @@ def test_incompatible_workflow_support_is_represented_without_workflow_changes()
 
 
 def test_consideration_analysis_leaves_workflow_and_structure_unchanged():
-    structure = bi_structure()
+    structure = bi2se3_structure()
     workflow = pbe_static_workflow()
     structure_before = structure.as_dict()
     workflow_before = workflow.to_dict()
@@ -206,7 +339,7 @@ def test_consideration_analysis_does_not_change_generated_vasp_reference():
         "structure": {
             "type": "pasted_text",
             "format": "poscar",
-            "text": BI_POSCAR,
+            "text": BI2SE3_POSCAR,
         },
         "workflow_spec": workflow.to_dict(),
         "resources": {"ntasks": 24, "mem_gb": 128},
@@ -214,7 +347,7 @@ def test_consideration_analysis_does_not_change_generated_vasp_reference():
     }
     before = build_input_reference_payload(request, include_provenance=False)
 
-    method_consideration_payload(parse_structure(BI_POSCAR), workflow=workflow)
+    method_consideration_payload(parse_structure(BI2SE3_POSCAR), workflow=workflow)
 
     after = build_input_reference_payload(request, include_provenance=False)
     assert after["request"] == before["request"]
@@ -233,7 +366,7 @@ def test_consideration_analysis_does_not_touch_io_network_or_execution(monkeypat
     monkeypatch.setattr(Path, "write_bytes", forbidden)
 
     payload = method_consideration_payload(
-        bi_structure(),
+        bi2se3_structure(),
         workflow=pbe_static_workflow(),
     )
 
@@ -279,15 +412,21 @@ print(json.dumps({name: name in sys.modules for name in blocked}, sort_keys=True
 
 def test_consideration_payload_is_json_safe_and_deterministic():
     workflow = pbe_static_workflow()
-    first = method_consideration_payload(bi_structure(), workflow=workflow)
-    second = method_consideration_payload(bi_structure(), workflow=workflow)
+    first = method_consideration_payload(
+        structure_for_symbols(["Bi", "Pt", "Se"]),
+        workflow=workflow,
+    )
+    second = method_consideration_payload(
+        structure_for_symbols(["Bi", "Pt", "Se"]),
+        workflow=workflow,
+    )
 
     assert first == second
     assert json.loads(json.dumps(first, sort_keys=True)) == first
     assert method_considerations_for_structure(
-        bi_structure(),
+        bi2se3_structure(),
         workflow=workflow,
     ) == method_considerations_for_structure(
-        bi_structure(),
+        bi2se3_structure(),
         workflow=workflow,
     )

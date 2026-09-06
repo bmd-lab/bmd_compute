@@ -23,9 +23,8 @@ not modify workflows, generated inputs, or execution state.
 """
 
 
-POLICY_VERSION = 1
-BI_PRESENT_DETECTION_ID = "element.bi.present"
-BI_SOC_CONSIDERATION_ID = "soc.heavy_element.bi"
+POLICY_VERSION = 2
+SOC_HEAVY_ELEMENTS_CONSIDERATION_ID = "soc.heavy_elements"
 SOC_RECOMMENDED_STATUS = "recommended_for_consideration"
 WORKFLOW_NOT_PROVIDED = "workflow_not_provided"
 NOT_SELECTED = "not_selected"
@@ -33,21 +32,81 @@ ALREADY_SELECTED = "already_selected"
 UNSUPPORTED_FOR_WORKFLOW = "unsupported_for_workflow"
 INVALID_WORKFLOW = "invalid_workflow"
 
-_BI_SYMBOL = "Bi"
 _ELEMENT_PRESENT_DETECTION_TYPE = "element_present"
+
+
+def _build_soc_trigger_element_classes(
+    trigger_classes: Mapping[str, tuple[str, ...]],
+) -> dict[str, tuple[str, ...]]:
+    element_classes: dict[str, list[str]] = {}
+    for class_name, elements in trigger_classes.items():
+        for element in elements:
+            element_classes.setdefault(element, []).append(class_name)
+    return {
+        element: tuple(classes)
+        for element, classes in sorted(element_classes.items())
+    }
+
+
+SOC_TRIGGER_CLASSES: Mapping[str, tuple[str, ...]] = {
+    "4d_transition_metals": ("Y", "Zr", "Nb", "Mo", "Tc", "Ru", "Rh", "Pd", "Ag", "Cd"),
+    "5d_transition_metals": ("Hf", "Ta", "W", "Re", "Os", "Ir", "Pt", "Au", "Hg"),
+    "lanthanides": (
+        "La",
+        "Ce",
+        "Pr",
+        "Nd",
+        "Pm",
+        "Sm",
+        "Eu",
+        "Gd",
+        "Tb",
+        "Dy",
+        "Ho",
+        "Er",
+        "Tm",
+        "Yb",
+        "Lu",
+    ),
+    "actinides": (
+        "Ac",
+        "Th",
+        "Pa",
+        "U",
+        "Np",
+        "Pu",
+        "Am",
+        "Cm",
+        "Bk",
+        "Cf",
+        "Es",
+        "Fm",
+        "Md",
+        "No",
+        "Lr",
+    ),
+    "heavy_p_block": ("Tl", "Pb", "Bi", "Po"),
+}
+SOC_TRIGGER_ELEMENT_CLASSES: Mapping[str, tuple[str, ...]] = (
+    _build_soc_trigger_element_classes(SOC_TRIGGER_CLASSES)
+)
+
 _POLICY_SOURCE = {
     "policy_id": "bmd_compute.method_considerations",
     "policy_version": POLICY_VERSION,
     "implementation": "backend.calculations.method_considerations",
     "authority": "BMD Compute executable method-consideration policy",
 }
-_BI_SOC_REASON = (
-    "The structure contains Bi. Spin-orbit coupling may be relevant for "
-    "electronic-structure calculations involving heavy-element relativistic effects."
+_HEAVY_ELEMENT_SOC_REASON = (
+    "This structure contains one or more heavy elements for which spin-orbit "
+    "coupling may be important. Consider SOC when relativistic effects may "
+    "materially affect the calculated properties."
 )
-_BI_SOC_LIMITATIONS = (
-    "This is a composition-only consideration. It does not assess oxidation state, "
-    "bonding, band character, dimensionality, or whether SOC is required.",
+_HEAVY_ELEMENT_SOC_LIMITATIONS = (
+    "This is a composition-based screening consideration. Elemental presence "
+    "alone does not establish that SOC materially affects the property of interest.",
+    "This analysis does not determine oxidation state, bonding, band character, "
+    "orbital contributions, or whether SOC is required.",
 )
 
 
@@ -62,10 +121,16 @@ class StructureDetection:
     observed: bool
     element: str
     observed_evidence: Mapping[str, Any] = field(default_factory=dict)
+    soc_trigger_classes: tuple[str, ...] = field(default_factory=tuple)
     source: str = "pymatgen.Structure.composition.elements"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "observed_evidence", _json_safe_dict(self.observed_evidence))
+        object.__setattr__(
+            self,
+            "soc_trigger_classes",
+            tuple(str(item) for item in self.soc_trigger_classes),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -73,6 +138,7 @@ class StructureDetection:
             "type": self.type,
             "observed": self.observed,
             "element": self.element,
+            "soc_trigger_classes": list(self.soc_trigger_classes),
             "observed_evidence": _json_safe_value(self.observed_evidence),
             "source": self.source,
         }
@@ -88,7 +154,9 @@ class MethodConsideration:
     method: str
     modifier: str
     status: str
-    trigger_detection_id: str
+    trigger_detection_ids: tuple[str, ...]
+    trigger_elements: tuple[str, ...]
+    trigger_classes: tuple[str, ...]
     observed_evidence: Mapping[str, Any]
     reason: str
     applicable_stage_types: tuple[str, ...]
@@ -98,6 +166,21 @@ class MethodConsideration:
     limitations: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "trigger_detection_ids",
+            tuple(str(item) for item in self.trigger_detection_ids),
+        )
+        object.__setattr__(
+            self,
+            "trigger_elements",
+            tuple(str(item) for item in self.trigger_elements),
+        )
+        object.__setattr__(
+            self,
+            "trigger_classes",
+            tuple(str(item) for item in self.trigger_classes),
+        )
         object.__setattr__(self, "observed_evidence", _json_safe_dict(self.observed_evidence))
         object.__setattr__(self, "applicable_stage_types", tuple(self.applicable_stage_types))
         object.__setattr__(self, "bmd_compute_support", _json_safe_dict(self.bmd_compute_support))
@@ -110,7 +193,9 @@ class MethodConsideration:
             "method": self.method,
             "modifier": self.modifier,
             "status": self.status,
-            "trigger_detection_id": self.trigger_detection_id,
+            "trigger_detection_ids": list(self.trigger_detection_ids),
+            "trigger_elements": list(self.trigger_elements),
+            "trigger_classes": list(self.trigger_classes),
             "observed_evidence": _json_safe_value(self.observed_evidence),
             "reason": self.reason,
             "applicable_stage_types": list(self.applicable_stage_types),
@@ -128,16 +213,21 @@ def detect_structure_features(structure) -> tuple[StructureDetection, ...]:
 
     elements = _structure_element_symbols(structure)
     detections: list[StructureDetection] = []
-    if _BI_SYMBOL in elements:
+    for element in elements:
+        trigger_classes = _soc_trigger_classes_for_element(element)
+        if not trigger_classes:
+            continue
         detections.append(
             StructureDetection(
-                id=BI_PRESENT_DETECTION_ID,
+                id=_element_detection_id(element),
                 type=_ELEMENT_PRESENT_DETECTION_TYPE,
                 observed=True,
-                element=_BI_SYMBOL,
+                element=element,
+                soc_trigger_classes=trigger_classes,
                 observed_evidence={
-                    "element": _BI_SYMBOL,
+                    "element": element,
                     "elements": list(elements),
+                    "soc_trigger_classes": list(trigger_classes),
                 },
             )
         )
@@ -160,9 +250,15 @@ def method_considerations_from_detections(
 ) -> tuple[MethodConsideration, ...]:
     considerations: list[MethodConsideration] = []
     workflow_spec = _coerce_workflow_spec(workflow)
-    for detection in detections:
-        if detection.id == BI_PRESENT_DETECTION_ID and detection.observed:
-            considerations.append(_bi_soc_consideration(detection, workflow_spec))
+    soc_detections = tuple(
+        detection
+        for detection in detections
+        if detection.observed
+        and detection.type == _ELEMENT_PRESENT_DETECTION_TYPE
+        and _soc_trigger_classes_for_element(detection.element)
+    )
+    if soc_detections:
+        considerations.append(_heavy_element_soc_consideration(soc_detections, workflow_spec))
     return tuple(considerations)
 
 
@@ -184,19 +280,29 @@ def method_consideration_payload(
     }
 
 
-def _bi_soc_consideration(
-    detection: StructureDetection,
+def _heavy_element_soc_consideration(
+    detections: tuple[StructureDetection, ...],
     workflow: WorkflowSpec | None,
 ) -> MethodConsideration:
     support = _soc_support_payload(workflow)
+    trigger_detection_ids = tuple(detection.id for detection in detections)
+    trigger_elements = tuple(detection.element for detection in detections)
+    trigger_classes = _ordered_soc_trigger_classes(detections)
     return MethodConsideration(
-        id=BI_SOC_CONSIDERATION_ID,
+        id=SOC_HEAVY_ELEMENTS_CONSIDERATION_ID,
         method="soc",
         modifier=Modifier.SOC.value,
         status=SOC_RECOMMENDED_STATUS,
-        trigger_detection_id=detection.id,
-        observed_evidence=detection.to_dict(),
-        reason=_BI_SOC_REASON,
+        trigger_detection_ids=trigger_detection_ids,
+        trigger_elements=trigger_elements,
+        trigger_classes=trigger_classes,
+        observed_evidence={
+            "trigger_detection_ids": list(trigger_detection_ids),
+            "trigger_elements": list(trigger_elements),
+            "trigger_classes": list(trigger_classes),
+            "detections": [detection.to_dict() for detection in detections],
+        },
+        reason=_HEAVY_ELEMENT_SOC_REASON,
         applicable_stage_types=tuple(
             sorted(
                 {
@@ -209,9 +315,9 @@ def _bi_soc_consideration(
         selection_state=support["workflow"]["selection_state"],
         policy_source={
             **_POLICY_SOURCE,
-            "rule_id": BI_SOC_CONSIDERATION_ID,
+            "rule_id": SOC_HEAVY_ELEMENTS_CONSIDERATION_ID,
         },
-        limitations=_BI_SOC_LIMITATIONS,
+        limitations=_HEAVY_ELEMENT_SOC_LIMITATIONS,
     )
 
 
@@ -352,6 +458,29 @@ def _structure_element_symbols(structure) -> tuple[str, ...]:
     return tuple(sorted(symbols))
 
 
+def _element_detection_id(element: str) -> str:
+    return f"element.{element.lower()}.present"
+
+
+def _soc_trigger_classes_for_element(element: str) -> tuple[str, ...]:
+    return SOC_TRIGGER_ELEMENT_CLASSES.get(str(element), ())
+
+
+def _ordered_soc_trigger_classes(
+    detections: tuple[StructureDetection, ...],
+) -> tuple[str, ...]:
+    observed_classes = {
+        class_name
+        for detection in detections
+        for class_name in _soc_trigger_classes_for_element(detection.element)
+    }
+    return tuple(
+        class_name
+        for class_name in SOC_TRIGGER_CLASSES
+        if class_name in observed_classes
+    )
+
+
 def _json_safe_dict(mapping: Mapping[str, Any]) -> dict[str, Any]:
     return {
         str(key): _json_safe_value(value)
@@ -371,13 +500,14 @@ def _json_safe_value(value):
 
 __all__ = [
     "ALREADY_SELECTED",
-    "BI_PRESENT_DETECTION_ID",
-    "BI_SOC_CONSIDERATION_ID",
     "INVALID_WORKFLOW",
     "MethodConsideration",
     "NOT_SELECTED",
     "POLICY_VERSION",
+    "SOC_HEAVY_ELEMENTS_CONSIDERATION_ID",
     "SOC_RECOMMENDED_STATUS",
+    "SOC_TRIGGER_CLASSES",
+    "SOC_TRIGGER_ELEMENT_CLASSES",
     "StructureDetection",
     "UNSUPPORTED_FOR_WORKFLOW",
     "WORKFLOW_NOT_PROVIDED",
