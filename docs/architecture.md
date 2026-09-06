@@ -20,6 +20,12 @@ Browser
 
 The browser never talks directly to the cluster. FastAPI coordinates requests and renders templates. Scientific policy lives in backend modules. Infrastructure modules own SSH, SLURM, remote packaging, and result transfer.
 
+## Cross-Repository Authority
+
+BMD Compute is the authoritative implementation of the core BMD VASP generation pipeline: constructing, validating, executing, and provenancing BMD VASP calculations. BMDex owns supporting scientific data, reference evidence, and non-core scientific tools outside that pipeline. BMD Agent consumes exposed contracts, evidence, and infrastructure observations without duplicating their authority.
+
+If a capability determines how BMD generates a VASP calculation, its authoritative implementation belongs in BMD Compute. If it provides supporting scientific data or tooling but is not part of the core VASP data-generation pipeline, it belongs in BMDex.
+
 ## Main Layers
 
 ### Browser

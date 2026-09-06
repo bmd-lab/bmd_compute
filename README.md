@@ -2,6 +2,10 @@
 
 BMD Compute is a browser-based on-ramp for Burton Materials Design Lab students and beginning computational users to build, submit, monitor, and inspect VASP calculations on TAU PowerSLURM.
 
+BMD Compute's canonical ecosystem role is the core VASP data-generation pipeline. It owns the authoritative implementation of decisions required to construct, validate, execute, and provenance BMD VASP calculations.
+
+If a capability determines how BMD generates a VASP calculation, its authoritative implementation belongs in BMD Compute. If it provides supporting scientific data or tooling but is not part of the core VASP data-generation pipeline, it belongs in BMDex. BMD Agent consumes and coordinates these capabilities without duplicating their authority.
+
 It is intentionally not a replacement for normal SSH/SLURM cluster access for experienced computational researchers. Its job is to make the first scientific workflow visible and teachable: structure in, reviewed calculation plan, generated VASP inputs, remote submission, monitoring, and scientific results.
 
 ## Architecture
