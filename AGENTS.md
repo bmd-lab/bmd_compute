@@ -16,7 +16,7 @@ BMD Compute is a browser-based interface for building, submitting, monitoring an
 
 The long-term goal is for BMD Compute to replace the existing Jupyter notebook as the primary user interface.
 
-The notebook is retained only as a validated reference implementation.
+The notebook is retained as historical/reference scientific material and validation context. It is not a competing live implementation authority for current BMD Compute behavior.
 
 ---
 
@@ -34,7 +34,7 @@ Users should interact with BMD Compute through a browser rather than notebooks, 
 
 The notebook located in `reference/` is **not legacy code**.
 
-It represents a validated scientific workflow.
+It represents important validated scientific workflow history and reference evidence.
 
 Its scientific behaviour should be preserved wherever practical.
 
@@ -54,7 +54,7 @@ Do **not** rewrite notebook functionality directly inside FastAPI.
 
 Refactor behaviour into reusable backend modules.
 
-The notebook remains the reference specification until BMD Compute fully replaces it.
+Current backend modules and producer contracts define currently implemented BMD Compute behavior. The notebook remains important historical/reference material to compare against when migrating or revising behavior, but it should not be treated as a separate live authority once behavior is implemented in BMD Compute.
 
 ---
 
@@ -303,7 +303,7 @@ The objective is not merely to build a web interface.
 
 The objective is to build a maintainable scientific application that eventually renders the notebook unnecessary while preserving its validated scientific workflows.
 
-The reference notebook is treated as a source of validated scientific behaviour. Backend modules should be extracted from the notebook in small, reviewable units rather than rewritten wholesale.
+The reference notebook is treated as a source of validated scientific context and historical behavior. Current backend modules and producer contracts are the authority for currently implemented BMD Compute behavior. Backend modules should be extracted from or compared with the notebook in small, reviewable units rather than rewritten wholesale.
 
 Notebook migration should occur one backend module at a time. Each extracted module should be independently testable before integration into the web interface.
 
