@@ -13,6 +13,7 @@ from backend.calculations.models import (
     Theory,
     WorkflowSpec,
 )
+from backend.calculations.method_considerations import method_consideration_payload
 from backend.calculations.resources import (
     ALLOWED_CPU_COUNTS,
     ALLOWED_MEMORY_GB,
@@ -65,6 +66,7 @@ def page_context(
     submission_result=None,
     monitoring_result=None,
     results_summary=None,
+    method_considerations=None,
     resume_job_id: str = "",
     structure_error=None,
     calculation_error=None,
@@ -108,6 +110,7 @@ def page_context(
         "submission_result": submission_result,
         "monitoring_result": monitoring_result,
         "results_summary": results_summary,
+        "method_considerations": method_considerations,
         "resume_job_id": resume_job_id,
         "structure_error": structure_error,
         "calculation_error": calculation_error,
@@ -439,6 +442,39 @@ def execution_resources_from_form(
     )
 
 
+def method_considerations_context(structure_obj) -> dict | None:
+    payload = method_consideration_payload(structure_obj)
+    if not payload.get("considerations"):
+        return None
+
+    rendered = deepcopy(payload)
+    for consideration in rendered.get("considerations", []):
+        support = consideration.get("bmd_compute_support") or {}
+        consideration["display_name"] = (
+            support.get("modifier_label")
+            or str(consideration.get("method") or "").upper()
+        )
+        evidence = consideration.get("observed_evidence") or {}
+        for detection in evidence.get("detections") or []:
+            detection["soc_trigger_class_labels"] = [
+                _method_consideration_class_label(class_name)
+                for class_name in detection.get("soc_trigger_classes", [])
+            ]
+    return rendered
+
+
+def _method_consideration_class_label(class_name: str) -> str:
+    label = str(class_name).replace("_", " ").replace("p block", "p-block")
+    for plural, singular in (
+        ("metals", "metal"),
+        ("lanthanides", "lanthanide"),
+        ("actinides", "actinide"),
+    ):
+        if label.endswith(plural):
+            return f"{label[:-len(plural)]}{singular}"
+    return label
+
+
 def build_submission_state(
     *,
     structure_text: str,
@@ -455,8 +491,31 @@ def build_submission_state(
             calculation_spec = default_calculation_spec()
         workflow_spec = workflow_spec_from_calculation_spec(calculation_spec)
     workflow_spec = validate_workflow_spec(workflow_spec)
-    calculation_spec = calculation_spec_from_workflow_spec(workflow_spec)
     structure_obj = parse_structure(structure_text, fmt)
+    return build_submission_state_from_structure(
+        structure_obj=structure_obj,
+        structure_text=structure_text,
+        fmt=fmt,
+        calculation_spec=calculation_spec,
+        workflow_spec=workflow_spec,
+        execution_resources=execution_resources,
+        timestamp=timestamp,
+        submission_attempt_id=submission_attempt_id,
+    )
+
+
+def build_submission_state_from_structure(
+    *,
+    structure_obj,
+    structure_text: str,
+    fmt: str,
+    calculation_spec: CalculationSpec | None = None,
+    workflow_spec: WorkflowSpec,
+    execution_resources: ExecutionResources,
+    timestamp: str | None = None,
+    submission_attempt_id: str | None = None,
+):
+    calculation_spec = calculation_spec_from_workflow_spec(workflow_spec)
     summary = summarize_structure(structure_obj)
     potcar_functional = (
         legacy_potcar_functional_from_spec(calculation_spec)
@@ -539,6 +598,7 @@ def analyze(
         )
 
     summary = summarize_structure(structure_obj)
+    method_considerations = method_considerations_context(structure_obj)
 
     return templates.TemplateResponse(
         request=request,
@@ -547,6 +607,7 @@ def analyze(
             structure_text=structure,
             fmt=fmt,
             summary=summary,
+            method_considerations=method_considerations,
         ),
     )
 
@@ -597,6 +658,7 @@ def build_workflow(
     calculation_spec = default_calculation_spec()
     workflow_spec = default_workflow_spec()
     execution_resources = default_execution_resources()
+    method_considerations = None
     try:
         workflow_spec = workflow_spec_from_form(
             workflow_spec_json=workflow_spec_json,
@@ -616,7 +678,10 @@ def build_workflow(
             walltime=walltime,
             queue=queue,
         )
-        summary, calculation_summary, generated_inputs, submission_spec = build_submission_state(
+        structure_obj = parse_structure(structure, fmt)
+        method_considerations = method_considerations_context(structure_obj)
+        summary, calculation_summary, generated_inputs, submission_spec = build_submission_state_from_structure(
+            structure_obj=structure_obj,
             structure_text=structure,
             fmt=fmt,
             workflow_spec=workflow_spec,
@@ -656,6 +721,7 @@ def build_workflow(
             calculation_summary=calculation_summary,
             generated_inputs=generated_inputs,
             submission_spec=submission_spec,
+            method_considerations=method_considerations,
         ),
     )
 
@@ -681,6 +747,7 @@ def prepare_remote(
     calculation_spec = default_calculation_spec()
     workflow_spec = default_workflow_spec()
     execution_resources = default_execution_resources()
+    method_considerations = None
     try:
         workflow_spec = workflow_spec_from_form(
             workflow_spec_json=workflow_spec_json,
@@ -700,7 +767,10 @@ def prepare_remote(
             walltime=walltime,
             queue=queue,
         )
-        summary, calculation_summary, generated_inputs, submission_spec = build_submission_state(
+        structure_obj = parse_structure(structure, fmt)
+        method_considerations = method_considerations_context(structure_obj)
+        summary, calculation_summary, generated_inputs, submission_spec = build_submission_state_from_structure(
+            structure_obj=structure_obj,
             structure_text=structure,
             fmt=fmt,
             workflow_spec=workflow_spec,
@@ -744,6 +814,7 @@ def prepare_remote(
             generated_inputs=generated_inputs,
             submission_spec=submission_spec,
             remote_preparation=remote_preparation,
+            method_considerations=method_considerations,
         ),
     )
 
@@ -770,6 +841,7 @@ def submit_workflow(
     calculation_spec = default_calculation_spec()
     workflow_spec = default_workflow_spec()
     execution_resources = default_execution_resources()
+    method_considerations = None
     try:
         workflow_spec = workflow_spec_from_form(
             workflow_spec_json=workflow_spec_json,
@@ -789,7 +861,10 @@ def submit_workflow(
             walltime=walltime,
             queue=queue,
         )
-        summary, calculation_summary, generated_inputs, submission_spec = build_submission_state(
+        structure_obj = parse_structure(structure, fmt)
+        method_considerations = method_considerations_context(structure_obj)
+        summary, calculation_summary, generated_inputs, submission_spec = build_submission_state_from_structure(
+            structure_obj=structure_obj,
             structure_text=structure,
             fmt=fmt,
             workflow_spec=workflow_spec,
@@ -855,6 +930,7 @@ def submit_workflow(
             submission_result=submission_result,
             monitoring_result=monitoring_result,
             results_summary=results_summary,
+            method_considerations=method_considerations,
         ),
     )
 
