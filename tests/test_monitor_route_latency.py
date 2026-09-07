@@ -346,7 +346,19 @@ def test_initial_page_structure_input_is_expanded(monkeypatch):
 
 
 def test_build_calculation_keeps_structure_input_expanded(monkeypatch):
+    parsed_structure = object()
+
+    def fake_parse_structure(structure_text, fmt):
+        assert structure_text == "Si edit structure"
+        assert fmt == "poscar"
+        return parsed_structure
+
+    def fake_method_considerations_context(structure_obj):
+        assert structure_obj is parsed_structure
+        return None
+
     def fake_build_submission_state(**kwargs):
+        assert kwargs["structure_obj"] is parsed_structure
         assert kwargs["structure_text"] == "Si edit structure"
         return (
             {
@@ -378,7 +390,13 @@ def test_build_calculation_keeps_structure_input_expanded(monkeypatch):
             monitor_submission_spec(),
         )
 
-    monkeypatch.setattr(main, "build_submission_state", fake_build_submission_state)
+    monkeypatch.setattr(main, "parse_structure", fake_parse_structure)
+    monkeypatch.setattr(main, "method_considerations_context", fake_method_considerations_context)
+    monkeypatch.setattr(
+        main,
+        "build_submission_state_from_structure",
+        fake_build_submission_state,
+    )
 
     response = main.build_workflow(
         build_request(),

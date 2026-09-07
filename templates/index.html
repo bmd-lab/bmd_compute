@@ -164,6 +164,69 @@ h2 {
     overflow-wrap: anywhere;
 }
 
+.method-considerations {
+    border-top: 1px solid var(--bmd-border);
+    margin-top: 20px;
+    padding-top: 20px;
+}
+
+.method-considerations h3 {
+    color: var(--bmd-text);
+    font-size: 16px;
+    margin: 0 0 12px;
+}
+
+.method-consideration-card {
+    background: var(--bmd-surface-secondary);
+    border: 1px solid var(--bmd-border);
+    border-radius: 8px;
+    padding: 16px;
+}
+
+.method-consideration-card + .method-consideration-card {
+    margin-top: 12px;
+}
+
+.method-consideration-header {
+    align-items: center;
+    display: flex;
+    gap: 12px;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+
+.method-consideration-title {
+    color: var(--bmd-text);
+    font-size: 16px;
+    font-weight: 700;
+}
+
+.method-consideration-section {
+    color: var(--bmd-text-soft);
+    font-size: 14px;
+    line-height: 1.5;
+    margin-top: 12px;
+}
+
+.method-consideration-label {
+    color: var(--bmd-text-muted);
+    font-size: 12px;
+    font-weight: 700;
+    margin-bottom: 6px;
+}
+
+.method-consideration-list {
+    display: grid;
+    gap: 4px;
+    list-style: none;
+    padding-left: 0;
+}
+
+.method-trigger-element {
+    color: var(--bmd-text);
+    font-weight: 700;
+}
+
 .form-grid {
     display: grid;
     gap: 16px;
@@ -1070,6 +1133,65 @@ ul {
                 </details>
 
             </div>
+
+            {% if method_considerations and method_considerations.considerations %}
+            <div class="method-considerations" data-method-considerations>
+                <h3>Method Considerations</h3>
+
+                {% for consideration in method_considerations.considerations %}
+                <div
+                    class="method-consideration-card"
+                    data-method-consideration-id="{{ consideration.id }}">
+                    <div class="method-consideration-header">
+                        <div class="method-consideration-title">{{ consideration.display_name }}</div>
+                        <span class="pill">Advisory</span>
+                    </div>
+
+                    {% if consideration.observed_evidence and consideration.observed_evidence.detections %}
+                    <div class="method-consideration-section">
+                        <div class="method-consideration-label">Triggered by</div>
+                        <ul class="method-consideration-list">
+                            {% for detection in consideration.observed_evidence.detections %}
+                            <li>
+                                <span class="method-trigger-element">{{ detection.element }}</span>
+                                {% if detection.soc_trigger_class_labels %}
+                                — {{ detection.soc_trigger_class_labels | join(", ") }}
+                                {% endif %}
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                    {% endif %}
+
+                    <div class="method-consideration-section">
+                        {{ consideration.reason }}
+                    </div>
+
+                    {% if consideration.bmd_compute_support and consideration.bmd_compute_support.supported_stage_capabilities %}
+                    <div class="method-consideration-section">
+                        <div class="method-consideration-label">BMD Compute support</div>
+                        <ul class="method-consideration-list">
+                            {% for capability in consideration.bmd_compute_support.supported_stage_capabilities %}
+                            <li>{{ capability.theory_label }} {{ capability.stage_label }}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                    {% endif %}
+
+                    {% if consideration.limitations %}
+                    <div class="method-consideration-section">
+                        <div class="method-consideration-label">Note</div>
+                        <ul class="method-consideration-list">
+                            {% for limitation in consideration.limitations %}
+                            <li>{{ limitation }}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
 
         </section>
 
