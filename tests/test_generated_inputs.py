@@ -118,8 +118,8 @@ static_preview = preview_generated_inputs(
 )
 assert "ENCUT = 620.0" in static_preview["incar"]
 assert "NCORE = 8" in static_preview["incar"]
-assert "ISPIN = 2" in static_preview["incar"]
-assert "MAGMOM = 2*0.6" in static_preview["incar"]
+assert "ISPIN = 1" in static_preview["incar"]
+assert "MAGMOM =" not in static_preview["incar"]
 assert "LELF = True" in static_preview["incar"]
 assert "LWAVE = False" in static_preview["incar"]
 assert "GGA_COMPAT" not in static_preview["incar"]
@@ -137,6 +137,34 @@ assert "ISPIN = 2" in spin_static_preview["incar"]
 assert "MAGMOM = 2*0.6" in spin_static_preview["incar"]
 assert spin_static_preview["kpoints"] == static_preview["kpoints"]
 assert spin_static_preview["poscar"] == static_preview["poscar"]
+
+sns2_poscar = """SnS2
+1.0
+3.648 0.0 0.0
+-1.824 3.159 0.0
+0.0 0.0 5.899
+Sn S
+1 2
+direct
+0.0 0.0 0.0
+0.3333333333333333 0.6666666666666666 0.25
+0.6666666666666666 0.3333333333333333 0.75
+"""
+sns2_structure = parse_structure(sns2_poscar)
+sns2_static_preview = preview_generated_inputs(
+    sns2_structure,
+    CalculationSpec(Purpose.STATIC, Theory.PBE),
+    potcar_functional="PBE_64",
+)
+sns2_spin_static_preview = preview_generated_inputs(
+    sns2_structure,
+    CalculationSpec(Purpose.STATIC, Theory.PBE, {Modifier.SPIN_POLARIZED}),
+    potcar_functional="PBE_64",
+)
+assert "ISPIN = 1" in sns2_static_preview["incar"]
+assert "MAGMOM =" not in sns2_static_preview["incar"]
+assert "ISPIN = 2" in sns2_spin_static_preview["incar"]
+assert "MAGMOM = 3*0.6" in sns2_spin_static_preview["incar"]
 
 high_cpu_preview = preview_generated_inputs(
     structure,
@@ -181,11 +209,14 @@ static_to_soc_preview = preview_generated_inputs(
 static_precursor_section, static_soc_section = static_to_soc_preview["incar"].split("\n\n", 1)
 assert "# Stage 1 - Static Energy (PBE)" in static_precursor_section
 assert "# VASP executable - vasp_std" in static_precursor_section
+assert "ISPIN = 1" in static_precursor_section
+assert "MAGMOM =" not in static_precursor_section
 assert "LWAVE = False" in static_precursor_section
 assert "# Stage 2 - Static Energy (PBE)" in static_soc_section
 assert "# VASP executable - vasp_ncl" in static_soc_section
 assert "LWAVE = False" in static_soc_section
 assert "LSORBIT = True" in static_soc_section
+assert "ISPIN =" not in static_soc_section
 assert "MAGMOM = 0.0 0.0 0.6 0.0 0.0 0.6" in static_soc_section
 assert workflow_stage_artifact_policies(static_to_soc_workflow) == (
     {"write_wavecar": False, "copy_from_previous": ()},
@@ -277,8 +308,8 @@ fe2o3_plain_preview = preview_generated_inputs(
     CalculationSpec(Purpose.STATIC, Theory.PBE),
     potcar_functional="PBE_64",
 )
-assert "ISPIN = 2" in fe2o3_plain_preview["incar"]
-assert "MAGMOM = 2*5.0 3*0.6" in fe2o3_plain_preview["incar"]
+assert "ISPIN = 1" in fe2o3_plain_preview["incar"]
+assert "MAGMOM =" not in fe2o3_plain_preview["incar"]
 for dft_u_key in ("LDAU", "LDAUTYPE", "LDAUL", "LDAUU", "LDAUJ", "LDAUPRINT", "LMAXMIX"):
     assert f"{dft_u_key} =" not in fe2o3_plain_preview["incar"]
 fe2o3_dft_u_preview = preview_generated_inputs(
@@ -286,10 +317,19 @@ fe2o3_dft_u_preview = preview_generated_inputs(
     CalculationSpec(Purpose.STATIC, Theory.PBE, {Modifier.DFT_U}),
     potcar_functional="PBE_64",
 )
-assert "ISPIN = 2" in fe2o3_dft_u_preview["incar"]
-assert "MAGMOM = 2*5.0 3*0.6" in fe2o3_dft_u_preview["incar"]
+assert "ISPIN = 1" in fe2o3_dft_u_preview["incar"]
+assert "MAGMOM =" not in fe2o3_dft_u_preview["incar"]
 assert "LDAU = True" in fe2o3_dft_u_preview["incar"]
 assert "LDAUU = 5.3 0" in fe2o3_dft_u_preview["incar"]
+fe2o3_spin_dft_u_preview = preview_generated_inputs(
+    fe2o3_structure,
+    CalculationSpec(Purpose.STATIC, Theory.PBE, {Modifier.DFT_U, Modifier.SPIN_POLARIZED}),
+    potcar_functional="PBE_64",
+)
+assert "ISPIN = 2" in fe2o3_spin_dft_u_preview["incar"]
+assert "MAGMOM = 2*5.0 3*0.6" in fe2o3_spin_dft_u_preview["incar"]
+assert "LDAU = True" in fe2o3_spin_dft_u_preview["incar"]
+assert "LDAUU = 5.3 0" in fe2o3_spin_dft_u_preview["incar"]
 fe2o3_soc_preview = preview_generated_inputs(
     fe2o3_structure,
     CalculationSpec(Purpose.STATIC, Theory.PBE, {Modifier.SOC}),
@@ -358,8 +398,8 @@ relax_preview = preview_generated_inputs(
 )
 assert "ENCUT = 580.0" in relax_preview["incar"]
 assert "ISIF = 3" in relax_preview["incar"]
-assert "ISPIN = 2" in relax_preview["incar"]
-assert "MAGMOM = 2*0.6" in relax_preview["incar"]
+assert "ISPIN = 1" in relax_preview["incar"]
+assert "MAGMOM =" not in relax_preview["incar"]
 
 band_preview = preview_generated_inputs(
     structure,
@@ -374,6 +414,9 @@ assert "# Stage 2 - Static Energy" in band_static_section
 assert "# Stage 3 - Band Structure" in band_section
 assert "NCORE = 8" in band_relax_section
 assert "NCORE = 8" in band_static_section
+assert "ISPIN = 1" in band_relax_section
+assert "ISPIN = 1" in band_static_section
+assert "ISPIN = 1" in band_section
 assert "NCORE" not in band_section
 
 summary, calculation, generated_inputs, submission_spec = build_submission_state(

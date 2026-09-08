@@ -174,10 +174,17 @@ def ksettings(structure, kpoints_config):
     return {mode: float(value)}
 
 
-def apply_spin_settings(user_incar, *, spin_polarized: bool):
+def apply_spin_settings(
+    user_incar,
+    *,
+    spin_polarized: bool,
+    non_collinear: bool = False,
+):
     settings = dict(user_incar or {})
-    if spin_polarized:
-        settings["ISPIN"] = 2
+    if non_collinear:
+        return settings
+
+    settings["ISPIN"] = 2 if spin_polarized else 1
 
     return settings
 
@@ -271,8 +278,13 @@ def apply_modifier_incar_settings(user_incar, *, modifiers) -> dict:
     settings = dict(user_incar or {})
     normalized_modifiers = calculation_modifiers_from_options(modifiers=modifiers)
     spin_polarized = Modifier.SPIN_POLARIZED in normalized_modifiers
+    non_collinear = Modifier.SOC in normalized_modifiers
 
-    settings = apply_spin_settings(settings, spin_polarized=spin_polarized)
+    settings = apply_spin_settings(
+        settings,
+        spin_polarized=spin_polarized,
+        non_collinear=non_collinear,
+    )
     settings = apply_dft_u_settings(
         settings,
         dft_u=Modifier.DFT_U in normalized_modifiers,

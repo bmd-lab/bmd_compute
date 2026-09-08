@@ -137,6 +137,8 @@ def test_pbe_static_reference_matches_existing_preview_path():
     assert stage["poscar"]["text"] == preview["poscar"]
     assert stage["incar"]["settings"]["ENCUT"] == 620.0
     assert stage["incar"]["settings"]["NCORE"] == 8
+    assert stage["incar"]["settings"]["ISPIN"] == 1
+    assert "MAGMOM" not in stage["incar"]["settings"]
     assert stage["vasp_executable"] == "vasp_std"
 
 
@@ -145,6 +147,8 @@ def test_references_for_pbe_relax_spin_hse06_soc_dft_u_and_dispersion():
     assert relax["stage_type"] == "relax"
     assert relax["incar"]["settings"]["IBRION"] == 2
     assert relax["incar"]["settings"]["ISIF"] == 3
+    assert relax["incar"]["settings"]["ISPIN"] == 1
+    assert "MAGMOM" not in relax["incar"]["settings"]
 
     spin = first_stage(
         build_input_reference_payload(
@@ -166,6 +170,8 @@ def test_references_for_pbe_relax_spin_hse06_soc_dft_u_and_dispersion():
     assert hse["incar"]["settings"]["LHFCALC"] is True
     assert hse["incar"]["settings"]["HFSCREEN"] == 0.2
     assert hse["incar"]["settings"]["PRECFOCK"] == "Accurate"
+    assert hse["incar"]["settings"]["ISPIN"] == 1
+    assert "MAGMOM" not in hse["incar"]["settings"]
 
     soc = first_stage(
         build_input_reference_payload(
@@ -191,6 +197,8 @@ def test_references_for_pbe_relax_spin_hse06_soc_dft_u_and_dispersion():
     )
     assert dft_u["incar"]["settings"]["LDAU"] is True
     assert "LDAUU" in dft_u["incar"]["settings"]
+    assert dft_u["incar"]["settings"]["ISPIN"] == 1
+    assert "MAGMOM" not in dft_u["incar"]["settings"]
 
     dispersion = first_stage(
         build_input_reference_payload(
@@ -231,7 +239,7 @@ def test_kpoints_are_structured_and_deterministic():
     assert json.loads(emit_json(first)) == first
 
 
-def test_structure_dependent_values_are_generated_from_supplied_structure():
+def test_structure_dependent_values_are_generated_from_supplied_structure_when_spin_selected():
     payload = build_input_reference_payload(
         request_for("static", structure=FE2O3_POSCAR),
         include_provenance=False,
@@ -240,7 +248,19 @@ def test_structure_dependent_values_are_generated_from_supplied_structure():
 
     assert stage["poscar"]["reduced_formula"] == "Fe2O3"
     assert stage["poscar"]["num_sites"] == 5
-    assert stage["incar"]["settings"]["MAGMOM"] == [5.0, 5.0, 0.6, 0.6, 0.6]
+    assert stage["incar"]["settings"]["ISPIN"] == 1
+    assert "MAGMOM" not in stage["incar"]["settings"]
+
+    spin_payload = build_input_reference_payload(
+        request_for("static", modifiers=["spin_polarized"], structure=FE2O3_POSCAR),
+        include_provenance=False,
+    )
+    spin_stage = first_stage(spin_payload)
+
+    assert spin_stage["poscar"]["reduced_formula"] == "Fe2O3"
+    assert spin_stage["poscar"]["num_sites"] == 5
+    assert spin_stage["incar"]["settings"]["ISPIN"] == 2
+    assert spin_stage["incar"]["settings"]["MAGMOM"] == [5.0, 5.0, 0.6, 0.6, 0.6]
 
 
 def test_unsupported_combination_returns_structured_json_without_fallback():

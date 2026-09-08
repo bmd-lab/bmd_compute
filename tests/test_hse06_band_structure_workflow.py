@@ -347,6 +347,12 @@ band_incar = band_job.input_set_generator.kwargs["user_incar_settings"]
 assert "LHFCALC" not in relax_incar
 assert static_incar["LHFCALC"] is True
 assert band_incar["LHFCALC"] is True
+assert relax_incar["ISPIN"] == 1
+assert static_incar["ISPIN"] == 1
+assert band_incar["ISPIN"] == 1
+assert "MAGMOM" not in relax_incar
+assert "MAGMOM" not in static_incar
+assert "MAGMOM" not in band_incar
 assert static_incar["PRECFOCK"] == "Accurate"
 assert band_incar["PRECFOCK"] == "Fast"
 assert static_incar["ISMEAR"] == 0
@@ -390,12 +396,19 @@ static_section = generated_inputs["incar"].split("# Stage 2 - Static Energy (HSE
     1,
 )[0]
 band_section = generated_inputs["incar"].split("# Stage 3 - Band Structure (HSE06)", 1)[1]
+relax_section = generated_inputs["incar"].split("# Stage 2 - Static Energy (HSE06)", 1)[0]
+assert "ISPIN = 1" in relax_section
+assert "MAGMOM" not in relax_section
 assert "NCORE = 8" in static_section
+assert "ISPIN = 1" in static_section
+assert "MAGMOM" not in static_section
 assert "LHFCALC = True" in band_section
 assert "PRECFOCK = Fast" in band_section
 assert "ALGO = Normal" in band_section
 assert "ISMEAR = 0" in band_section
 assert "SIGMA = 0.01" in band_section
+assert "ISPIN = 1" in band_section
+assert "MAGMOM" not in band_section
 assert "NCORE" not in band_section
 assert "ICHARG" not in band_section
 assert "HSE KPOINTS mode=line line_density=40 reciprocal_density=64" in generated_inputs["kpoints"]
