@@ -691,7 +691,7 @@ assert template_source.count("data-copy-input") == 5
 assert template_source.count('class="input-copy-button" data-copy-input') == 4
 assert "navigator.clipboard.writeText" in template_source
 assert "\\u2713 Copied" in template_source
-assert "Not supported" in template_source
+assert "Copy failed" in template_source
 assert "input-tab-potcar" not in template_source
 assert "tab-panel-potcar" not in template_source
 assert "generated_inputs.potcar" not in template_source

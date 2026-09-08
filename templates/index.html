@@ -2427,21 +2427,54 @@ document.addEventListener("DOMContentLoaded", function () {
         }, resetDelayMs);
     }
 
+    function copyTextWithSelectionFallback(text) {
+        return new Promise(function (resolve, reject) {
+            var textarea = document.createElement("textarea");
+            textarea.value = text;
+            textarea.setAttribute("readonly", "");
+            textarea.setAttribute("aria-hidden", "true");
+            textarea.style.position = "fixed";
+            textarea.style.left = "-9999px";
+            textarea.style.top = "0";
+            textarea.style.opacity = "0";
+            document.body.appendChild(textarea);
+            textarea.focus();
+            textarea.select();
+            textarea.setSelectionRange(0, textarea.value.length);
+
+            try {
+                if (document.execCommand && document.execCommand("copy")) {
+                    resolve();
+                } else {
+                    reject(new Error("Fallback copy command failed."));
+                }
+            } catch (error) {
+                reject(error);
+            } finally {
+                document.body.removeChild(textarea);
+            }
+        });
+    }
+
+    function copyTextToClipboard(text) {
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+            return navigator.clipboard.writeText(text).catch(function () {
+                return copyTextWithSelectionFallback(text);
+            });
+        }
+        return copyTextWithSelectionFallback(text);
+    }
+
     document.querySelectorAll("[data-copy-input]").forEach(function (button) {
         button.addEventListener("click", function () {
             var pane = button.closest(".input-pane");
             var preview = pane ? pane.querySelector(".input-preview") : null;
             var text = preview ? preview.textContent : "";
 
-            if (!navigator.clipboard || !navigator.clipboard.writeText) {
-                setButtonState(button, "Not supported", "unsupported");
-                return;
-            }
-
-            navigator.clipboard.writeText(text).then(function () {
+            copyTextToClipboard(text).then(function () {
                 setButtonState(button, "\u2713 Copied", "copied");
             }).catch(function () {
-                setButtonState(button, "Not supported", "unsupported");
+                setButtonState(button, "Copy failed", "unsupported");
             });
         });
     });
