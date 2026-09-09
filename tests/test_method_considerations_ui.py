@@ -84,6 +84,41 @@ direct
 0.0 0.0 0.0
 """
 
+EU_POSCAR = """Eu
+4.6
+1.0 0.0 0.0
+0.0 1.0 0.0
+0.0 0.0 1.0
+Eu
+1
+direct
+0.0 0.0 0.0
+"""
+
+IR_POSCAR = """Ir
+3.84
+1.0 0.0 0.0
+0.0 1.0 0.0
+0.0 0.0 1.0
+Ir
+1
+direct
+0.0 0.0 0.0
+"""
+
+SNS2_POSCAR = """SnS2
+1.0
+3.648 0.0 0.0
+-1.824 3.159 0.0
+0.0 0.0 5.899
+Sn S
+1 2
+direct
+0.0 0.0 0.0
+0.3333333333333333 0.6666666666666666 0.25
+0.6666666666666666 0.3333333333333333 0.75
+"""
+
 
 def request(path: str = "/analyze") -> Request:
     return Request(
@@ -127,7 +162,7 @@ def test_bi_containing_structure_renders_method_considerations_after_summary():
     assert response.status_code == 200
     assert response.context["summary"]["reduced_formula"] == "Bi2Se3"
     assert response.context["summary"]["natoms"] == 15
-    assert response.context["method_considerations"]["policy_version"] == 2
+    assert response.context["method_considerations"]["policy_version"] == 3
     assert "Method Considerations" in html
     assert html.index("Structure Summary") < html.index("Method Considerations")
     assert html.index("Method Considerations") < html.index("Calculation Definition")
@@ -179,15 +214,56 @@ def test_multi_trigger_bi_pt_se_renders_one_consideration_and_actual_triggers_on
     assert "Se \u2014" not in html
 
 
-def test_si_and_fe_do_not_render_empty_method_considerations_section():
-    for poscar in (SI_POSCAR, FE_POSCAR):
+def test_si_and_sns2_do_not_render_empty_method_considerations_section():
+    for poscar in (SI_POSCAR, SNS2_POSCAR):
         response = analyze_poscar(poscar)
         html = render_response(response)
 
         assert response.context["method_considerations"] is None
         assert "Method Considerations" not in html
+        assert "nonmagnetic" not in html.lower()
         assert "SOC not needed" not in html
         assert "No methodological issues found" not in html
+
+
+def test_fe_structure_renders_spin_polarisation_consideration_only():
+    response = analyze_poscar(FE_POSCAR)
+    html = render_response(response)
+    considerations = response.context["method_considerations"]["considerations"]
+
+    assert [consideration["id"] for consideration in considerations] == [
+        "spin.composition_screen"
+    ]
+    assert considerations[0]["trigger_elements"] == ["Fe"]
+    assert considerations[0]["trigger_classes"] == ["3d_spin_screen"]
+    assert "Spin Polarisation" in html
+    assert "Fe" in html
+    assert "3d spin-screening element" in html
+    assert "Consider enabling Spin Polarised" in html
+    assert 'data-method-consideration-id="soc.heavy_elements"' not in html
+    assert "ISPIN=2 is required" not in html
+
+
+def test_eu_and_ir_render_independent_spin_and_soc_cards():
+    for poscar, symbol, spin_label, soc_label in (
+        (EU_POSCAR, "Eu", "lanthanide spin-screening element", "lanthanide"),
+        (IR_POSCAR, "Ir", "5d spin-screening element", "5d transition metal"),
+    ):
+        response = analyze_poscar(poscar)
+        html = render_response(response)
+        considerations = response.context["method_considerations"]["considerations"]
+
+        assert [consideration["id"] for consideration in considerations] == [
+            "spin.composition_screen",
+            "soc.heavy_elements",
+        ]
+        assert html.count('data-method-consideration-id="spin.composition_screen"') == 1
+        assert html.count('data-method-consideration-id="soc.heavy_elements"') == 1
+        assert "Spin Polarisation" in html
+        assert "Spin-Orbit Coupling (SOC)" in html
+        assert symbol in html
+        assert spin_label in html
+        assert soc_label in html
 
 
 def test_backend_reason_limitations_and_support_are_rendered_without_stronger_claims():
@@ -238,7 +314,7 @@ def test_analyze_reuses_the_parsed_structure_for_method_considerations(monkeypat
     def fake_method_consideration_payload(structure_obj):
         assert structure_obj is sentinel
         return {
-            "policy_version": 2,
+            "policy_version": 3,
             "scope": "test",
             "detections": [],
             "considerations": [],
@@ -289,12 +365,53 @@ def test_method_consideration_ui_does_not_mutate_workflow_modifiers_or_inputs():
 
     reference_after = build_input_reference_payload(request_payload, include_provenance=False)
     assert response.status_code == 200
-    assert response.context["method_considerations"]["considerations"][0]["id"] == (
-        "soc.heavy_elements"
-    )
+    assert response.context["method_considerations"]["considerations"][0]["id"] == "soc.heavy_elements"
     assert response.context["selected_workflow"]["stages"][0]["modifiers"] == []
     assert "LSORBIT" not in response.context["generated_inputs"]["incar"]
     assert response.context["generated_inputs"]["vasp_executable"] == "vasp_std"
+    assert workflow.to_dict() == workflow_before
+    assert reference_after == reference_before
+
+
+def test_spin_consideration_ui_does_not_mutate_workflow_modifiers_or_inputs():
+    workflow = WorkflowSpec([StageSpec(StageType.STATIC, Theory.PBE)])
+    workflow_before = workflow.to_dict()
+    request_payload = {
+        "structure": {
+            "type": "pasted_text",
+            "format": "poscar",
+            "text": FE_POSCAR,
+        },
+        "workflow_spec": workflow.to_dict(),
+        "resources": {"ntasks": 24, "mem_gb": 128},
+        "potcar_functional": "PBE_64",
+    }
+    reference_before = build_input_reference_payload(request_payload, include_provenance=False)
+
+    response = main.build_workflow(
+        request("/build-calculation"),
+        structure=FE_POSCAR,
+        fmt="poscar",
+        purpose="static",
+        theory="pbe",
+        modifiers=None,
+        cpus=None,
+        memory_gb=None,
+        walltime=None,
+        queue=None,
+        workflow_spec_json=json.dumps(workflow.to_dict(), sort_keys=True),
+        workflow=None,
+        method=None,
+    )
+
+    reference_after = build_input_reference_payload(request_payload, include_provenance=False)
+    consideration = response.context["method_considerations"]["considerations"][0]
+    assert response.status_code == 200
+    assert consideration["id"] == "spin.composition_screen"
+    assert consideration["selection_state"] == "not_selected"
+    assert response.context["selected_workflow"]["stages"][0]["modifiers"] == []
+    assert "ISPIN = 1" in response.context["generated_inputs"]["incar"]
+    assert "MAGMOM =" not in response.context["generated_inputs"]["incar"]
     assert workflow.to_dict() == workflow_before
     assert reference_after == reference_before
 
@@ -319,5 +436,11 @@ def test_template_has_no_duplicated_soc_element_policy_table():
     for element in ("Y", "Cd", "Hf", "Hg", "La", "Lu", "Ac", "Lr", "Tl", "Pb", "Bi", "Po"):
         assert f">{element}<" not in method_block
     assert "SOC_TRIGGER_CLASSES" not in method_block
-    assert "4d_transition_metals" not in method_block
-    assert "heavy_p_block" not in method_block
+    for class_name in (
+        "4d_transition_metals",
+        "heavy_p_block",
+        "3d_spin_screen",
+        "lanthanide_spin_screen",
+        "actinide_spin_screen",
+    ):
+        assert class_name not in method_block
