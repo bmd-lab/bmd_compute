@@ -325,7 +325,7 @@ assert mixed_flow.jobs[1].prev_dir == mixed_flow.jobs[0].output.dir_name
 relax_incar = mixed_flow.jobs[0].input_set_generator.kwargs["user_incar_settings"]
 static_incar = mixed_flow.jobs[1].input_set_generator.kwargs["user_incar_settings"]
 assert "LHFCALC" not in relax_incar
-assert "ISPIN" not in relax_incar
+assert relax_incar["ISPIN"] == 1
 assert "MAGMOM" not in relax_incar
 assert relax_incar["NCORE"] == 8
 assert static_incar["LHFCALC"] is True
@@ -349,15 +349,16 @@ band_static_incar = band_flow.jobs[1].input_set_generator.kwargs["user_incar_set
 band_incar = band_flow.jobs[2].input_set_generator.kwargs["user_incar_settings"]
 assert band_relax_incar["NCORE"] == 8
 assert band_static_incar["NCORE"] == 8
-assert "ISPIN" not in band_relax_incar
-assert "ISPIN" not in band_static_incar
-assert "ISPIN" not in band_incar
+assert band_relax_incar["ISPIN"] == 1
+assert band_static_incar["ISPIN"] == 1
+assert band_incar["ISPIN"] == 1
 assert "NCORE" not in band_incar
 
 relax_section, static_section = generated_inputs["incar"].split("\n\n", 1)
 assert "# Stage 1 - Geometry Optimisation (PBE)" in relax_section
 assert "# Stage 2 - Static Energy (HSE06)" in static_section
 assert "LHFCALC" not in relax_section
+assert "ISPIN = 1" in relax_section
 assert "PRECFOCK = Accurate" in static_section
 assert "ISMEAR = 0" in static_section
 assert "ISMEAR = -5" not in static_section
@@ -371,6 +372,9 @@ assert "# Stage 2 - Static Energy (PBE)" in band_static_section
 assert "# Stage 3 - Band Structure (PBE)" in band_section
 assert "NCORE = 8" in band_relax_section
 assert "NCORE = 8" in band_static_section
+assert "ISPIN = 1" in band_relax_section
+assert "ISPIN = 1" in band_static_section
+assert "ISPIN = 1" in band_section
 assert "NCORE" not in band_section
 
 assert [job.name for job in soc_static_flow.jobs] == ["stage_01", "stage_02", "stage_03"]
@@ -388,6 +392,7 @@ assert "vasp_std" not in soc_static_flow.jobs[2].run_vasp_kwargs["vasp_cmd"]
 soc_static_incar = soc_static_flow.jobs[2].input_set_generator.kwargs["user_incar_settings"]
 soc_precursor_incar = soc_static_flow.jobs[1].input_set_generator.kwargs["user_incar_settings"]
 assert soc_precursor_incar["LWAVE"] is False
+assert soc_precursor_incar["ISPIN"] == 1
 assert soc_static_incar["LSORBIT"] is True
 assert soc_static_incar["LNONCOLLINEAR"] is True
 assert soc_static_incar["ISPIN"] is None
@@ -400,6 +405,8 @@ soc_stage_2, soc_stage_3 = soc_stage_2_and_3.split("\n\n", 1)
 assert "# VASP executable - vasp_std" in soc_stage_1
 assert "# VASP executable - vasp_std" in soc_stage_2
 assert "# VASP executable - vasp_ncl" in soc_stage_3
+assert "ISPIN = 1" in soc_stage_1
+assert "ISPIN = 1" in soc_stage_2
 assert "LWAVE = False" in soc_stage_2
 assert "LWAVE = False" in soc_stage_3
 assert "LSORBIT = True" in soc_stage_3

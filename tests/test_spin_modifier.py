@@ -31,12 +31,22 @@ from backend.workflows import (
 )
 
 
-assert apply_spin_settings({}, spin_polarized=False) == {}
+assert apply_spin_settings({}, spin_polarized=False) == {
+    "ISPIN": 1,
+}
 assert apply_spin_settings({"ENCUT": 520}, spin_polarized=False) == {
     "ENCUT": 520,
+    "ISPIN": 1,
 }
 assert apply_spin_settings({}, spin_polarized=True) == {
     "ISPIN": 2,
+}
+assert apply_spin_settings(
+    {"LSORBIT": True},
+    spin_polarized=False,
+    non_collinear=True,
+) == {
+    "LSORBIT": True,
 }
 assert apply_spin_settings({"ISPIN": 1}, spin_polarized=True) == {
     "ISPIN": 2,
@@ -64,7 +74,7 @@ non_dft_u_settings = apply_modifier_incar_settings(
     },
     modifiers=(),
 )
-assert "ISPIN" not in non_dft_u_settings
+assert non_dft_u_settings["ISPIN"] == 1
 assert "MAGMOM" not in non_dft_u_settings
 for key in ("LDAU", "LDAUTYPE", "LDAUL", "LDAUU", "LDAUJ", "LDAUPRINT", "LMAXMIX"):
     assert non_dft_u_settings[key] is None
@@ -276,7 +286,7 @@ else:
     raise AssertionError("DFT+U should fail when no active U values are generated.")
 
 non_spin_static = incar_static(apply_spin_settings({}, spin_polarized=False))
-assert "ISPIN" not in non_spin_static
+assert non_spin_static["ISPIN"] == 1
 assert "MAGMOM" not in non_spin_static
 
 spin_static = incar_static(apply_spin_settings({}, spin_polarized=True))
@@ -284,7 +294,7 @@ assert spin_static["ISPIN"] == 2
 assert "MAGMOM" not in spin_static
 
 non_spin_relax = incar_relax(apply_spin_settings({}, spin_polarized=False))
-assert "ISPIN" not in non_spin_relax
+assert non_spin_relax["ISPIN"] == 1
 assert "MAGMOM" not in non_spin_relax
 
 spin_relax = incar_relax(apply_spin_settings({}, spin_polarized=True))
