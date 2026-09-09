@@ -12,6 +12,11 @@ from backend.calculations.registry import (
     validate_stage_spec,
     validate_workflow_spec,
 )
+from backend.structure_dimensionality import (
+    OBSERVED as DIMENSIONALITY_OBSERVED,
+    StructureDimensionalityObservation,
+    observe_structure_dimensionality,
+)
 
 
 """
@@ -23,11 +28,15 @@ not modify workflows, generated inputs, or execution state.
 """
 
 
-POLICY_VERSION = 3
+POLICY_VERSION = 4
 SOC_HEAVY_ELEMENTS_CONSIDERATION_ID = "soc.heavy_elements"
 SPIN_COMPOSITION_CONSIDERATION_ID = "spin.composition_screen"
+DISPERSION_TWO_DIMENSIONAL_CONNECTIVITY_CONSIDERATION_ID = (
+    "dispersion.two_dimensional_connectivity"
+)
 SOC_RECOMMENDED_STATUS = "recommended_for_consideration"
 SPIN_RECOMMENDED_STATUS = "recommended_for_consideration"
+DISPERSION_RECOMMENDED_STATUS = "recommended_for_consideration"
 WORKFLOW_NOT_PROVIDED = "workflow_not_provided"
 NOT_SELECTED = "not_selected"
 ALREADY_SELECTED = "already_selected"
@@ -35,6 +44,8 @@ UNSUPPORTED_FOR_WORKFLOW = "unsupported_for_workflow"
 INVALID_WORKFLOW = "invalid_workflow"
 
 _ELEMENT_PRESENT_DETECTION_TYPE = "element_present"
+_STRUCTURE_DIMENSIONALITY_OBSERVATION_ID = "structure_dimensionality.bonded_connectivity"
+_TWO_DIMENSIONAL_CONNECTIVITY_TRIGGER = "two_dimensional_bonded_connectivity"
 
 
 def _build_trigger_element_classes(
@@ -142,6 +153,16 @@ _SPIN_POLARISATION_LIMITATIONS = (
     "This is a composition-based screening consideration. Elemental presence "
     "alone does not establish that the material is magnetic, its magnetic "
     "ordering, or its ground-state magnetic moments.",
+)
+_DISPERSION_CORRECTION_REASON = (
+    "This structure has two-dimensional bonded connectivity. Dispersion "
+    "interactions may therefore be important for interactions between the "
+    "low-dimensional components. Consider enabling a dispersion correction."
+)
+_DISPERSION_CORRECTION_LIMITATIONS = (
+    "This recommendation is based on bonded-connectivity dimensionality. It "
+    "does not establish the magnitude of dispersion interactions or that a "
+    "particular dispersion treatment is required.",
 )
 
 
@@ -291,7 +312,12 @@ def method_considerations_for_structure(
     workflow: WorkflowSpec | Mapping[str, Any] | None = None,
 ) -> tuple[MethodConsideration, ...]:
     detections = detect_structure_features(structure)
-    return method_considerations_from_detections(detections, workflow=workflow)
+    dimensionality_observation = observe_structure_dimensionality(structure)
+    return _method_considerations_from_evidence(
+        detections,
+        dimensionality_observation=dimensionality_observation,
+        workflow=workflow,
+    )
 
 
 def method_considerations_from_detections(
@@ -299,8 +325,22 @@ def method_considerations_from_detections(
     *,
     workflow: WorkflowSpec | Mapping[str, Any] | None = None,
 ) -> tuple[MethodConsideration, ...]:
+    return _method_considerations_from_evidence(detections, workflow=workflow)
+
+
+def _method_considerations_from_evidence(
+    detections: tuple[StructureDetection, ...] | list[StructureDetection],
+    *,
+    dimensionality_observation: StructureDimensionalityObservation | None = None,
+    workflow: WorkflowSpec | Mapping[str, Any] | None = None,
+) -> tuple[MethodConsideration, ...]:
     considerations: list[MethodConsideration] = []
     workflow_spec = _coerce_workflow_spec(workflow)
+    if _is_two_dimensional_connectivity(dimensionality_observation):
+        considerations.append(
+            _dispersion_correction_consideration(dimensionality_observation, workflow_spec)
+        )
+
     spin_detections = tuple(
         detection
         for detection in detections
@@ -329,11 +369,19 @@ def method_consideration_payload(
     workflow: WorkflowSpec | Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     detections = detect_structure_features(structure)
-    considerations = method_considerations_from_detections(detections, workflow=workflow)
+    dimensionality_observation = observe_structure_dimensionality(structure)
+    considerations = _method_considerations_from_evidence(
+        detections,
+        dimensionality_observation=dimensionality_observation,
+        workflow=workflow,
+    )
     return {
         "policy_version": POLICY_VERSION,
         "scope": "BMD Compute structure-aware method considerations; observation only",
         "detections": [detection.to_dict() for detection in detections],
+        "structure_observations": {
+            "dimensionality": dimensionality_observation.to_dict(),
+        },
         "considerations": [
             consideration.to_dict()
             for consideration in considerations
@@ -434,6 +482,56 @@ def _spin_polarisation_consideration(
             "rule_id": SPIN_COMPOSITION_CONSIDERATION_ID,
         },
         limitations=_SPIN_POLARISATION_LIMITATIONS,
+    )
+
+
+def _dispersion_correction_consideration(
+    dimensionality_observation: StructureDimensionalityObservation,
+    workflow: WorkflowSpec | None,
+) -> MethodConsideration:
+    support = _modifier_support_payload(workflow, Modifier.DISPERSION)
+    observation_payload = dimensionality_observation.to_dict()
+    trigger_detection_id = _STRUCTURE_DIMENSIONALITY_OBSERVATION_ID
+    return MethodConsideration(
+        id=DISPERSION_TWO_DIMENSIONAL_CONNECTIVITY_CONSIDERATION_ID,
+        method="dispersion",
+        modifier=Modifier.DISPERSION.value,
+        display_name="Dispersion Correction",
+        status=DISPERSION_RECOMMENDED_STATUS,
+        trigger_detection_ids=(trigger_detection_id,),
+        trigger_elements=(),
+        trigger_classes=(_TWO_DIMENSIONAL_CONNECTIVITY_TRIGGER,),
+        observed_evidence={
+            "trigger_detection_ids": [trigger_detection_id],
+            "trigger_elements": [],
+            "trigger_classes": [_TWO_DIMENSIONAL_CONNECTIVITY_TRIGGER],
+            "triggers": [
+                {
+                    "id": trigger_detection_id,
+                    "type": "structure_dimensionality",
+                    "label": "Two-dimensional bonded connectivity",
+                    "dimensionality": observation_payload["dimensionality"],
+                    "method": observation_payload["method"],
+                    "components": observation_payload["components"],
+                }
+            ],
+        },
+        reason=_DISPERSION_CORRECTION_REASON,
+        applicable_stage_types=tuple(
+            sorted(
+                {
+                    capability["stage_type"]
+                    for capability in support["supported_stage_capabilities"]
+                }
+            )
+        ),
+        bmd_compute_support=support,
+        selection_state=support["workflow"]["selection_state"],
+        policy_source={
+            **_POLICY_SOURCE,
+            "rule_id": DISPERSION_TWO_DIMENSIONAL_CONNECTIVITY_CONSIDERATION_ID,
+        },
+        limitations=_DISPERSION_CORRECTION_LIMITATIONS,
     )
 
 
@@ -589,6 +687,16 @@ def _spin_trigger_classes_for_element(element: str) -> tuple[str, ...]:
     return SPIN_TRIGGER_ELEMENT_CLASSES.get(str(element), ())
 
 
+def _is_two_dimensional_connectivity(
+    observation: StructureDimensionalityObservation | None,
+) -> bool:
+    return (
+        observation is not None
+        and observation.status == DIMENSIONALITY_OBSERVED
+        and observation.dimensionality == 2
+    )
+
+
 def _detection_evidence_for_consideration(
     detection: StructureDetection,
     trigger_classes: tuple[str, ...],
@@ -647,6 +755,8 @@ def _json_safe_value(value):
 
 __all__ = [
     "ALREADY_SELECTED",
+    "DISPERSION_RECOMMENDED_STATUS",
+    "DISPERSION_TWO_DIMENSIONAL_CONNECTIVITY_CONSIDERATION_ID",
     "INVALID_WORKFLOW",
     "MethodConsideration",
     "NOT_SELECTED",

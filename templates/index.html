@@ -1147,15 +1147,15 @@ ul {
                         <span class="pill">Advisory</span>
                     </div>
 
-                    {% if consideration.observed_evidence and consideration.observed_evidence.detections %}
+                    {% if consideration.trigger_items %}
                     <div class="method-consideration-section">
                         <div class="method-consideration-label">Triggered by</div>
                         <ul class="method-consideration-list">
-                            {% for detection in consideration.observed_evidence.detections %}
+                            {% for trigger in consideration.trigger_items %}
                             <li>
-                                <span class="method-trigger-element">{{ detection.element }}</span>
-                                {% if detection.trigger_class_labels %}
-                                — {{ detection.trigger_class_labels | join(", ") }}
+                                <span class="method-trigger-element">{{ trigger.display_label }}</span>
+                                {% if trigger.trigger_class_labels %}
+                                — {{ trigger.trigger_class_labels | join(", ") }}
                                 {% endif %}
                             </li>
                             {% endfor %}
