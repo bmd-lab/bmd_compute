@@ -23,9 +23,11 @@ not modify workflows, generated inputs, or execution state.
 """
 
 
-POLICY_VERSION = 2
+POLICY_VERSION = 3
 SOC_HEAVY_ELEMENTS_CONSIDERATION_ID = "soc.heavy_elements"
+SPIN_COMPOSITION_CONSIDERATION_ID = "spin.composition_screen"
 SOC_RECOMMENDED_STATUS = "recommended_for_consideration"
+SPIN_RECOMMENDED_STATUS = "recommended_for_consideration"
 WORKFLOW_NOT_PROVIDED = "workflow_not_provided"
 NOT_SELECTED = "not_selected"
 ALREADY_SELECTED = "already_selected"
@@ -35,7 +37,7 @@ INVALID_WORKFLOW = "invalid_workflow"
 _ELEMENT_PRESENT_DETECTION_TYPE = "element_present"
 
 
-def _build_soc_trigger_element_classes(
+def _build_trigger_element_classes(
     trigger_classes: Mapping[str, tuple[str, ...]],
 ) -> dict[str, tuple[str, ...]]:
     element_classes: dict[str, list[str]] = {}
@@ -88,7 +90,31 @@ SOC_TRIGGER_CLASSES: Mapping[str, tuple[str, ...]] = {
     "heavy_p_block": ("Tl", "Pb", "Bi", "Po"),
 }
 SOC_TRIGGER_ELEMENT_CLASSES: Mapping[str, tuple[str, ...]] = (
-    _build_soc_trigger_element_classes(SOC_TRIGGER_CLASSES)
+    _build_trigger_element_classes(SOC_TRIGGER_CLASSES)
+)
+SPIN_TRIGGER_CLASSES: Mapping[str, tuple[str, ...]] = {
+    "3d_spin_screen": ("Ti", "V", "Cr", "Mn", "Fe", "Co", "Ni"),
+    "4d_spin_screen": ("Mo", "Tc", "Ru", "Rh"),
+    "5d_spin_screen": ("Re", "Os", "Ir"),
+    "lanthanide_spin_screen": (
+        "Ce",
+        "Pr",
+        "Nd",
+        "Pm",
+        "Sm",
+        "Eu",
+        "Gd",
+        "Tb",
+        "Dy",
+        "Ho",
+        "Er",
+        "Tm",
+        "Yb",
+    ),
+    "actinide_spin_screen": ("U", "Np", "Pu", "Am", "Cm", "Bk", "Cf"),
+}
+SPIN_TRIGGER_ELEMENT_CLASSES: Mapping[str, tuple[str, ...]] = (
+    _build_trigger_element_classes(SPIN_TRIGGER_CLASSES)
 )
 
 _POLICY_SOURCE = {
@@ -108,6 +134,15 @@ _HEAVY_ELEMENT_SOC_LIMITATIONS = (
     "This analysis does not determine oxidation state, bonding, band character, "
     "orbital contributions, or whether SOC is required.",
 )
+_SPIN_POLARISATION_REASON = (
+    "This structure contains one or more elements for which spin-polarized "
+    "electronic states may be relevant. Consider enabling Spin Polarised."
+)
+_SPIN_POLARISATION_LIMITATIONS = (
+    "This is a composition-based screening consideration. Elemental presence "
+    "alone does not establish that the material is magnetic, its magnetic "
+    "ordering, or its ground-state magnetic moments.",
+)
 
 
 @dataclass(frozen=True)
@@ -122,6 +157,7 @@ class StructureDetection:
     element: str
     observed_evidence: Mapping[str, Any] = field(default_factory=dict)
     soc_trigger_classes: tuple[str, ...] = field(default_factory=tuple)
+    spin_trigger_classes: tuple[str, ...] = field(default_factory=tuple)
     source: str = "pymatgen.Structure.composition.elements"
 
     def __post_init__(self) -> None:
@@ -131,6 +167,11 @@ class StructureDetection:
             "soc_trigger_classes",
             tuple(str(item) for item in self.soc_trigger_classes),
         )
+        object.__setattr__(
+            self,
+            "spin_trigger_classes",
+            tuple(str(item) for item in self.spin_trigger_classes),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -139,6 +180,7 @@ class StructureDetection:
             "observed": self.observed,
             "element": self.element,
             "soc_trigger_classes": list(self.soc_trigger_classes),
+            "spin_trigger_classes": list(self.spin_trigger_classes),
             "observed_evidence": _json_safe_value(self.observed_evidence),
             "source": self.source,
         }
@@ -153,6 +195,7 @@ class MethodConsideration:
     id: str
     method: str
     modifier: str
+    display_name: str
     status: str
     trigger_detection_ids: tuple[str, ...]
     trigger_elements: tuple[str, ...]
@@ -166,6 +209,7 @@ class MethodConsideration:
     limitations: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "display_name", str(self.display_name))
         object.__setattr__(
             self,
             "trigger_detection_ids",
@@ -192,6 +236,7 @@ class MethodConsideration:
             "id": self.id,
             "method": self.method,
             "modifier": self.modifier,
+            "display_name": self.display_name,
             "status": self.status,
             "trigger_detection_ids": list(self.trigger_detection_ids),
             "trigger_elements": list(self.trigger_elements),
@@ -214,21 +259,27 @@ def detect_structure_features(structure) -> tuple[StructureDetection, ...]:
     elements = _structure_element_symbols(structure)
     detections: list[StructureDetection] = []
     for element in elements:
-        trigger_classes = _soc_trigger_classes_for_element(element)
-        if not trigger_classes:
+        soc_trigger_classes = _soc_trigger_classes_for_element(element)
+        spin_trigger_classes = _spin_trigger_classes_for_element(element)
+        if not soc_trigger_classes and not spin_trigger_classes:
             continue
+        observed_evidence: dict[str, Any] = {
+            "element": element,
+            "elements": list(elements),
+        }
+        if soc_trigger_classes:
+            observed_evidence["soc_trigger_classes"] = list(soc_trigger_classes)
+        if spin_trigger_classes:
+            observed_evidence["spin_trigger_classes"] = list(spin_trigger_classes)
         detections.append(
             StructureDetection(
                 id=_element_detection_id(element),
                 type=_ELEMENT_PRESENT_DETECTION_TYPE,
                 observed=True,
                 element=element,
-                soc_trigger_classes=trigger_classes,
-                observed_evidence={
-                    "element": element,
-                    "elements": list(elements),
-                    "soc_trigger_classes": list(trigger_classes),
-                },
+                soc_trigger_classes=soc_trigger_classes,
+                spin_trigger_classes=spin_trigger_classes,
+                observed_evidence=observed_evidence,
             )
         )
     return tuple(detections)
@@ -250,6 +301,16 @@ def method_considerations_from_detections(
 ) -> tuple[MethodConsideration, ...]:
     considerations: list[MethodConsideration] = []
     workflow_spec = _coerce_workflow_spec(workflow)
+    spin_detections = tuple(
+        detection
+        for detection in detections
+        if detection.observed
+        and detection.type == _ELEMENT_PRESENT_DETECTION_TYPE
+        and _spin_trigger_classes_for_element(detection.element)
+    )
+    if spin_detections:
+        considerations.append(_spin_polarisation_consideration(spin_detections, workflow_spec))
+
     soc_detections = tuple(
         detection
         for detection in detections
@@ -284,7 +345,7 @@ def _heavy_element_soc_consideration(
     detections: tuple[StructureDetection, ...],
     workflow: WorkflowSpec | None,
 ) -> MethodConsideration:
-    support = _soc_support_payload(workflow)
+    support = _modifier_support_payload(workflow, Modifier.SOC)
     trigger_detection_ids = tuple(detection.id for detection in detections)
     trigger_elements = tuple(detection.element for detection in detections)
     trigger_classes = _ordered_soc_trigger_classes(detections)
@@ -292,6 +353,7 @@ def _heavy_element_soc_consideration(
         id=SOC_HEAVY_ELEMENTS_CONSIDERATION_ID,
         method="soc",
         modifier=Modifier.SOC.value,
+        display_name=modifier_display_name(Modifier.SOC),
         status=SOC_RECOMMENDED_STATUS,
         trigger_detection_ids=trigger_detection_ids,
         trigger_elements=trigger_elements,
@@ -300,7 +362,13 @@ def _heavy_element_soc_consideration(
             "trigger_detection_ids": list(trigger_detection_ids),
             "trigger_elements": list(trigger_elements),
             "trigger_classes": list(trigger_classes),
-            "detections": [detection.to_dict() for detection in detections],
+            "detections": [
+                _detection_evidence_for_consideration(
+                    detection,
+                    _soc_trigger_classes_for_element(detection.element),
+                )
+                for detection in detections
+            ],
         },
         reason=_HEAVY_ELEMENT_SOC_REASON,
         applicable_stage_types=tuple(
@@ -321,12 +389,63 @@ def _heavy_element_soc_consideration(
     )
 
 
-def _soc_support_payload(workflow: WorkflowSpec | None) -> dict[str, Any]:
-    capabilities = _supported_modifier_stage_capabilities(Modifier.SOC)
-    workflow_support = _workflow_modifier_support(workflow, Modifier.SOC)
+def _spin_polarisation_consideration(
+    detections: tuple[StructureDetection, ...],
+    workflow: WorkflowSpec | None,
+) -> MethodConsideration:
+    support = _modifier_support_payload(workflow, Modifier.SPIN_POLARIZED)
+    trigger_detection_ids = tuple(detection.id for detection in detections)
+    trigger_elements = tuple(detection.element for detection in detections)
+    trigger_classes = _ordered_spin_trigger_classes(detections)
+    return MethodConsideration(
+        id=SPIN_COMPOSITION_CONSIDERATION_ID,
+        method="spin_polarisation",
+        modifier=Modifier.SPIN_POLARIZED.value,
+        display_name="Spin Polarisation",
+        status=SPIN_RECOMMENDED_STATUS,
+        trigger_detection_ids=trigger_detection_ids,
+        trigger_elements=trigger_elements,
+        trigger_classes=trigger_classes,
+        observed_evidence={
+            "trigger_detection_ids": list(trigger_detection_ids),
+            "trigger_elements": list(trigger_elements),
+            "trigger_classes": list(trigger_classes),
+            "detections": [
+                _detection_evidence_for_consideration(
+                    detection,
+                    _spin_trigger_classes_for_element(detection.element),
+                )
+                for detection in detections
+            ],
+        },
+        reason=_SPIN_POLARISATION_REASON,
+        applicable_stage_types=tuple(
+            sorted(
+                {
+                    capability["stage_type"]
+                    for capability in support["supported_stage_capabilities"]
+                }
+            )
+        ),
+        bmd_compute_support=support,
+        selection_state=support["workflow"]["selection_state"],
+        policy_source={
+            **_POLICY_SOURCE,
+            "rule_id": SPIN_COMPOSITION_CONSIDERATION_ID,
+        },
+        limitations=_SPIN_POLARISATION_LIMITATIONS,
+    )
+
+
+def _modifier_support_payload(
+    workflow: WorkflowSpec | None,
+    modifier: Modifier,
+) -> dict[str, Any]:
+    capabilities = _supported_modifier_stage_capabilities(modifier)
+    workflow_support = _workflow_modifier_support(workflow, modifier)
     return {
-        "modifier": Modifier.SOC.value,
-        "modifier_label": modifier_display_name(Modifier.SOC),
+        "modifier": modifier.value,
+        "modifier_label": modifier_display_name(modifier),
         "global_supported": bool(capabilities),
         "supported_stage_capabilities": capabilities,
         "workflow": workflow_support,
@@ -466,6 +585,19 @@ def _soc_trigger_classes_for_element(element: str) -> tuple[str, ...]:
     return SOC_TRIGGER_ELEMENT_CLASSES.get(str(element), ())
 
 
+def _spin_trigger_classes_for_element(element: str) -> tuple[str, ...]:
+    return SPIN_TRIGGER_ELEMENT_CLASSES.get(str(element), ())
+
+
+def _detection_evidence_for_consideration(
+    detection: StructureDetection,
+    trigger_classes: tuple[str, ...],
+) -> dict[str, Any]:
+    payload = detection.to_dict()
+    payload["trigger_classes"] = list(trigger_classes)
+    return payload
+
+
 def _ordered_soc_trigger_classes(
     detections: tuple[StructureDetection, ...],
 ) -> tuple[str, ...]:
@@ -477,6 +609,21 @@ def _ordered_soc_trigger_classes(
     return tuple(
         class_name
         for class_name in SOC_TRIGGER_CLASSES
+        if class_name in observed_classes
+    )
+
+
+def _ordered_spin_trigger_classes(
+    detections: tuple[StructureDetection, ...],
+) -> tuple[str, ...]:
+    observed_classes = {
+        class_name
+        for detection in detections
+        for class_name in _spin_trigger_classes_for_element(detection.element)
+    }
+    return tuple(
+        class_name
+        for class_name in SPIN_TRIGGER_CLASSES
         if class_name in observed_classes
     )
 
@@ -508,6 +655,10 @@ __all__ = [
     "SOC_RECOMMENDED_STATUS",
     "SOC_TRIGGER_CLASSES",
     "SOC_TRIGGER_ELEMENT_CLASSES",
+    "SPIN_COMPOSITION_CONSIDERATION_ID",
+    "SPIN_RECOMMENDED_STATUS",
+    "SPIN_TRIGGER_CLASSES",
+    "SPIN_TRIGGER_ELEMENT_CLASSES",
     "StructureDetection",
     "UNSUPPORTED_FOR_WORKFLOW",
     "WORKFLOW_NOT_PROVIDED",

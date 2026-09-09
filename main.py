@@ -442,8 +442,12 @@ def execution_resources_from_form(
     )
 
 
-def method_considerations_context(structure_obj) -> dict | None:
-    payload = method_consideration_payload(structure_obj)
+def method_considerations_context(structure_obj, *, workflow: WorkflowSpec | None = None) -> dict | None:
+    payload = (
+        method_consideration_payload(structure_obj, workflow=workflow)
+        if workflow is not None
+        else method_consideration_payload(structure_obj)
+    )
     if not payload.get("considerations"):
         return None
 
@@ -451,19 +455,36 @@ def method_considerations_context(structure_obj) -> dict | None:
     for consideration in rendered.get("considerations", []):
         support = consideration.get("bmd_compute_support") or {}
         consideration["display_name"] = (
-            support.get("modifier_label")
+            consideration.get("display_name")
+            or support.get("modifier_label")
             or str(consideration.get("method") or "").upper()
         )
         evidence = consideration.get("observed_evidence") or {}
         for detection in evidence.get("detections") or []:
-            detection["soc_trigger_class_labels"] = [
+            trigger_classes = (
+                detection.get("trigger_classes")
+                or detection.get("soc_trigger_classes")
+                or detection.get("spin_trigger_classes")
+                or []
+            )
+            detection["trigger_class_labels"] = [
                 _method_consideration_class_label(class_name)
-                for class_name in detection.get("soc_trigger_classes", [])
+                for class_name in trigger_classes
             ]
     return rendered
 
 
 def _method_consideration_class_label(class_name: str) -> str:
+    spin_labels = {
+        "3d_spin_screen": "3d spin-screening element",
+        "4d_spin_screen": "4d spin-screening element",
+        "5d_spin_screen": "5d spin-screening element",
+        "lanthanide_spin_screen": "lanthanide spin-screening element",
+        "actinide_spin_screen": "actinide spin-screening element",
+    }
+    if class_name in spin_labels:
+        return spin_labels[class_name]
+
     label = str(class_name).replace("_", " ").replace("p block", "p-block")
     for plural, singular in (
         ("metals", "metal"),
@@ -679,7 +700,10 @@ def build_workflow(
             queue=queue,
         )
         structure_obj = parse_structure(structure, fmt)
-        method_considerations = method_considerations_context(structure_obj)
+        method_considerations = method_considerations_context(
+            structure_obj,
+            workflow=workflow_spec,
+        )
         summary, calculation_summary, generated_inputs, submission_spec = build_submission_state_from_structure(
             structure_obj=structure_obj,
             structure_text=structure,
@@ -768,7 +792,10 @@ def prepare_remote(
             queue=queue,
         )
         structure_obj = parse_structure(structure, fmt)
-        method_considerations = method_considerations_context(structure_obj)
+        method_considerations = method_considerations_context(
+            structure_obj,
+            workflow=workflow_spec,
+        )
         summary, calculation_summary, generated_inputs, submission_spec = build_submission_state_from_structure(
             structure_obj=structure_obj,
             structure_text=structure,
@@ -862,7 +889,10 @@ def submit_workflow(
             queue=queue,
         )
         structure_obj = parse_structure(structure, fmt)
-        method_considerations = method_considerations_context(structure_obj)
+        method_considerations = method_considerations_context(
+            structure_obj,
+            workflow=workflow_spec,
+        )
         summary, calculation_summary, generated_inputs, submission_spec = build_submission_state_from_structure(
             structure_obj=structure_obj,
             structure_text=structure,

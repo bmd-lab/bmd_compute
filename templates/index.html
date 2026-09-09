@@ -1154,8 +1154,8 @@ ul {
                             {% for detection in consideration.observed_evidence.detections %}
                             <li>
                                 <span class="method-trigger-element">{{ detection.element }}</span>
-                                {% if detection.soc_trigger_class_labels %}
-                                — {{ detection.soc_trigger_class_labels | join(", ") }}
+                                {% if detection.trigger_class_labels %}
+                                — {{ detection.trigger_class_labels | join(", ") }}
                                 {% endif %}
                             </li>
                             {% endfor %}

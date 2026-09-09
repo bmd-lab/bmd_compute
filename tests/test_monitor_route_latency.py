@@ -353,8 +353,9 @@ def test_build_calculation_keeps_structure_input_expanded(monkeypatch):
         assert fmt == "poscar"
         return parsed_structure
 
-    def fake_method_considerations_context(structure_obj):
+    def fake_method_considerations_context(structure_obj, *, workflow=None):
         assert structure_obj is parsed_structure
+        assert workflow is not None
         return None
 
     def fake_build_submission_state(**kwargs):
