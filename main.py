@@ -460,6 +460,20 @@ def method_considerations_context(structure_obj, *, workflow: WorkflowSpec | Non
             or str(consideration.get("method") or "").upper()
         )
         evidence = consideration.get("observed_evidence") or {}
+        trigger_items = []
+        for trigger in evidence.get("triggers") or []:
+            trigger_item = deepcopy(trigger)
+            trigger_item["display_label"] = (
+                trigger.get("label")
+                or trigger.get("element")
+                or trigger.get("id")
+                or "Structural observation"
+            )
+            trigger_item["trigger_class_labels"] = [
+                _method_consideration_class_label(class_name)
+                for class_name in trigger.get("trigger_classes") or []
+            ]
+            trigger_items.append(trigger_item)
         for detection in evidence.get("detections") or []:
             trigger_classes = (
                 detection.get("trigger_classes")
@@ -471,6 +485,15 @@ def method_considerations_context(structure_obj, *, workflow: WorkflowSpec | Non
                 _method_consideration_class_label(class_name)
                 for class_name in trigger_classes
             ]
+            trigger_items.append(
+                {
+                    "id": detection.get("id"),
+                    "type": detection.get("type"),
+                    "display_label": detection.get("element") or detection.get("id"),
+                    "trigger_class_labels": detection["trigger_class_labels"],
+                }
+            )
+        consideration["trigger_items"] = trigger_items
     return rendered
 
 

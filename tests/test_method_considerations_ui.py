@@ -9,6 +9,7 @@ import main
 from backend.calculations.input_reference import build_input_reference_payload
 from backend.calculations.models import Modifier, StageSpec, StageType, Theory, WorkflowSpec
 from backend.calculations.registry import validate_workflow_spec
+from backend.structure_dimensionality import ANALYSIS_FAILED, StructureDimensionalityObservation
 
 
 BI2SE3_POSCAR = """Bi2Se3
@@ -162,21 +163,29 @@ def test_bi_containing_structure_renders_method_considerations_after_summary():
     assert response.status_code == 200
     assert response.context["summary"]["reduced_formula"] == "Bi2Se3"
     assert response.context["summary"]["natoms"] == 15
-    assert response.context["method_considerations"]["policy_version"] == 3
+    assert response.context["method_considerations"]["policy_version"] == 4
     assert "Method Considerations" in html
     assert html.index("Structure Summary") < html.index("Method Considerations")
     assert html.index("Method Considerations") < html.index("Calculation Definition")
 
 
-def test_real_style_bi2se3_renders_one_soc_consideration_with_bi_trigger():
+def test_real_style_bi2se3_renders_independent_dispersion_and_soc_considerations():
     response = analyze_poscar(BI2SE3_POSCAR)
     html = render_response(response)
     considerations = response.context["method_considerations"]["considerations"]
 
-    assert len(considerations) == 1
-    assert considerations[0]["id"] == "soc.heavy_elements"
-    assert considerations[0]["trigger_elements"] == ["Bi"]
+    assert [consideration["id"] for consideration in considerations] == [
+        "dispersion.two_dimensional_connectivity",
+        "soc.heavy_elements",
+    ]
+    dispersion, soc = considerations
+    assert dispersion["trigger_elements"] == []
+    assert dispersion["trigger_classes"] == ["two_dimensional_bonded_connectivity"]
+    assert dispersion["observed_evidence"]["triggers"][0]["dimensionality"] == 2
+    assert soc["trigger_elements"] == ["Bi"]
     assert "Spin-Orbit Coupling (SOC)" in html
+    assert "Dispersion Correction" in html
+    assert "Two-dimensional bonded connectivity" in html
     assert "Bi" in html
     assert "heavy p-block" in html
     assert "Se \u2014" not in html
@@ -214,16 +223,65 @@ def test_multi_trigger_bi_pt_se_renders_one_consideration_and_actual_triggers_on
     assert "Se \u2014" not in html
 
 
-def test_si_and_sns2_do_not_render_empty_method_considerations_section():
-    for poscar in (SI_POSCAR, SNS2_POSCAR):
-        response = analyze_poscar(poscar)
-        html = render_response(response)
+def test_si_does_not_render_empty_method_considerations_section():
+    response = analyze_poscar(SI_POSCAR)
+    html = render_response(response)
 
-        assert response.context["method_considerations"] is None
-        assert "Method Considerations" not in html
-        assert "nonmagnetic" not in html.lower()
-        assert "SOC not needed" not in html
-        assert "No methodological issues found" not in html
+    assert response.context["method_considerations"] is None
+    assert "Method Considerations" not in html
+    assert "nonmagnetic" not in html.lower()
+    assert "SOC not needed" not in html
+    assert "No methodological issues found" not in html
+    assert "dispersion unnecessary" not in html.lower()
+    assert "no vdW interactions" not in html
+
+
+def test_sns2_renders_dispersion_consideration_with_structural_trigger():
+    response = analyze_poscar(SNS2_POSCAR)
+    html = render_response(response)
+    considerations = response.context["method_considerations"]["considerations"]
+
+    assert [consideration["id"] for consideration in considerations] == [
+        "dispersion.two_dimensional_connectivity"
+    ]
+    consideration = considerations[0]
+    assert consideration["trigger_elements"] == []
+    assert consideration["trigger_classes"] == ["two_dimensional_bonded_connectivity"]
+    assert consideration["observed_evidence"]["triggers"][0]["method"]["id"] == (
+        "pymatgen.crystalnn_larsen_dimensionality"
+    )
+    assert consideration["observed_evidence"]["triggers"][0]["components"][0]["formula"] == "SnS2"
+    assert "Dispersion Correction" in html
+    assert "Advisory" in html
+    assert "Triggered by" in html
+    assert "Two-dimensional bonded connectivity" in html
+    assert "PBE Geometry Optimisation" in html
+    assert "PBE Static Energy" in html
+    assert "does not establish the magnitude of dispersion interactions" in html
+    assert "Sn \u2014" not in html
+    assert "S \u2014" not in html
+    assert "vdW material" not in html
+    assert "dispersion is required" not in html.lower()
+
+
+def test_dimensionality_failure_does_not_block_analyze_or_render_dispersion(monkeypatch):
+    monkeypatch.setattr(
+        "backend.calculations.method_considerations.observe_structure_dimensionality",
+        lambda structure: StructureDimensionalityObservation(
+            status=ANALYSIS_FAILED,
+            dimensionality=None,
+            reason="test failure",
+        ),
+    )
+
+    response = analyze_poscar(SNS2_POSCAR)
+    html = render_response(response)
+
+    assert response.status_code == 200
+    assert response.context["summary"]["reduced_formula"] == "SnS2"
+    assert response.context["method_considerations"] is None
+    assert "Method Considerations" not in html
+    assert "Dispersion Correction" not in html
 
 
 def test_fe_structure_renders_spin_polarisation_consideration_only():
@@ -314,7 +372,7 @@ def test_analyze_reuses_the_parsed_structure_for_method_considerations(monkeypat
     def fake_method_consideration_payload(structure_obj):
         assert structure_obj is sentinel
         return {
-            "policy_version": 3,
+            "policy_version": 4,
             "scope": "test",
             "detections": [],
             "considerations": [],
@@ -365,7 +423,11 @@ def test_method_consideration_ui_does_not_mutate_workflow_modifiers_or_inputs():
 
     reference_after = build_input_reference_payload(request_payload, include_provenance=False)
     assert response.status_code == 200
-    assert response.context["method_considerations"]["considerations"][0]["id"] == "soc.heavy_elements"
+    consideration_ids = [
+        consideration["id"]
+        for consideration in response.context["method_considerations"]["considerations"]
+    ]
+    assert "soc.heavy_elements" in consideration_ids
     assert response.context["selected_workflow"]["stages"][0]["modifiers"] == []
     assert "LSORBIT" not in response.context["generated_inputs"]["incar"]
     assert response.context["generated_inputs"]["vasp_executable"] == "vasp_std"
@@ -416,6 +478,50 @@ def test_spin_consideration_ui_does_not_mutate_workflow_modifiers_or_inputs():
     assert reference_after == reference_before
 
 
+def test_dispersion_consideration_ui_does_not_mutate_workflow_modifiers_or_inputs():
+    workflow = WorkflowSpec([StageSpec(StageType.STATIC, Theory.PBE)])
+    workflow_before = workflow.to_dict()
+    request_payload = {
+        "structure": {
+            "type": "pasted_text",
+            "format": "poscar",
+            "text": SNS2_POSCAR,
+        },
+        "workflow_spec": workflow.to_dict(),
+        "resources": {"ntasks": 24, "mem_gb": 128},
+        "potcar_functional": "PBE_64",
+    }
+    reference_before = build_input_reference_payload(request_payload, include_provenance=False)
+
+    response = main.build_workflow(
+        request("/build-calculation"),
+        structure=SNS2_POSCAR,
+        fmt="poscar",
+        purpose="static",
+        theory="pbe",
+        modifiers=None,
+        cpus=None,
+        memory_gb=None,
+        walltime=None,
+        queue=None,
+        workflow_spec_json=json.dumps(workflow.to_dict(), sort_keys=True),
+        workflow=None,
+        method=None,
+    )
+
+    reference_after = build_input_reference_payload(request_payload, include_provenance=False)
+    consideration = response.context["method_considerations"]["considerations"][0]
+    assert response.status_code == 200
+    assert consideration["id"] == "dispersion.two_dimensional_connectivity"
+    assert consideration["selection_state"] == "not_selected"
+    assert response.context["selected_workflow"]["stages"][0]["modifiers"] == []
+    assert "value=\"dispersion\" checked" not in render_response(response)
+    assert "IVDW" not in response.context["generated_inputs"]["incar"]
+    assert "dftd3" not in json.dumps(response.context["generated_inputs"], sort_keys=True).lower()
+    assert workflow.to_dict() == workflow_before
+    assert reference_after == reference_before
+
+
 def test_existing_structure_summary_and_calculation_definition_remain_present():
     response = analyze_poscar(SI_POSCAR)
     html = render_response(response)
@@ -426,7 +532,7 @@ def test_existing_structure_summary_and_calculation_definition_remain_present():
     assert response.context["selected_workflow"]["stages"][0]["stage_type"] == "static"
 
 
-def test_template_has_no_duplicated_soc_element_policy_table():
+def test_template_has_no_duplicated_method_consideration_policy_tables():
     source = main.templates.get_template("index.html").render(main.page_context())
     method_block = source[
         source.index("method-considerations"):
@@ -442,5 +548,7 @@ def test_template_has_no_duplicated_soc_element_policy_table():
         "3d_spin_screen",
         "lanthanide_spin_screen",
         "actinide_spin_screen",
+        "two_dimensional_bonded_connectivity",
+        "pymatgen.crystalnn_larsen_dimensionality",
     ):
         assert class_name not in method_block
