@@ -80,11 +80,16 @@ HSE06 support is stage-specific:
 
 ## Modifiers
 
-Current modifiers are:
+Normal UI modifiers are:
 
 - Spin Polarised
 - explicit DFT+U
 - SOC
+- Dispersion correction
+
+Internal compatibility modifiers are retained for existing serialized requests and
+programmatic use:
+
 - Gamma-only
 - Ions-only
 
@@ -95,6 +100,7 @@ Important rules:
 - SOC is available for reviewed PBE Static Energy stages and uses `vasp_ncl`.
 - HSE06 + SOC remains unsupported.
 - DFT+U is explicit and is applied only when selected and when reviewed U values are available for the structure.
+- Dispersion correction uses BMD Compute's current default implementation, DFT-D3(BJ), in the normal UI. Backend compatibility still accepts explicit DFT-D3 and DFT-D3(BJ) requests.
 - Spin polarization is supported where the stage registry allows it.
 - Ions-only is a PBE relax-stage compatibility modifier.
 

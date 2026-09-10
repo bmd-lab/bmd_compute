@@ -15,7 +15,6 @@ from backend.calculations.dispersion import (
     DEFAULT_DISPERSION_METHOD,
     DISPERSION_OPTION_KEY,
     dispersion_method_from_options,
-    dispersion_method_options,
 )
 from backend.calculations.theory_policy import (
     CalculationStage,
@@ -213,7 +212,7 @@ _MODIFIER_TOOLTIPS = {
         "SOC is available for reviewed PBE Static Energy stages and runs with vasp_ncl."
     ),
     Modifier.DFT_U: "DFT+U is applied only when explicitly selected.",
-    Modifier.DISPERSION: "DFT-D3 or DFT-D3(BJ) dispersion for PBE Geometry Optimisation and Static Energy stages.",
+    Modifier.DISPERSION: "Dispersion correction for PBE Geometry Optimisation and Static Energy stages.",
 }
 
 _UI_HIDDEN_MODIFIERS = {
@@ -855,7 +854,6 @@ def calculation_form_options() -> dict:
             for modifier in _UI_MODIFIER_ORDER
             if modifier not in _UI_HIDDEN_MODIFIERS
         ],
-        "dispersion_methods": list(dispersion_method_options()),
         "default_dispersion_method": DEFAULT_DISPERSION_METHOD,
         "stage_types": [
             {
