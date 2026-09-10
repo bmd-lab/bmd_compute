@@ -153,13 +153,12 @@ assert [option["label"] for option in form_options["modifiers"]] == [
     "Spin-Orbit Coupling (SOC)",
     "DFT+U",
     "Dispersion correction",
-    "Gamma-only",
 ]
 modifier_options = {option["value"]: option for option in form_options["modifiers"]}
-for modifier in ("spin_polarized", "dft_u", "dispersion", "gamma_only"):
+assert "gamma_only" not in modifier_options
+for modifier in ("spin_polarized", "dft_u", "dispersion"):
     assert modifier_options[modifier]["enabled"] is True
 assert modifier_options["spin_polarized"]["tooltip"] == ""
-assert modifier_options["gamma_only"]["tooltip"] == ""
 assert modifier_options["dft_u"]["tooltip"] == "DFT+U is applied only when explicitly selected."
 assert "DFT-D3" in modifier_options["dispersion"]["tooltip"]
 assert modifier_options["soc"]["enabled"] is True

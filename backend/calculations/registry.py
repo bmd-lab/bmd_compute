@@ -217,6 +217,7 @@ _MODIFIER_TOOLTIPS = {
 }
 
 _UI_HIDDEN_MODIFIERS = {
+    Modifier.GAMMA_ONLY,
     Modifier.IONS_ONLY,
 }
 
