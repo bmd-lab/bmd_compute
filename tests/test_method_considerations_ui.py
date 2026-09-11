@@ -136,6 +136,12 @@ def render_response(response) -> str:
     return response.template.render(response.context)
 
 
+def method_considerations_block(html: str) -> str:
+    start = html.index('class="method-considerations"')
+    end = html.index('<section class="stage">', start)
+    return html[start:end]
+
+
 def analyze_poscar(poscar: str):
     return main.analyze(request(), structure=poscar, fmt="poscar")
 
@@ -169,6 +175,24 @@ def test_bi_containing_structure_renders_method_considerations_after_summary():
     assert html.index("Method Considerations") < html.index("Calculation Definition")
 
 
+def test_method_consideration_visual_state_uses_advisory_not_success_or_error():
+    source = main.templates.get_template("index.html").render(main.page_context())
+
+    assert "--bmd-advisory" in source
+    assert ".step-mark.advisory" in source
+    assert "var(--bmd-advisory)" in source
+    assert ".pill.ready" in source
+    assert "var(--bmd-success)" in source
+    assert ".pill.failed" in source
+    assert "var(--bmd-danger)" in source
+
+    response = analyze_poscar(SNS2_POSCAR)
+    block = method_considerations_block(render_response(response))
+    assert 'class="step-mark advisory"' in block
+    assert "pill ready" not in block
+    assert "pill failed" not in block
+
+
 def test_real_style_bi2se3_renders_independent_dispersion_and_soc_considerations():
     response = analyze_poscar(BI2SE3_POSCAR)
     html = render_response(response)
@@ -183,11 +207,16 @@ def test_real_style_bi2se3_renders_independent_dispersion_and_soc_considerations
     assert dispersion["trigger_classes"] == ["two_dimensional_bonded_connectivity"]
     assert dispersion["observed_evidence"]["triggers"][0]["dimensionality"] == 2
     assert soc["trigger_elements"] == ["Bi"]
+    assert dispersion["display_name"] == "Dispersion Correction"
+    assert dispersion["browser_display_name"] == "van der Waals Correction"
+    assert "This structure has two-dimensional bonded connectivity" in dispersion["reason"]
     assert "Spin-Orbit Coupling (SOC)" in html
-    assert "Dispersion Correction" in html
-    assert "Two-dimensional bonded connectivity" in html
-    assert "Bi" in html
-    assert "heavy p-block" in html
+    assert "van der Waals Correction" in html
+    assert "Likely 2-dimensional structure detected" in html
+    assert "Bi detected. Suggested to activate the Spin-Orbit Coupling (SOC)" in html
+    block = method_considerations_block(html)
+    assert "Two-dimensional bonded connectivity" not in block
+    assert "heavy p-block" not in block
     assert "Se \u2014" not in html
 
 
@@ -198,8 +227,8 @@ def test_pt_containing_structure_renders_soc_consideration_with_5d_trigger():
 
     assert consideration["trigger_elements"] == ["Pt"]
     assert consideration["trigger_classes"] == ["5d_transition_metals"]
-    assert "Pt" in html
-    assert "5d transition metal" in html
+    assert "Pt detected. Suggested to activate the Spin-Orbit Coupling (SOC)" in html
+    assert "5d transition metal" not in method_considerations_block(html)
     assert "Se \u2014" not in html
 
 
@@ -216,10 +245,10 @@ def test_multi_trigger_bi_pt_se_renders_one_consideration_and_actual_triggers_on
         "heavy_p_block",
     ]
     assert html.count('data-method-consideration-id="soc.heavy_elements"') == 1
-    assert "Bi" in html
-    assert "Pt" in html
-    assert "heavy p-block" in html
-    assert "5d transition metal" in html
+    assert "Bi and Pt detected. Suggested to activate the Spin-Orbit Coupling (SOC)" in html
+    block = method_considerations_block(html)
+    assert "heavy p-block" not in block
+    assert "5d transition metal" not in block
     assert "Se \u2014" not in html
 
 
@@ -251,13 +280,20 @@ def test_sns2_renders_dispersion_consideration_with_structural_trigger():
         "pymatgen.crystalnn_larsen_dimensionality"
     )
     assert consideration["observed_evidence"]["triggers"][0]["components"][0]["formula"] == "SnS2"
-    assert "Dispersion Correction" in html
-    assert "Advisory" in html
-    assert "Triggered by" in html
-    assert "Two-dimensional bonded connectivity" in html
+    assert consideration["display_name"] == "Dispersion Correction"
+    assert consideration["browser_display_name"] == "van der Waals Correction"
+    assert "van der Waals Correction" in html
+    assert 'class="step-mark advisory"' in html
+    assert "Likely 2-dimensional structure detected" in html
+    assert "Suggested to activate the van der Waals correction Advanced Option" in html
     assert "PBE Geometry Optimisation" in html
     assert "PBE Static Energy" in html
-    assert "does not establish the magnitude of dispersion interactions" in html
+    block = method_considerations_block(html)
+    assert "Advisory</span>" not in block
+    assert "Triggered by" not in block
+    assert "Two-dimensional bonded connectivity" not in block
+    assert "BMD Compute support" not in block
+    assert "does not establish the magnitude of dispersion interactions" not in block
     assert "Sn \u2014" not in html
     assert "S \u2014" not in html
     assert "vdW material" not in html
@@ -281,7 +317,7 @@ def test_dimensionality_failure_does_not_block_analyze_or_render_dispersion(monk
     assert response.context["summary"]["reduced_formula"] == "SnS2"
     assert response.context["method_considerations"] is None
     assert "Method Considerations" not in html
-    assert "Dispersion Correction" not in html
+    assert "van der Waals Correction" not in html
 
 
 def test_fe_structure_renders_spin_polarisation_consideration_only():
@@ -295,9 +331,8 @@ def test_fe_structure_renders_spin_polarisation_consideration_only():
     assert considerations[0]["trigger_elements"] == ["Fe"]
     assert considerations[0]["trigger_classes"] == ["3d_spin_screen"]
     assert "Spin Polarisation" in html
-    assert "Fe" in html
-    assert "3d spin-screening element" in html
-    assert "Consider enabling Spin Polarised" in html
+    assert "Fe detected. Suggested to activate the Spin Polarised Advanced Option." in html
+    assert "3d spin-screening element" not in method_considerations_block(html)
     assert 'data-method-consideration-id="soc.heavy_elements"' not in html
     assert "ISPIN=2 is required" not in html
 
@@ -319,21 +354,25 @@ def test_eu_and_ir_render_independent_spin_and_soc_cards():
         assert html.count('data-method-consideration-id="soc.heavy_elements"') == 1
         assert "Spin Polarisation" in html
         assert "Spin-Orbit Coupling (SOC)" in html
-        assert symbol in html
-        assert spin_label in html
-        assert soc_label in html
+        assert f"{symbol} detected. Suggested to activate the Spin Polarised Advanced Option." in html
+        assert f"{symbol} detected. Suggested to activate the Spin-Orbit Coupling (SOC)" in html
+        block = method_considerations_block(html)
+        assert spin_label not in block
+        assert soc_label not in block
 
 
-def test_backend_reason_limitations_and_support_are_rendered_without_stronger_claims():
+def test_backend_reason_limitations_and_support_remain_structured_but_not_rendered():
     response = analyze_poscar(BI2SE3_POSCAR)
     html = render_response(response)
     consideration = response.context["method_considerations"]["considerations"][0]
+    block = method_considerations_block(html)
 
-    assert consideration["reason"] in html
+    assert "This structure has two-dimensional bonded connectivity" in consideration["reason"]
     for limitation in consideration["limitations"]:
-        assert limitation in html
-    assert "BMD Compute support" in html
-    assert "PBE Static Energy" in html
+        assert limitation not in block
+    assert consideration["bmd_compute_support"]["supported_stage_capabilities"]
+    assert "BMD Compute support" not in block
+    assert "Triggered by" not in block
     for forbidden in (
         "SOC required",
         "SOC necessary",

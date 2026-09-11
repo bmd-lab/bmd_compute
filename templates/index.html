@@ -21,6 +21,8 @@
     --bmd-accent-hover: #1a6aff;
     --bmd-accent-soft: #edf3ff;
     --bmd-success: #39641d;
+    --bmd-advisory: #b58900;
+    --bmd-advisory-soft: #fff8df;
     --bmd-warning: #ea6020;
     --bmd-danger: #c94001;
     --bmd-code-bg: #f7f9fc;
@@ -191,40 +193,23 @@ h2 {
     align-items: center;
     display: flex;
     gap: 12px;
-    justify-content: space-between;
     margin-bottom: 12px;
 }
 
 .method-consideration-title {
+    align-items: center;
     color: var(--bmd-text);
+    display: flex;
     font-size: 16px;
     font-weight: 700;
+    gap: 10px;
 }
 
-.method-consideration-section {
+.method-consideration-summary {
     color: var(--bmd-text-soft);
     font-size: 14px;
     line-height: 1.5;
-    margin-top: 12px;
-}
-
-.method-consideration-label {
-    color: var(--bmd-text-muted);
-    font-size: 12px;
-    font-weight: 700;
-    margin-bottom: 6px;
-}
-
-.method-consideration-list {
-    display: grid;
-    gap: 4px;
-    list-style: none;
-    padding-left: 0;
-}
-
-.method-trigger-element {
-    color: var(--bmd-text);
-    font-weight: 700;
+    margin: 0;
 }
 
 .form-grid {
@@ -801,6 +786,12 @@ ul {
     color: var(--bmd-danger);
 }
 
+.step-mark.advisory {
+    background: var(--bmd-advisory-soft);
+    border-color: var(--bmd-advisory);
+    color: var(--bmd-advisory);
+}
+
 .failure-table {
     margin-top: 10px;
 }
@@ -1143,51 +1134,15 @@ ul {
                     class="method-consideration-card"
                     data-method-consideration-id="{{ consideration.id }}">
                     <div class="method-consideration-header">
-                        <div class="method-consideration-title">{{ consideration.display_name }}</div>
-                        <span class="pill">Advisory</span>
+                        <div class="method-consideration-title">
+                            <span class="step-mark advisory" aria-label="Advisory">!</span>
+                            <span>{{ consideration.browser_display_name }}</span>
+                        </div>
                     </div>
 
-                    {% if consideration.trigger_items %}
-                    <div class="method-consideration-section">
-                        <div class="method-consideration-label">Triggered by</div>
-                        <ul class="method-consideration-list">
-                            {% for trigger in consideration.trigger_items %}
-                            <li>
-                                <span class="method-trigger-element">{{ trigger.display_label }}</span>
-                                {% if trigger.trigger_class_labels %}
-                                — {{ trigger.trigger_class_labels | join(", ") }}
-                                {% endif %}
-                            </li>
-                            {% endfor %}
-                        </ul>
-                    </div>
-                    {% endif %}
-
-                    <div class="method-consideration-section">
-                        {{ consideration.reason }}
-                    </div>
-
-                    {% if consideration.bmd_compute_support and consideration.bmd_compute_support.supported_stage_capabilities %}
-                    <div class="method-consideration-section">
-                        <div class="method-consideration-label">BMD Compute support</div>
-                        <ul class="method-consideration-list">
-                            {% for capability in consideration.bmd_compute_support.supported_stage_capabilities %}
-                            <li>{{ capability.theory_label }} {{ capability.stage_label }}</li>
-                            {% endfor %}
-                        </ul>
-                    </div>
-                    {% endif %}
-
-                    {% if consideration.limitations %}
-                    <div class="method-consideration-section">
-                        <div class="method-consideration-label">Note</div>
-                        <ul class="method-consideration-list">
-                            {% for limitation in consideration.limitations %}
-                            <li>{{ limitation }}</li>
-                            {% endfor %}
-                        </ul>
-                    </div>
-                    {% endif %}
+                    <p class="method-consideration-summary">
+                        {{ consideration.browser_summary }}
+                    </p>
                 </div>
                 {% endfor %}
             </div>
@@ -1353,7 +1308,7 @@ ul {
                                                     {% set stage_dispersion_options = stage.options.get("dispersion", {}) %}
                                                     {% set stage_dispersion_method = stage_dispersion_options.get("method", calculation_options.default_dispersion_method) if stage_dispersion_options is mapping else calculation_options.default_dispersion_method %}
                                                     <div class="modifier-detail" data-dispersion-control>
-                                                        <label>Dispersion correction</label>
+                                                        <label>van der Waals correction</label>
                                                         <select
                                                             data-stage-dispersion-method
                                                             {% if "dispersion" not in stage.modifiers %}disabled{% endif %}>
@@ -2581,7 +2536,7 @@ document.addEventListener("DOMContentLoaded", function () {
         var selected = selectedValue || defaultDispersionMethod;
         var disabledAttribute = disabled ? " disabled" : "";
         return '<div class="modifier-detail" data-dispersion-control>' +
-            '<label>Dispersion correction</label>' +
+            '<label>van der Waals correction</label>' +
             '<select data-stage-dispersion-method' + disabledAttribute + '>' +
                 dispersionMethods.map(function (method) {
                     var selectedAttribute = method.value === selected ? " selected" : "";
