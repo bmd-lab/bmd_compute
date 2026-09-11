@@ -13,7 +13,12 @@ from backend.calculations.models import (
     Theory,
     WorkflowSpec,
 )
-from backend.calculations.method_considerations import method_consideration_payload
+from backend.calculations.method_considerations import (
+    DISPERSION_TWO_DIMENSIONAL_CONNECTIVITY_CONSIDERATION_ID,
+    SOC_HEAVY_ELEMENTS_CONSIDERATION_ID,
+    SPIN_COMPOSITION_CONSIDERATION_ID,
+    method_consideration_payload,
+)
 from backend.calculations.resources import (
     ALLOWED_CPU_COUNTS,
     ALLOWED_MEMORY_GB,
@@ -494,7 +499,93 @@ def method_considerations_context(structure_obj, *, workflow: WorkflowSpec | Non
                 }
             )
         consideration["trigger_items"] = trigger_items
+        consideration["browser_display_name"] = _method_consideration_browser_name(
+            consideration
+        )
+        consideration["browser_summary"] = _method_consideration_browser_summary(
+            consideration
+        )
     return rendered
+
+
+def _method_consideration_browser_name(consideration: dict) -> str:
+    if consideration.get("id") == DISPERSION_TWO_DIMENSIONAL_CONNECTIVITY_CONSIDERATION_ID:
+        return "van der Waals Correction"
+    return str(consideration.get("display_name") or "Method Consideration")
+
+
+def _method_consideration_browser_summary(consideration: dict) -> str:
+    consideration_id = consideration.get("id")
+    if consideration_id == DISPERSION_TWO_DIMENSIONAL_CONNECTIVITY_CONSIDERATION_ID:
+        support = _method_consideration_support_phrase(consideration)
+        suffix = f" for {support}" if support else ""
+        return (
+            "Likely 2-dimensional structure detected. Suggested to activate the "
+            f"van der Waals correction Advanced Option{suffix}."
+        )
+
+    elements = _human_join(consideration.get("trigger_elements") or ())
+    subject = f"{elements} detected" if elements else "Relevant structure feature detected"
+
+    if consideration_id == SPIN_COMPOSITION_CONSIDERATION_ID:
+        return (
+            f"{subject}. Suggested to activate the Spin Polarised Advanced Option."
+        )
+
+    if consideration_id == SOC_HEAVY_ELEMENTS_CONSIDERATION_ID:
+        support = _method_consideration_support_phrase(consideration)
+        suffix = f" for {support}" if support else ""
+        return (
+            f"{subject}. Suggested to activate the Spin-Orbit Coupling (SOC) "
+            f"Advanced Option{suffix}."
+        )
+
+    reason = str(consideration.get("reason") or "").strip()
+    return reason or f"{subject}."
+
+
+def _method_consideration_support_phrase(consideration: dict) -> str:
+    support = consideration.get("bmd_compute_support") or {}
+    capabilities = support.get("supported_stage_capabilities") or ()
+    if not capabilities:
+        return ""
+
+    stage_order = {
+        "relax": 0,
+        "static": 1,
+        "dos": 2,
+        "band_structure": 3,
+    }
+    unique_capabilities = {
+        (
+            capability.get("theory"),
+            capability.get("stage_type"),
+            f"{capability.get('theory_label')} {capability.get('stage_label')}",
+        )
+        for capability in capabilities
+    }
+    labels = [
+        label
+        for _theory, _stage_type, label in sorted(
+            unique_capabilities,
+            key=lambda item: (str(item[0]), stage_order.get(str(item[1]), 99), item[2]),
+        )
+        if "None" not in label
+    ]
+    if not labels:
+        return ""
+    return f"{_human_join(labels, conjunction='or')} stages"
+
+
+def _human_join(values, *, conjunction: str = "and") -> str:
+    items = [str(value) for value in values if str(value)]
+    if not items:
+        return ""
+    if len(items) == 1:
+        return items[0]
+    if len(items) == 2:
+        return f" {conjunction} ".join(items)
+    return f"{', '.join(items[:-1])}, {conjunction} {items[-1]}"
 
 
 def _method_consideration_class_label(class_name: str) -> str:

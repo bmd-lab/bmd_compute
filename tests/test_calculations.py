@@ -152,7 +152,7 @@ assert [option["label"] for option in form_options["modifiers"]] == [
     "Spin Polarised",
     "Spin-Orbit Coupling (SOC)",
     "DFT+U",
-    "Dispersion correction",
+    "van der Waals correction",
 ]
 modifier_options = {option["value"]: option for option in form_options["modifiers"]}
 assert "gamma_only" not in modifier_options
@@ -160,7 +160,7 @@ for modifier in ("spin_polarized", "dft_u", "dispersion"):
     assert modifier_options[modifier]["enabled"] is True
 assert modifier_options["spin_polarized"]["tooltip"] == ""
 assert modifier_options["dft_u"]["tooltip"] == "DFT+U is applied only when explicitly selected."
-assert "DFT-D3" in modifier_options["dispersion"]["tooltip"]
+assert "van der Waals correction" in modifier_options["dispersion"]["tooltip"]
 assert modifier_options["soc"]["enabled"] is True
 assert "vasp_ncl" in modifier_options["soc"]["tooltip"]
 assert form_options["default_dispersion_method"] == "dftd3-bj"

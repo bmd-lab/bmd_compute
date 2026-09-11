@@ -66,7 +66,7 @@ def test_gamma_only_is_not_rendered_in_normal_advanced_options():
         "Spin Polarised",
         "Spin-Orbit Coupling (SOC)",
         "DFT+U",
-        "Dispersion correction",
+        "van der Waals correction",
     ):
         assert label in html
 

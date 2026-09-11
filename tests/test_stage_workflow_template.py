@@ -20,7 +20,7 @@ assert "Custom Workflow" in source
 assert "Calculation Type" in source
 assert "Level of Theory" in source
 assert "Advanced Options" in source
-assert "Dispersion correction" in source
+assert "van der Waals correction" in source
 assert "default_dispersion_method" in source
 assert "dispersion_methods" in source
 assert 'id="structure-input-details"' in source

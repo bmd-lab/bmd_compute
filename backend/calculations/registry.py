@@ -202,7 +202,7 @@ _MODIFIER_DISPLAY_NAMES = {
     Modifier.SPIN_POLARIZED: "Spin Polarised",
     Modifier.SOC: "Spin-Orbit Coupling (SOC)",
     Modifier.DFT_U: "DFT+U",
-    Modifier.DISPERSION: "Dispersion correction",
+    Modifier.DISPERSION: "van der Waals correction",
     Modifier.GAMMA_ONLY: "Gamma-only",
     Modifier.IONS_ONLY: "Ions only",
 }
@@ -213,7 +213,7 @@ _MODIFIER_TOOLTIPS = {
         "SOC is available for reviewed PBE Static Energy stages and runs with vasp_ncl."
     ),
     Modifier.DFT_U: "DFT+U is applied only when explicitly selected.",
-    Modifier.DISPERSION: "DFT-D3 or DFT-D3(BJ) dispersion for PBE Geometry Optimisation and Static Energy stages.",
+    Modifier.DISPERSION: "van der Waals correction for PBE Geometry Optimisation and Static Energy stages.",
 }
 
 _UI_HIDDEN_MODIFIERS = {
@@ -660,25 +660,25 @@ def _validate_dispersion_stage_support(stage: StageSpec) -> None:
     has_dispersion_modifier = Modifier.DISPERSION in stage.modifiers
     if has_dispersion_option and not has_dispersion_modifier:
         raise CalculationValidationError(
-            "Dispersion correction options require the Dispersion correction advanced option.",
-            suggestion="Enable Dispersion correction or remove the stage-local dispersion option.",
+            "van der Waals correction options require the van der Waals correction advanced option.",
+            suggestion="Enable van der Waals correction or remove the stage-local dispersion option.",
         )
     if not has_dispersion_modifier:
         return
 
     if stage.theory is not Theory.PBE:
         raise CalculationValidationError(
-            "Dispersion correction is currently available for PBE Geometry Optimisation and Static Energy stages only.",
-            suggestion="Use PBE for this dispersion-corrected stage, or remove Dispersion correction.",
+            "van der Waals correction is currently available for PBE Geometry Optimisation and Static Energy stages only.",
+            suggestion="Use PBE for this van der Waals-corrected stage, or remove van der Waals correction.",
         )
     if Modifier.SOC in stage.modifiers:
         raise CalculationValidationError(
-            "Dispersion correction is not available together with Spin-Orbit Coupling (SOC) yet.",
-            suggestion="Remove either Dispersion correction or SOC for this stage.",
+            "van der Waals correction is not available together with Spin-Orbit Coupling (SOC) yet.",
+            suggestion="Remove either van der Waals correction or SOC for this stage.",
         )
     if stage.stage_type not in {StageType.RELAX, StageType.STATIC}:
         raise CalculationValidationError(
-            "Dispersion correction is applied only to PBE Geometry Optimisation and Static Energy stages in Phase 1.",
+            "van der Waals correction is applied only to PBE Geometry Optimisation and Static Energy stages in Phase 1.",
             suggestion="Apply dispersion to the PBE precursor relax/static stages, not directly to DOS or Band Structure.",
         )
     try:
@@ -704,7 +704,7 @@ def _validate_dispersion_workflow_consistency(workflow: WorkflowSpec) -> None:
             continue
         if previous_method or current_method:
             raise CalculationValidationError(
-                "Use the same dispersion correction across connected PBE relax/static stages.",
+                "Use the same van der Waals correction across connected PBE relax/static stages.",
                 suggestion=(
                     "Enable the same DFT-D3 or DFT-D3(BJ) option on each connected "
                     "Geometry Optimisation and Static Energy stage, or remove dispersion."
@@ -904,9 +904,9 @@ def _unsupported_combination_error(
 
     if Modifier.DISPERSION in modifiers and Modifier.SOC in modifiers:
         return CalculationValidationError(
-            f"{purpose_label} with {theory_label} is not available with Dispersion correction and Spin-Orbit Coupling (SOC). "
+            f"{purpose_label} with {theory_label} is not available with van der Waals correction and Spin-Orbit Coupling (SOC). "
             f"Combination: {combination}.",
-            suggestion="Remove either Dispersion correction or SOC for this calculation.",
+            suggestion="Remove either van der Waals correction or SOC for this calculation.",
         )
 
     if purpose not in supported_purposes:

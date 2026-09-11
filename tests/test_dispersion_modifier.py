@@ -84,9 +84,15 @@ def test_dispersion_method_options_are_controlled_and_default_to_d3bj():
 
 
 def test_pbe_static_generates_upstream_vdw_ivdw_for_d3_and_d3bj():
+    default_incar = _preview_incar(
+        WorkflowSpec([
+            StageSpec(StageType.STATIC, Theory.PBE, {Modifier.DISPERSION}),
+        ])
+    )
     d3_incar = _preview_incar(_workflow(StageType.STATIC, method="dftd3"))
     d3bj_incar = _preview_incar(_workflow(StageType.STATIC, method="dftd3-bj"))
 
+    assert "IVDW = 12" in default_incar
     assert "IVDW = 11" in d3_incar
     assert "IVDW = 12" in d3bj_incar
     assert "LHFCALC" not in d3bj_incar
@@ -139,23 +145,23 @@ def test_unsupported_dispersion_combinations_fail_explicitly():
     for workflow in unsupported_workflows:
         with pytest.raises(CalculationValidationError) as excinfo:
             validate_workflow_spec(workflow)
-        assert "Dispersion correction" in excinfo.value.message
+        assert "van der Waals correction" in excinfo.value.message
 
     with pytest.raises(CalculationValidationError) as excinfo:
         validate_calculation_spec(CalculationSpec(Purpose.STATIC, Theory.HSE06, {Modifier.DISPERSION}))
-    assert "Dispersion correction" in excinfo.value.message
+    assert "van der Waals correction" in excinfo.value.message
 
     with pytest.raises(CalculationValidationError) as excinfo:
         validate_calculation_spec(CalculationSpec(Purpose.STATIC, Theory.PBE, {Modifier.DISPERSION, Modifier.SOC}))
-    assert "Dispersion correction" in excinfo.value.message
+    assert "van der Waals correction" in excinfo.value.message
 
     with pytest.raises(CalculationValidationError) as excinfo:
         validate_calculation_spec(CalculationSpec(Purpose.DOS, Theory.PBE, {Modifier.DISPERSION}))
-    assert "Dispersion correction" in excinfo.value.message
+    assert "van der Waals correction" in excinfo.value.message
 
     with pytest.raises(CalculationValidationError) as excinfo:
         validate_calculation_spec(CalculationSpec(Purpose.BAND_STRUCTURE, Theory.PBE, {Modifier.DISPERSION}))
-    assert "Dispersion correction" in excinfo.value.message
+    assert "van der Waals correction" in excinfo.value.message
 
 
 def test_connected_relax_static_stages_must_use_same_dispersion_method():
@@ -165,7 +171,7 @@ def test_connected_relax_static_stages_must_use_same_dispersion_method():
     ])
     with pytest.raises(CalculationValidationError) as excinfo:
         validate_workflow_spec(workflow)
-    assert "same dispersion correction" in excinfo.value.message
+    assert "same van der Waals correction" in excinfo.value.message
 
     missing_on_static = WorkflowSpec([
         StageSpec(StageType.RELAX, Theory.PBE, {Modifier.DISPERSION}, options=dispersion_option_payload("dftd3")),
