@@ -237,6 +237,7 @@ def _input_set_for_stage(
     elif stage.stage_type is StageType.DOS:
         generator = build_dos_input_set_generator(
             structure,
+            theory=stage.theory,
             spin_polarized=spin_polarized,
             modifiers=stage.modifiers,
             resources=resources,

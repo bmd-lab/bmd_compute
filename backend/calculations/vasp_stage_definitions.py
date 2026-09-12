@@ -26,9 +26,13 @@ ENCUT_STATIC_PREP_DEFAULT = 520
 ENCUT_RELAX_DEFAULT = 580
 ENCUT_STATIC_FINAL_DEFAULT = 620
 BAND_STRUCTURE_LINE_DENSITY_DEFAULT = 40
+HSE_DOS_RECIPROCAL_DENSITY_DEFAULT = 100
 HSE_BAND_STRUCTURE_RECIPROCAL_DENSITY_DEFAULT = 64
 
 _STAGE_DEFINITION_SOURCE = "backend.calculations.vasp_stage_definitions"
+_HSE_DOS_BASE_SOURCE = (
+    f"{_STAGE_DEFINITION_SOURCE}.apply_hse_dos_base_incar_settings"
+)
 _HSE_BAND_BASE_SOURCE = (
     f"{_STAGE_DEFINITION_SOURCE}.apply_hse_band_structure_base_incar_settings"
 )
@@ -151,6 +155,11 @@ _HSE_BAND_STRUCTURE_STAGE_DEFAULTS = {
     "PREC": "Accurate",
 }
 
+_HSE_DOS_STAGE_DEFAULTS = {
+    **_HSE_BAND_STRUCTURE_STAGE_DEFAULTS,
+    "NEDOS": 4001,
+}
+
 
 def _atomate2(
     generator: str,
@@ -260,6 +269,22 @@ _STAGE_DEFINITIONS: dict[StageType, VaspStageDefinition] = {
 }
 
 _THEORY_STAGE_OVERRIDES = {
+    (Theory.HSE06, StageType.DOS): {
+        "atomate2": _atomate2(
+            "HSEBSSetGenerator",
+            "HSEBSMaker",
+            "uniform",
+            reciprocal_density=HSE_DOS_RECIPROCAL_DENSITY_DEFAULT,
+            custodian_policy="backend.calculations.custodian_policy.hse_band_structure_run_vasp_kwargs",
+        ),
+        "bmd_incar_defaults": _HSE_DOS_STAGE_DEFAULTS,
+        "encut_floor": ENCUT_STATIC_FINAL_DEFAULT,
+        "restart_policy": _restart(
+            "HSE06 DOS stages run a self-consistent hybrid calculation on a uniform weighted k-point mesh. A preceding Static Energy stage supplies the structure and optional starting charge density.",
+            requires_previous_stage=True,
+        ),
+        "source": _HSE_DOS_BASE_SOURCE,
+    },
     (Theory.HSE06, StageType.BAND_STRUCTURE): {
         "atomate2": _atomate2(
             "HSEBSSetGenerator",
@@ -270,6 +295,11 @@ _THEORY_STAGE_OVERRIDES = {
         ),
         "bmd_incar_defaults": _HSE_BAND_STRUCTURE_STAGE_DEFAULTS,
         "encut_floor": ENCUT_STATIC_FINAL_DEFAULT,
+        "restart_policy": _restart(
+            "HSE06 Band Structure stages run a self-consistent hybrid calculation with a weighted uniform mesh plus zero-weight high-symmetry line path. A preceding HSE06 Static Energy stage supplies the structure and optional starting charge density.",
+            requires_previous_stage=True,
+        ),
+        "source": _HSE_BAND_BASE_SOURCE,
     },
 }
 
@@ -316,7 +346,11 @@ def describe_stage(stage_type: StageType | str, theory: Theory | str | None = No
         "theory_stage_bmd_incar_amendments": _theory_stage_bmd_incar_amendments(override),
         "selected_atomate2": _atomate2_description(atomate2),
         "applicable_theory_amendments": _copy_mapping(theory_amendments),
-        "restart_policy": _restart_description(definition.restart_policy),
+        "restart_policy": _restart_description(
+            override.get("restart_policy", definition.restart_policy)
+            if override is not None
+            else definition.restart_policy
+        ),
         "kpoints_policy": _kpoints_description(definition.kpoints_policy, atomate2),
         "resource_policy": {
             "automatic_ncore_eligible": stage_allows_automatic_ncore(definition.stage_type),
@@ -374,6 +408,17 @@ def apply_stage_restart_incar_settings(
     definition = stage_definition(stage_type)
     settings = dict(user_incar or {})
     settings.update(_copy_mapping(definition.restart_policy["incar_amendments"]))
+    return settings
+
+
+def apply_hse_dos_base_incar_settings(
+    user_incar: Mapping[str, Any] | None,
+) -> dict:
+    settings = dict(user_incar or {})
+    override = _theory_stage_override_for(StageType.DOS, Theory.HSE06)
+    if override is not None:
+        _apply_defaults(settings, override["bmd_incar_defaults"])
+        _apply_encut_floor(settings, override["encut_floor"])
     return settings
 
 
@@ -440,7 +485,7 @@ def _theory_stage_bmd_incar_amendments(override: Mapping[str, Any] | None) -> di
     payload = {
         "defaults": _copy_mapping(override["bmd_incar_defaults"]),
         "encut_floor": override["encut_floor"],
-        "source": _HSE_BAND_BASE_SOURCE,
+        "source": override.get("source", _STAGE_DEFINITION_SOURCE),
     }
     return _compact_payload(payload)
 

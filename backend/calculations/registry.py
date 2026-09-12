@@ -377,7 +377,7 @@ def validate_workflow_spec(workflow: WorkflowSpec) -> WorkflowSpec:
             )
 
         previous_stage = normalized.stages[index - 1]
-        if previous_stage.theory is not stage.theory:
+        if not _analysis_stage_accepts_precursor(stage, previous_stage):
             raise CalculationValidationError(
                 f"{stage_display_name(stage)} must use the same level of theory as the preceding Static Energy stage.",
                 suggestion=(
@@ -387,6 +387,23 @@ def validate_workflow_spec(workflow: WorkflowSpec) -> WorkflowSpec:
             )
 
     return normalized
+
+
+def _analysis_stage_accepts_precursor(
+    stage: StageSpec,
+    previous_stage: StageSpec,
+) -> bool:
+    if previous_stage.theory is stage.theory:
+        return True
+
+    if (
+        stage.stage_type is StageType.DOS
+        and stage.theory is Theory.HSE06
+        and previous_stage.theory in {Theory.PBE, Theory.HSE06}
+    ):
+        return True
+
+    return False
 
 
 def calculation_spec_from_legacy(

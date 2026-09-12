@@ -25,6 +25,7 @@ HSE06_SUPPORTED_STAGES = frozenset(
     {
         CalculationStage.RELAX,
         CalculationStage.STATIC,
+        CalculationStage.DOS,
         CalculationStage.BAND_STRUCTURE,
     }
 )
@@ -59,6 +60,11 @@ _HSE06_STAGE_INCAR = {
     CalculationStage.STATIC: {
         "PRECFOCK": "Accurate",
         "ISMEAR": 0,
+    },
+    CalculationStage.DOS: {
+        "ALGO": "Normal",
+        "PRECFOCK": "Fast",
+        "ISMEAR": -5,
     },
     CalculationStage.BAND_STRUCTURE: {
         "ALGO": "Normal",

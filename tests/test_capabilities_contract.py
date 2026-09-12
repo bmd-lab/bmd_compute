@@ -92,7 +92,7 @@ def test_supported_capabilities_are_stage_theory_descriptions_only():
     }
 
     assert ("band_structure", "hse06") in capability_keys
-    assert ("dos", "hse06") not in capability_keys
+    assert ("dos", "hse06") in capability_keys
     assert all(
         entry["theory_supported_for_stage"] is True
         for entry in payload["capabilities"]
@@ -116,6 +116,27 @@ def test_hse_band_structure_description_survives_contract():
     assert hse_band["applicable_theory_amendments"]["LHFCALC"] is True
     assert hse_band["theory_stage_bmd_incar_amendments"]["encut_floor"] == 620
     assert "custodian_policy" not in hse_band["kpoints_policy"]["default_parameters"]
+
+
+def test_hse_dos_description_survives_contract():
+    payload = build_capability_payload(include_provenance=False)
+    hse_dos = next(
+        entry
+        for entry in payload["capabilities"]
+        if entry["stage_type"] == "dos" and entry["theory"] == "hse06"
+    )
+    expected = describe_stage("dos", "hse06")
+
+    assert hse_dos == expected
+    assert hse_dos["selected_atomate2"]["input_set_generator"].endswith(
+        "HSEBSSetGenerator"
+    )
+    assert hse_dos["selected_atomate2"]["maker"].endswith("HSEBSMaker")
+    assert hse_dos["selected_atomate2"]["generator_mode"] == "uniform"
+    assert hse_dos["applicable_theory_amendments"]["LHFCALC"] is True
+    assert hse_dos["applicable_theory_amendments"]["ISMEAR"] == -5
+    assert hse_dos["theory_stage_bmd_incar_amendments"]["defaults"]["NEDOS"] == 4001
+    assert hse_dos["restart_policy"]["incar_amendments"] == {}
 
 
 def test_dispersion_modifier_policy_survives_contract():

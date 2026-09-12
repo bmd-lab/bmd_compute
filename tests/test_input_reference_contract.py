@@ -272,7 +272,37 @@ def test_unsupported_combination_returns_structured_json_without_fallback():
     assert payload["status"] == "unsupported"
     assert payload["reference"] is None
     assert payload["error"]["code"] == "unsupported_combination"
-    assert "HSE06 is not available for Density of States" in payload["error"]["message"]
+    assert "must follow a converged Static Energy stage" in payload["error"]["message"]
+
+
+def test_hse06_dos_reference_uses_supported_custom_stage_workflow():
+    workflow = WorkflowSpec(
+        [
+            StageSpec(StageType.RELAX, Theory.PBE),
+            StageSpec(StageType.STATIC, Theory.PBE),
+            StageSpec(StageType.DOS, Theory.HSE06),
+        ]
+    )
+    request = request_for("static")
+    request["workflow_spec"] = workflow.to_dict()
+
+    payload = build_input_reference_payload(request, include_provenance=False)
+    terminal = payload["reference"]["stages"][-1]
+
+    assert payload["status"] == "ok"
+    assert terminal["stage_type"] == "dos"
+    assert terminal["theory"] == "hse06"
+    assert terminal["generator"]["selected_atomate2"]["input_set_generator"].endswith(
+        "HSEBSSetGenerator"
+    )
+    assert terminal["generator"]["selected_atomate2"]["maker"].endswith("HSEBSMaker")
+    assert terminal["incar"]["settings"]["LHFCALC"] is True
+    assert terminal["incar"]["settings"]["AEXX"] == 0.25
+    assert terminal["incar"]["settings"]["HFSCREEN"] == 0.2
+    assert terminal["incar"]["settings"]["NEDOS"] == 4001
+    assert "ICHARG" not in terminal["incar"]["settings"]
+    assert "Combined k-points" not in terminal["kpoints"]["text"]
+    assert "Non SCF run along symmetry lines" not in terminal["kpoints"]["text"]
 
 
 def test_malformed_request_returns_structured_json_from_command():

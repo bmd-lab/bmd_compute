@@ -411,9 +411,9 @@ def test_spin_screen_detection_produces_single_conservative_spin_consideration()
         ("band_structure", "pbe"),
         ("relax", "hse06"),
         ("static", "hse06"),
+        ("dos", "hse06"),
         ("band_structure", "hse06"),
     }.issubset(supported_pairs)
-    assert ("dos", "hse06") not in supported_pairs
     reason = consideration.reason.lower()
     assert "may be relevant" in reason
     assert "consider enabling spin polarised" in reason
