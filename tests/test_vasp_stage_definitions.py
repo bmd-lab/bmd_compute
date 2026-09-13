@@ -3,7 +3,9 @@ import json
 from backend.calculations.models import StageType, Theory
 from backend.calculations.vasp_stage_definitions import (
     BAND_STRUCTURE_LINE_DENSITY_DEFAULT,
+    HSE_DOS_RECIPROCAL_DENSITY_DEFAULT,
     HSE_BAND_STRUCTURE_RECIPROCAL_DENSITY_DEFAULT,
+    apply_hse_dos_base_incar_settings,
     apply_hse_band_structure_base_incar_settings,
     apply_relax_compatibility_incar_settings,
     apply_stage_base_incar_settings,
@@ -120,6 +122,31 @@ def test_hse_descriptions_compose_stage_base_and_theory_policy_separately():
         "StaticSetGenerator"
     )
 
+    hse_dos_description = describe_stage(StageType.DOS, Theory.HSE06)
+    assert hse_dos_description["theory_supported_for_stage"] is True
+    assert hse_dos_description["selected_atomate2"]["input_set_generator"].endswith(
+        "HSEBSSetGenerator"
+    )
+    assert hse_dos_description["selected_atomate2"]["maker"].endswith("HSEBSMaker")
+    assert hse_dos_description["selected_atomate2"]["generator_mode"] == "uniform"
+    assert (
+        hse_dos_description["selected_atomate2"]["extra_parameters"][
+            "reciprocal_density"
+        ]
+        == HSE_DOS_RECIPROCAL_DENSITY_DEFAULT
+    )
+    assert hse_dos_description["restart_policy"]["requires_previous_stage"] is True
+    assert hse_dos_description["restart_policy"]["incar_amendments"] == {}
+    hse_dos_stage_amendments = hse_dos_description[
+        "theory_stage_bmd_incar_amendments"
+    ]
+    assert hse_dos_stage_amendments["defaults"]["NEDOS"] == 4001
+    assert hse_dos_stage_amendments["defaults"]["LORBIT"] == 11
+    assert hse_dos_stage_amendments["encut_floor"] == 620
+    assert hse_dos_description["applicable_theory_amendments"]["LHFCALC"] is True
+    assert hse_dos_description["applicable_theory_amendments"]["PRECFOCK"] == "Fast"
+    assert hse_dos_description["applicable_theory_amendments"]["ISMEAR"] == -5
+
     hse_band_description = describe_stage(StageType.BAND_STRUCTURE, Theory.HSE06)
     assert hse_band_description["selected_atomate2"]["input_set_generator"].endswith(
         "HSEBSSetGenerator"
@@ -150,6 +177,17 @@ def test_hse_descriptions_compose_stage_base_and_theory_policy_separately():
     assert "LDAU" not in hse_band_stage_amendments["defaults"]
     assert hse_band_description["applicable_theory_amendments"]["LHFCALC"] is True
     assert hse_band_description["applicable_theory_amendments"]["PRECFOCK"] == "Fast"
+    assert hse_band_description["restart_policy"]["incar_amendments"] == {}
+
+
+def test_hse_dos_base_helper_does_not_duplicate_hse_functional_settings():
+    hse_dos_base = apply_hse_dos_base_incar_settings({})
+    assert hse_dos_base["ENCUT"] == 620
+    assert hse_dos_base["LORBIT"] == 11
+    assert hse_dos_base["NEDOS"] == 4001
+    assert hse_dos_base["PREC"] == "Accurate"
+    assert "LHFCALC" not in hse_dos_base
+    assert "ISMEAR" not in hse_dos_base
 
 
 def test_hse_band_base_helper_does_not_duplicate_hse_functional_settings():
@@ -162,6 +200,6 @@ def test_hse_band_base_helper_does_not_duplicate_hse_functional_settings():
 
 
 def test_unsupported_theory_stage_description_does_not_expose_amendments():
-    hse_dos_description = describe_stage(StageType.DOS, Theory.HSE06)
-    assert hse_dos_description["theory_supported_for_stage"] is False
-    assert hse_dos_description["applicable_theory_amendments"] == {}
+    r2scan_dos_description = describe_stage(StageType.DOS, Theory.R2SCAN)
+    assert r2scan_dos_description["theory_supported_for_stage"] is False
+    assert r2scan_dos_description["applicable_theory_amendments"] == {}

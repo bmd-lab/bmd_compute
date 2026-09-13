@@ -39,7 +39,9 @@ from backend.calculations.dispersion import dispersion_method_from_options
 from backend.calculations.custodian_policy import hse_band_structure_run_vasp_kwargs
 from backend.calculations.vasp_stage_definitions import (
     BAND_STRUCTURE_LINE_DENSITY_DEFAULT,
+    HSE_DOS_RECIPROCAL_DENSITY_DEFAULT,
     HSE_BAND_STRUCTURE_RECIPROCAL_DENSITY_DEFAULT,
+    apply_hse_dos_base_incar_settings,
     apply_hse_band_structure_base_incar_settings,
     apply_relax_compatibility_incar_settings,
     apply_stage_base_incar_settings,
@@ -966,6 +968,41 @@ def _hse_band_structure_incar_settings(
     return user_incar
 
 
+def _hse_dos_incar_settings(
+    *,
+    spin_polarized=False,
+    modifiers=None,
+    resources=None,
+    incar=None,
+    structure=None,
+):
+    calculation_modifiers = calculation_modifiers_from_options(
+        modifiers=modifiers,
+        spin_polarized=spin_polarized,
+    )
+    user_incar = dict(incar or {})
+    user_incar = apply_modifier_incar_settings(
+        user_incar,
+        modifiers=calculation_modifiers,
+    )
+    if Modifier.SOC in calculation_modifiers and structure is not None:
+        user_incar = apply_soc_magmom_settings(user_incar, structure=structure)
+
+    user_incar = apply_hse_dos_base_incar_settings(user_incar)
+
+    user_incar = apply_theory_incar_settings(
+        user_incar,
+        theory=Theory.HSE06,
+        stage=CalculationStage.DOS,
+    )
+    user_incar = apply_stage_resource_incar_settings(
+        user_incar,
+        stage_type=StageType.DOS,
+        resources=resources,
+    )
+    return user_incar
+
+
 def build_static_input_set_generator(
     structure,
     *,
@@ -1067,6 +1104,7 @@ def build_static_flow(
 def build_dos_input_set_generator(
     structure,
     *,
+    theory=Theory.PBE,
     spin_polarized=False,
     modifiers=None,
     resources=None,
@@ -1074,12 +1112,35 @@ def build_dos_input_set_generator(
     kpoints=None,
     potcar_functional="PBE_64",
 ):
-    from atomate2.vasp.sets.core import NonSCFSetGenerator
-
     calculation_modifiers = calculation_modifiers_from_options(
         modifiers=modifiers,
         spin_polarized=spin_polarized,
     )
+    policy_theory = Theory.from_value(theory)
+    if theory_uses_hybrid_functional(policy_theory):
+        from atomate2.vasp.sets.core import HSEBSSetGenerator
+
+        dos_incar = _hse_dos_incar_settings(
+            spin_polarized=spin_polarized,
+            modifiers=calculation_modifiers,
+            resources=resources,
+            incar=incar,
+            structure=structure,
+        )
+        return HSEBSSetGenerator(
+            mode="uniform",
+            reciprocal_density=HSE_DOS_RECIPROCAL_DENSITY_DEFAULT,
+            user_potcar_functional=potcar_functional,
+            user_kpoints_settings=ksettings_for_modifiers(
+                structure,
+                kpoints,
+                modifiers=calculation_modifiers,
+            ),
+            user_incar_settings=dos_incar,
+        )
+
+    from atomate2.vasp.sets.core import NonSCFSetGenerator
+
     # Keep the DOS grid and basis compatible with the preceding static CHGCAR.
     dos_incar = _static_restart_incar_settings(
         spin_polarized=spin_polarized,
@@ -1158,6 +1219,7 @@ def build_dos_flow(
 
     dos_generator = build_dos_input_set_generator(
         static_job.output.structure,
+        theory=Theory.PBE,
         spin_polarized=spin_polarized,
         modifiers=modifiers,
         resources=resources,
@@ -1514,6 +1576,7 @@ def build_atomate2_flow_for_workflow_spec(
         elif stage.stage_type is StageType.DOS:
             generator = build_dos_input_set_generator(
                 stage_structure,
+                theory=stage.theory,
                 spin_polarized=spin_polarized,
                 modifiers=stage.modifiers,
                 resources=resources,
@@ -1521,15 +1584,30 @@ def build_atomate2_flow_for_workflow_spec(
                 kpoints=stage_kpoints,
                 potcar_functional=potcar_functional,
             )
-            job = NonSCFMaker(
-                input_set_generator=generator,
-                name=stage_name,
-                run_vasp_kwargs=run_vasp_kwargs,
-            ).make(
-                stage_structure,
-                prev_dir=previous_job.output.dir_name,
-                mode="uniform",
-            )
+            if theory_uses_hybrid_functional(stage.theory):
+                from atomate2.vasp.jobs.core import HSEBSMaker
+
+                hse_run_vasp_kwargs = hse_band_structure_run_vasp_kwargs()
+                hse_run_vasp_kwargs.update(run_vasp_kwargs)
+                job = HSEBSMaker(
+                    input_set_generator=generator,
+                    name=stage_name,
+                    run_vasp_kwargs=hse_run_vasp_kwargs,
+                ).make(
+                    stage_structure,
+                    prev_dir=previous_job.output.dir_name,
+                    mode="uniform",
+                )
+            else:
+                job = NonSCFMaker(
+                    input_set_generator=generator,
+                    name=stage_name,
+                    run_vasp_kwargs=run_vasp_kwargs,
+                ).make(
+                    stage_structure,
+                    prev_dir=previous_job.output.dir_name,
+                    mode="uniform",
+                )
 
         elif stage.stage_type is StageType.BAND_STRUCTURE:
             generator = build_band_structure_input_set_generator(
@@ -1646,6 +1724,7 @@ def build_vasp_input_set_generator_for_spec(
     if calculation_spec.purpose is Purpose.DOS:
         return build_dos_input_set_generator(
             structure,
+            theory=calculation_spec.theory,
             spin_polarized=spin_polarized,
             modifiers=calculation_modifiers,
             resources=resources,

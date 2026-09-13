@@ -193,6 +193,14 @@ band_workflow = WorkflowSpec(
     ],
     recipe="band_structure",
 )
+hse_dos_workflow = WorkflowSpec(
+    [
+        StageSpec(StageType.RELAX, Theory.PBE),
+        StageSpec(StageType.STATIC, Theory.PBE),
+        StageSpec(StageType.DOS, Theory.HSE06),
+    ],
+    recipe="custom",
+)
 double_relax_workflow = WorkflowSpec(
     [
         StageSpec(StageType.RELAX, Theory.PBE),
@@ -202,10 +210,20 @@ double_relax_workflow = WorkflowSpec(
 )
 assert workflow_stage_directories(double_relax_workflow) == ("relax_01", "relax_02")
 assert workflow_stage_directories(dos_workflow) == ("stage_01", "stage_02", "stage_03")
+validated_hse_dos = validate_workflow_spec(hse_dos_workflow)
+assert calculation_spec_from_workflow_spec(validated_hse_dos) is None
+assert workflow_stage_directories(validated_hse_dos) == ("stage_01", "stage_02", "stage_03")
 assert workflow_result_file_keys(dos_workflow) == ("doscar",)
+assert workflow_result_file_keys(validated_hse_dos) == ("doscar",)
 assert workflow_result_file_keys(band_workflow) == ("kpoints",)
 assert workflow_result_parse_dos(dos_workflow)
+assert workflow_result_parse_dos(validated_hse_dos)
 assert workflow_result_parse_eigenvalues(band_workflow)
+assert calculation_plan_from_workflow_spec(validated_hse_dos) == [
+    "Geometry Optimisation (PBE)",
+    "Static Energy (PBE)",
+    "Density of States (HSE06)",
+]
 
 soc_static_workflow = WorkflowSpec(
     [
@@ -244,12 +262,6 @@ for invalid_workflow in (
         ]
     ),
     WorkflowSpec([StageSpec(StageType.DOS, Theory.PBE)]),
-    WorkflowSpec(
-        [
-            StageSpec(StageType.STATIC, Theory.PBE),
-            StageSpec(StageType.DOS, Theory.HSE06),
-        ]
-    ),
     WorkflowSpec(
         [
             StageSpec(StageType.STATIC, Theory.PBE),
