@@ -306,6 +306,103 @@ def _recommended_workflow_recipes() -> tuple[dict, ...]:
     )
 
 
+def _desired_output_workflows() -> tuple[tuple[str, str, str, WorkflowSpec | None], ...]:
+    return (
+        (
+            "energy_only",
+            "Energy only",
+            "Calculate a PBE static total energy.",
+            WorkflowSpec(
+                [StageSpec(StageType.STATIC, Theory.PBE)],
+                recipe="energy_only",
+            ),
+        ),
+        (
+            "relaxed_structure",
+            "Relaxed structure",
+            "Optimise the supplied structure with PBE.",
+            WorkflowSpec(
+                [StageSpec(StageType.RELAX, Theory.PBE)],
+                recipe="relaxed_structure",
+            ),
+        ),
+        (
+            "electronic_dos",
+            "Electronic density of states",
+            "Use BMD Compute's default staged workflow for an HSE06 density of states.",
+            WorkflowSpec(
+                [
+                    StageSpec(StageType.RELAX, Theory.PBE),
+                    StageSpec(StageType.STATIC, Theory.PBE),
+                    StageSpec(StageType.DOS, Theory.HSE06),
+                ],
+                recipe="electronic_dos",
+            ),
+        ),
+        (
+            "electronic_band_structure",
+            "Electronic band structure",
+            "Use BMD Compute's default staged workflow for an HSE06 band structure.",
+            WorkflowSpec(
+                [
+                    StageSpec(StageType.RELAX, Theory.PBE),
+                    StageSpec(StageType.STATIC, Theory.HSE06),
+                    StageSpec(StageType.BAND_STRUCTURE, Theory.HSE06),
+                ],
+                recipe="electronic_band_structure",
+            ),
+        ),
+        (
+            "custom",
+            "Custom workflow",
+            "Configure stages and theories explicitly.",
+            None,
+        ),
+    )
+
+
+def _desired_output_options() -> tuple[dict, ...]:
+    options = []
+    for value, label, description, workflow_spec in _desired_output_workflows():
+        options.append(
+            {
+                "value": value,
+                "label": label,
+                "description": description,
+                "workflow_spec": (
+                    validate_workflow_spec(workflow_spec).to_dict()
+                    if workflow_spec is not None
+                    else None
+                ),
+            }
+        )
+    return tuple(options)
+
+
+def desired_output_workflow_spec(value: str | None) -> WorkflowSpec | None:
+    output = (value or "").strip()
+    for candidate, _, _, workflow_spec in _desired_output_workflows():
+        if candidate == output and workflow_spec is not None:
+            return validate_workflow_spec(workflow_spec)
+    return None
+
+
+def desired_output_from_workflow_spec(workflow: WorkflowSpec) -> str:
+    normalized = validate_workflow_spec(workflow)
+    shape = tuple((stage.stage_type, stage.theory) for stage in normalized.stages)
+    for value, _, _, workflow_spec in _desired_output_workflows():
+        if workflow_spec is None:
+            continue
+        candidate = validate_workflow_spec(workflow_spec)
+        candidate_shape = tuple(
+            (stage.stage_type, stage.theory)
+            for stage in candidate.stages
+        )
+        if shape == candidate_shape:
+            return value
+    return "custom"
+
+
 def validate_calculation_spec(spec: CalculationSpec) -> CalculationSpec:
     normalized = CalculationSpec(
         purpose=spec.purpose,
@@ -882,6 +979,7 @@ def calculation_form_options() -> dict:
             }
             for stage_type in StageType
         ],
+        "desired_outputs": list(_desired_output_options()),
         "recipes": list(_recommended_workflow_recipes()),
     }
 
@@ -985,6 +1083,8 @@ __all__ = [
     "calculation_spec_from_flow_spec",
     "calculation_spec_from_legacy",
     "calculation_spec_from_workflow_spec",
+    "desired_output_from_workflow_spec",
+    "desired_output_workflow_spec",
     "legacy_potcar_functional_from_spec",
     "legacy_workflow_from_spec",
     "modifier_display_name",

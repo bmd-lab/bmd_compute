@@ -6,7 +6,7 @@ from pathlib import Path
 source = Path("templates/index.html").read_text(encoding="utf-8")
 
 assert 'name="workflow_spec_json"' in source
-assert 'id="workflow-recipe-select"' in source
+assert 'id="desired-output-select"' in source
 assert 'id="workflow-stage-list"' in source
 assert 'data-workflow-stage' in source
 assert 'data-stage-type' in source
@@ -15,8 +15,11 @@ assert 'data-stage-modifier' in source
 assert 'data-stage-dispersion-method' in source
 assert 'data-dispersion-control' in source
 assert 'id="add-workflow-stage"' in source
-assert "Recommended Workflow" in source
+assert "Desired Output" in source
+assert "Recommended Workflow" not in source
+assert "desired_outputs" in source
 assert "Custom Workflow" in source
+assert "BMD Compute workflow" in source
 assert "Calculation Type" in source
 assert "Level of Theory" in source
 assert "Advanced Options" in source
@@ -76,6 +79,10 @@ assert "workflow_spec_json" in monitor_form
 assert "monitor_state_json" in monitor_form
 assert "stageOptions.dispersion" in source
 assert "updateDispersionControls" in source
+assert "desiredOutputs" in source
+assert "recipeSelect" not in source
+assert "recipes[index]" not in source
+assert "desiredOutputSelect.value !== \"custom\"" in source
 resume_monitoring_block = source[source.index('{% else %}\n            <form action="/resume"'):]
 assert 'name="load_results" value="true"' in resume_monitoring_block
 assert "Load Results" in resume_monitoring_block
