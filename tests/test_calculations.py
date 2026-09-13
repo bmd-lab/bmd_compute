@@ -8,6 +8,8 @@ from backend.calculations.registry import (
     calculation_stage_directories,
     calculation_spec_from_flow_spec,
     calculation_spec_from_legacy,
+    desired_output_from_workflow_spec,
+    desired_output_workflow_spec,
     legacy_potcar_functional_from_spec,
     legacy_workflow_from_spec,
     supported_combinations,
@@ -139,6 +141,59 @@ assert calculation_display_name(CalculationSpec(Purpose.STATIC, Theory.PBE)) == 
 assert theory_display_name(Theory.HSE06) == "HSE06"
 
 form_options = calculation_form_options()
+desired_outputs = {option["value"]: option for option in form_options["desired_outputs"]}
+assert [option["label"] for option in form_options["desired_outputs"]] == [
+    "Energy only",
+    "Relaxed structure",
+    "Electronic density of states",
+    "Electronic band structure",
+    "Custom workflow",
+]
+assert [
+    stage["stage_type"]
+    for stage in desired_outputs["energy_only"]["workflow_spec"]["stages"]
+] == ["static"]
+assert [
+    stage["theory"]
+    for stage in desired_outputs["energy_only"]["workflow_spec"]["stages"]
+] == ["pbe"]
+assert [
+    stage["stage_type"]
+    for stage in desired_outputs["relaxed_structure"]["workflow_spec"]["stages"]
+] == ["relax", "relax"]
+assert [
+    stage["theory"]
+    for stage in desired_outputs["relaxed_structure"]["workflow_spec"]["stages"]
+] == ["pbe", "pbe"]
+assert [
+    (stage["stage_type"], stage["theory"])
+    for stage in desired_outputs["electronic_dos"]["workflow_spec"]["stages"]
+] == [
+    ("relax", "pbe"),
+    ("static", "pbe"),
+    ("dos", "hse06"),
+]
+assert [
+    (stage["stage_type"], stage["theory"])
+    for stage in desired_outputs["electronic_band_structure"]["workflow_spec"]["stages"]
+] == [
+    ("relax", "pbe"),
+    ("static", "hse06"),
+    ("band_structure", "hse06"),
+]
+assert desired_outputs["custom"]["workflow_spec"] is None
+assert (
+    desired_output_workflow_spec("electronic_dos").to_dict()
+    == desired_outputs["electronic_dos"]["workflow_spec"]
+)
+assert (
+    desired_output_from_workflow_spec(desired_output_workflow_spec("energy_only"))
+    == "energy_only"
+)
+assert (
+    desired_output_from_workflow_spec(desired_output_workflow_spec("electronic_band_structure"))
+    == "electronic_band_structure"
+)
 assert [option["label"] for option in form_options["purposes"]] == [
     "Geometry Optimisation",
     "Geometry Optimisation + Static Energy",

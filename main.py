@@ -32,6 +32,8 @@ from backend.calculations.registry import (
     calculation_display_name,
     calculation_form_options,
     calculation_spec_from_legacy,
+    desired_output_from_workflow_spec,
+    desired_output_workflow_spec,
     legacy_potcar_functional_from_spec,
     legacy_workflow_from_spec,
     modifier_display_name,
@@ -293,7 +295,9 @@ def default_calculation_spec() -> CalculationSpec:
 
 
 def default_workflow_spec() -> WorkflowSpec:
-    return workflow_spec_from_calculation_spec(default_calculation_spec())
+    return desired_output_workflow_spec("energy_only") or workflow_spec_from_calculation_spec(
+        default_calculation_spec()
+    )
 
 
 def selected_resources_context(resources: ExecutionResources) -> dict:
@@ -358,6 +362,7 @@ def selected_workflow_context(workflow_spec: WorkflowSpec) -> dict:
         "json": json.dumps(workflow.to_dict(), sort_keys=True),
         "label": workflow_display_name(workflow),
         "recipe": workflow.recipe,
+        "desired_output": desired_output_from_workflow_spec(workflow),
         "stages": [
             {
                 "index": index + 1,
@@ -418,6 +423,10 @@ def workflow_spec_from_form(
                 suggestion="Rebuild the calculation, then try again.",
             ) from exc
         return validate_workflow_spec(WorkflowSpec.from_dict(data))
+
+    desired_workflow = desired_output_workflow_spec(workflow)
+    if desired_workflow is not None:
+        return desired_workflow
 
     return workflow_spec_from_calculation_spec(
         calculation_spec_from_form(

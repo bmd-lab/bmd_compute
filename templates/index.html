@@ -1237,13 +1237,12 @@ ul {
                             <script type="application/json" id="calculation-stage-options">{{ calculation_options | tojson }}</script>
                             <div class="form-grid">
                                 <div class="workflow-picker">
-                                    <label>Recommended Workflow</label>
-                                    <select id="workflow-recipe-select" name="workflow">
-                                        <option value="" {% if not selected_workflow.recipe %}selected{% endif %}>Custom Workflow</option>
-                                        {% for option in calculation_options.recipes %}
+                                    <label>Desired Output</label>
+                                    <select id="desired-output-select" name="workflow">
+                                        {% for option in calculation_options.desired_outputs %}
                                         <option
                                             value="{{ option.value }}"
-                                            {% if selected_workflow.recipe == option.value %}selected{% endif %}>
+                                            {% if selected_workflow.desired_output == option.value %}selected{% endif %}>
                                             {{ option.label }}
                                         </option>
                                         {% endfor %}
@@ -1251,19 +1250,20 @@ ul {
                                 </div>
 
                                 <div class="workflow-stage-list" id="workflow-stage-list">
+                                    {% set is_custom_workflow = selected_workflow.desired_output == "custom" %}
                                     {% for stage in selected_workflow.stages %}
                                     <div class="workflow-stage-card" data-workflow-stage>
                                         <div class="workflow-stage-card-header">
                                             <div class="workflow-stage-heading">
                                                 <span class="workflow-stage-number" data-stage-number>{{ stage.index }}</span>
-                                                <span>Custom Workflow</span>
+                                                <span>{% if is_custom_workflow %}Custom Workflow{% else %}BMD Compute workflow{% endif %}</span>
                                             </div>
-                                            <button type="button" class="secondary-button" data-remove-stage>Remove</button>
+                                            <button type="button" class="secondary-button" data-remove-stage {% if not is_custom_workflow %}hidden{% endif %}>Remove</button>
                                         </div>
                                         <div class="workflow-stage-grid">
                                             <div>
                                                 <label>Calculation Type</label>
-                                                <select data-stage-type>
+                                                <select data-stage-type {% if not is_custom_workflow %}disabled{% endif %}>
                                                     {% for option in calculation_options.stage_types %}
                                                     <option
                                                         value="{{ option.value }}"
@@ -1275,7 +1275,7 @@ ul {
                                             </div>
                                             <div>
                                                 <label>Level of Theory</label>
-                                                <select data-stage-theory>
+                                                <select data-stage-theory {% if not is_custom_workflow %}disabled{% endif %}>
                                                     {% for option in calculation_options.theories %}
                                                     <option
                                                         value="{{ option.value }}"
@@ -1329,7 +1329,7 @@ ul {
                                 </div>
 
                                 <div class="workflow-controls">
-                                    <button type="button" class="secondary-button" id="add-workflow-stage">Add Stage</button>
+                                    <button type="button" class="secondary-button" id="add-workflow-stage" {% if not is_custom_workflow %}hidden{% endif %}>Add Stage</button>
                                 </div>
                             </div>
                         </div>
@@ -2477,7 +2477,7 @@ document.addEventListener("DOMContentLoaded", function () {
     var hiddenWorkflow = document.getElementById("workflow-spec-json");
     var optionsElement = document.getElementById("calculation-stage-options");
     var stageList = document.getElementById("workflow-stage-list");
-    var recipeSelect = document.getElementById("workflow-recipe-select");
+    var desiredOutputSelect = document.getElementById("desired-output-select");
     var addStageButton = document.getElementById("add-workflow-stage");
     if (!form || !hiddenWorkflow || !optionsElement || !stageList) {
         return;
@@ -2495,7 +2495,7 @@ document.addEventListener("DOMContentLoaded", function () {
     var modifiers = options.modifiers || [];
     var dispersionMethods = options.dispersion_methods || [];
     var defaultDispersionMethod = options.default_dispersion_method || ((dispersionMethods[0] || {}).value) || "dftd3-bj";
-    var recipes = options.recipes || [];
+    var desiredOutputs = options.desired_outputs || [];
 
     function escapeHtml(value) {
         return String(value || "")
@@ -2552,6 +2552,10 @@ document.addEventListener("DOMContentLoaded", function () {
         return (selectedModifiers || []).indexOf("dispersion") !== -1;
     }
 
+    function isCustomWorkflow() {
+        return !desiredOutputSelect || desiredOutputSelect.value === "custom";
+    }
+
     function stageMarkup(stage, index) {
         var stageType = stage.stage_type || "static";
         var theory = stage.theory || "pbe";
@@ -2559,22 +2563,28 @@ document.addEventListener("DOMContentLoaded", function () {
         var stageOptions = stage.options || {};
         var stageDispersion = stageOptions.dispersion || {};
         var selectedDispersionMethod = stageDispersion.method || defaultDispersionMethod;
+        var editableWorkflow = isCustomWorkflow();
+        var stageControlDisabled = editableWorkflow ? "" : " disabled";
+        var workflowLabel = editableWorkflow ? "Custom Workflow" : "BMD Compute workflow";
+        var removeButton = editableWorkflow
+            ? '<button type="button" class="secondary-button" data-remove-stage>Remove</button>'
+            : "";
         return '<div class="workflow-stage-card" data-workflow-stage>' +
             '<div class="workflow-stage-card-header">' +
                 '<div class="workflow-stage-heading">' +
                     '<span class="workflow-stage-number" data-stage-number>' + String(index + 1) + '</span>' +
-                    '<span>Custom Workflow</span>' +
+                    '<span>' + workflowLabel + '</span>' +
                 '</div>' +
-                '<button type="button" class="secondary-button" data-remove-stage>Remove</button>' +
+                removeButton +
             '</div>' +
             '<div class="workflow-stage-grid">' +
                 '<div>' +
                     '<label>Calculation Type</label>' +
-                    '<select data-stage-type>' + optionMarkup(stageTypes, stageType) + '</select>' +
+                    '<select data-stage-type' + stageControlDisabled + '>' + optionMarkup(stageTypes, stageType) + '</select>' +
                 '</div>' +
                 '<div>' +
                     '<label>Level of Theory</label>' +
-                    '<select data-stage-theory>' + optionMarkup(theories, theory) + '</select>' +
+                    '<select data-stage-theory' + stageControlDisabled + '>' + optionMarkup(theories, theory) + '</select>' +
                 '</div>' +
                 '<div class="advanced-options-field">' +
                     '<label>Advanced Options</label>' +
@@ -2645,10 +2655,13 @@ document.addEventListener("DOMContentLoaded", function () {
     function updateHiddenWorkflow() {
         updateStageNumbers();
         updateDispersionControls();
+        if (addStageButton) {
+            addStageButton.hidden = !isCustomWorkflow();
+        }
         hiddenWorkflow.value = JSON.stringify({
             stages: readStages(),
             label: null,
-            recipe: recipeSelect ? recipeSelect.value || null : null
+            recipe: desiredOutputSelect && desiredOutputSelect.value !== "custom" ? desiredOutputSelect.value : null
         });
     }
 
@@ -2674,11 +2687,15 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     });
 
-    if (recipeSelect) {
-        recipeSelect.addEventListener("change", function () {
-            for (var index = 0; index < recipes.length; index += 1) {
-                if (recipes[index].value === recipeSelect.value) {
-                    renderStages((recipes[index].workflow_spec || {}).stages || []);
+    if (desiredOutputSelect) {
+        desiredOutputSelect.addEventListener("change", function () {
+            if (isCustomWorkflow()) {
+                renderStages(readStages());
+                return;
+            }
+            for (var index = 0; index < desiredOutputs.length; index += 1) {
+                if (desiredOutputs[index].value === desiredOutputSelect.value) {
+                    renderStages((desiredOutputs[index].workflow_spec || {}).stages || []);
                     return;
                 }
             }
