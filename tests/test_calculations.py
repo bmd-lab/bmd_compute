@@ -160,11 +160,11 @@ assert [
 assert [
     stage["stage_type"]
     for stage in desired_outputs["relaxed_structure"]["workflow_spec"]["stages"]
-] == ["relax"]
+] == ["relax", "relax"]
 assert [
     stage["theory"]
     for stage in desired_outputs["relaxed_structure"]["workflow_spec"]["stages"]
-] == ["pbe"]
+] == ["pbe", "pbe"]
 assert [
     (stage["stage_type"], stage["theory"])
     for stage in desired_outputs["electronic_dos"]["workflow_spec"]["stages"]

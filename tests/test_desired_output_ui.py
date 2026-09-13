@@ -10,10 +10,13 @@ from backend.calculations.registry import (
     calculation_form_options,
     desired_output_from_workflow_spec,
     desired_output_workflow_spec,
+    workflow_result_stage_directory,
+    workflow_stage_directories,
 )
 from backend.generated_inputs import preview_generated_inputs
 from backend.parser import parse_structure
 from backend.workflow_summary import calculation_plan_from_workflow_spec
+from backend.workflows import build_atomate2_flow_for_workflow_spec
 
 
 SI_POSCAR = """Si
@@ -93,7 +96,10 @@ def test_desired_output_options_are_backend_owned_and_beginner_facing():
         for option in desired_outputs
     }
     assert _stage_pairs(workflows["energy_only"]) == [("static", "pbe")]
-    assert _stage_pairs(workflows["relaxed_structure"]) == [("relax", "pbe")]
+    assert _stage_pairs(workflows["relaxed_structure"]) == [
+        ("relax", "pbe"),
+        ("relax", "pbe"),
+    ]
     assert _stage_pairs(workflows["electronic_dos"]) == [
         ("relax", "pbe"),
         ("static", "pbe"),
@@ -138,11 +144,28 @@ def test_rendered_normal_selector_uses_desired_output_not_workflow_recipes():
 
 
 def test_default_desired_output_cards_keep_bmd_stage_theories_visible():
+    relaxed_workflow = desired_output_workflow_spec("relaxed_structure")
     dos_workflow = desired_output_workflow_spec("electronic_dos")
     band_workflow = desired_output_workflow_spec("electronic_band_structure")
 
+    relaxed_context = main.page_context(selected_workflow=relaxed_workflow)
     dos_context = main.page_context(selected_workflow=dos_workflow)
     band_context = main.page_context(selected_workflow=band_workflow)
+
+    assert relaxed_context["selected_workflow"]["desired_output"] == "relaxed_structure"
+    assert [
+        (stage["stage_type"], stage["theory"])
+        for stage in relaxed_context["selected_workflow"]["stages"]
+    ] == [
+        ("relax", "pbe"),
+        ("relax", "pbe"),
+    ]
+    assert calculation_plan_from_workflow_spec(relaxed_workflow) == [
+        "Geometry Optimisation",
+        "Geometry Optimisation",
+    ]
+    assert workflow_stage_directories(relaxed_workflow) == ("relax_01", "relax_02")
+    assert workflow_result_stage_directory(relaxed_workflow) == "relax_02"
 
     assert dos_context["selected_workflow"]["desired_output"] == "electronic_dos"
     assert [
@@ -180,7 +203,13 @@ def test_desired_output_previews_use_current_authoritative_workflows():
     structure = parse_structure(SI_POSCAR)
     expected_stage_markers = {
         "energy_only": ["ISPIN = 1", "NSW = 0"],
-        "relaxed_structure": ["ISPIN = 1", "IBRION = 2", "ISIF = 3"],
+        "relaxed_structure": [
+            "# Stage 1 - Geometry Optimisation (PBE)",
+            "# Stage 2 - Geometry Optimisation (PBE)",
+            "ISPIN = 1",
+            "IBRION = 2",
+            "ISIF = 3",
+        ],
         "electronic_dos": [
             "# Stage 1 - Geometry Optimisation (PBE)",
             "# Stage 2 - Static Energy (PBE)",
@@ -222,6 +251,23 @@ def test_desired_output_previews_use_current_authoritative_workflows():
     assert "# Stage 2 - Static Energy (HSE06)" in band_preview["incar"]
     assert "# Stage 3 - Band Structure (HSE06)" in band_preview["incar"]
     assert "Combined k-points" in band_preview["kpoints"]
+
+
+def test_relaxed_structure_workflow_construction_chains_second_relax_to_first():
+    workflow = desired_output_workflow_spec("relaxed_structure")
+    flow = build_atomate2_flow_for_workflow_spec(
+        "initial-structure",
+        workflow,
+        label="Si-relaxed",
+        resources={"ntasks": 24},
+    )
+
+    assert flow.name == "Si-relaxed_double_relax"
+    assert flow.metadata["bmd_stage_directories"] == ("relax_01", "relax_02")
+    assert [job.name for job in flow.jobs] == ["relax_01", "relax_02"]
+    assert flow.jobs[0].function_args == ("initial-structure",)
+    second_relax_structure = flow.jobs[1].function_args[0]
+    assert repr(second_relax_structure).endswith(", .structure)")
 
 
 def test_build_route_can_reconstruct_desired_output_without_recipe_fallback():

@@ -320,9 +320,12 @@ def _desired_output_workflows() -> tuple[tuple[str, str, str, WorkflowSpec | Non
         (
             "relaxed_structure",
             "Relaxed structure",
-            "Optimise the supplied structure with PBE.",
+            "Run two successive PBE geometry optimisations for the final relaxed structure.",
             WorkflowSpec(
-                [StageSpec(StageType.RELAX, Theory.PBE)],
+                [
+                    StageSpec(StageType.RELAX, Theory.PBE),
+                    StageSpec(StageType.RELAX, Theory.PBE),
+                ],
                 recipe="relaxed_structure",
             ),
         ),
