@@ -226,6 +226,27 @@ h2 {
     grid-column: 1 / -1;
 }
 
+.applied-treatments-field {
+    grid-column: 1 / -1;
+}
+
+.applied-treatment-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.applied-treatment-chip {
+    background: var(--bmd-accent-soft);
+    border: 1px solid var(--bmd-border-strong);
+    border-radius: 999px;
+    color: var(--bmd-accent);
+    display: inline-flex;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 6px 10px;
+}
+
 .workflow-picker {
     grid-column: 1 / -1;
 }
@@ -1286,6 +1307,7 @@ ul {
                                                     {% endfor %}
                                                 </select>
                                             </div>
+                                            {% if is_custom_workflow %}
                                             <div class="advanced-options-field">
                                                 <label>Advanced Options</label>
                                                 <details class="disclosure settings-panel">
@@ -1323,6 +1345,16 @@ ul {
                                                     </div>
                                                 </details>
                                             </div>
+                                            {% elif stage.modifier_labels %}
+                                            <div class="applied-treatments-field">
+                                                <label>Applied Treatments</label>
+                                                <div class="applied-treatment-list">
+                                                    {% for modifier_label in stage.modifier_labels %}
+                                                    <span class="applied-treatment-chip">{{ modifier_label }}</span>
+                                                    {% endfor %}
+                                                </div>
+                                            </div>
+                                            {% endif %}
                                         </div>
                                     </div>
                                     {% endfor %}
@@ -1714,6 +1746,7 @@ ul {
                     <textarea class="hidden-field" name="structure">{{ structure_text }}</textarea>
                     <input type="hidden" name="fmt" value="{{ fmt }}">
                     <input type="hidden" name="workflow_spec_json" value="{{ selected_workflow.json }}">
+                    <input type="hidden" name="workflow" value="{{ selected_workflow.desired_output }}">
                     <input type="hidden" name="purpose" value="{{ selected_calculation.purpose }}">
                     <input type="hidden" name="theory" value="{{ selected_calculation.theory }}">
                     {% for modifier in selected_calculation.modifiers %}
@@ -1732,6 +1765,7 @@ ul {
                     <textarea class="hidden-field" name="structure">{{ structure_text }}</textarea>
                     <input type="hidden" name="fmt" value="{{ fmt }}">
                     <input type="hidden" name="workflow_spec_json" value="{{ selected_workflow.json }}">
+                    <input type="hidden" name="workflow" value="{{ selected_workflow.desired_output }}">
                     <input type="hidden" name="purpose" value="{{ selected_calculation.purpose }}">
                     <input type="hidden" name="theory" value="{{ selected_calculation.theory }}">
                     {% for modifier in selected_calculation.modifiers %}
@@ -2552,6 +2586,31 @@ document.addEventListener("DOMContentLoaded", function () {
         return (selectedModifiers || []).indexOf("dispersion") !== -1;
     }
 
+    function modifierLabel(value) {
+        for (var index = 0; index < modifiers.length; index += 1) {
+            if (modifiers[index].value === value) {
+                return modifiers[index].label;
+            }
+        }
+        return value;
+    }
+
+    function appliedTreatmentMarkup(selectedModifiers) {
+        if (!selectedModifiers || selectedModifiers.length === 0) {
+            return "";
+        }
+        return '<div class="applied-treatments-field">' +
+            '<label>Applied Treatments</label>' +
+            '<div class="applied-treatment-list">' +
+                selectedModifiers.map(function (modifier) {
+                    return '<span class="applied-treatment-chip">' +
+                        escapeHtml(modifierLabel(modifier)) +
+                        '</span>';
+                }).join("") +
+            '</div>' +
+        '</div>';
+    }
+
     function isCustomWorkflow() {
         return !desiredOutputSelect || desiredOutputSelect.value === "custom";
     }
@@ -2569,6 +2628,16 @@ document.addEventListener("DOMContentLoaded", function () {
         var removeButton = editableWorkflow
             ? '<button type="button" class="secondary-button" data-remove-stage>Remove</button>'
             : "";
+        var treatmentMarkup = editableWorkflow
+            ? '<div class="advanced-options-field">' +
+                '<label>Advanced Options</label>' +
+                '<details class="disclosure settings-panel">' +
+                    '<summary aria-label="Toggle advanced options"></summary>' +
+                    '<div class="option-list">' + modifierMarkup(selectedModifiers) + '</div>' +
+                    dispersionMethodMarkup(selectedDispersionMethod, !stageHasDispersion(selectedModifiers)) +
+                '</details>' +
+            '</div>'
+            : appliedTreatmentMarkup(selectedModifiers);
         return '<div class="workflow-stage-card" data-workflow-stage>' +
             '<div class="workflow-stage-card-header">' +
                 '<div class="workflow-stage-heading">' +
@@ -2586,14 +2655,7 @@ document.addEventListener("DOMContentLoaded", function () {
                     '<label>Level of Theory</label>' +
                     '<select data-stage-theory' + stageControlDisabled + '>' + optionMarkup(theories, theory) + '</select>' +
                 '</div>' +
-                '<div class="advanced-options-field">' +
-                    '<label>Advanced Options</label>' +
-                    '<details class="disclosure settings-panel">' +
-                        '<summary aria-label="Toggle advanced options"></summary>' +
-                        '<div class="option-list">' + modifierMarkup(selectedModifiers) + '</div>' +
-                        dispersionMethodMarkup(selectedDispersionMethod, !stageHasDispersion(selectedModifiers)) +
-                    '</details>' +
-                '</div>' +
+                treatmentMarkup +
             '</div>' +
         '</div>';
     }

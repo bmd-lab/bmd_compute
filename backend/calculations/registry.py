@@ -813,6 +813,8 @@ def _validate_dispersion_workflow_consistency(workflow: WorkflowSpec) -> None:
         if (
             previous_stage.stage_type not in relax_static_types
             or current_stage.stage_type not in relax_static_types
+            or previous_stage.theory is not Theory.PBE
+            or current_stage.theory is not Theory.PBE
         ):
             continue
         previous_method = _stage_dispersion_method(previous_stage)

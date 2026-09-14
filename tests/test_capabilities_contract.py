@@ -41,6 +41,7 @@ def test_capability_payload_has_versioned_contract_and_provenance_shape():
     assert payload["schema_version"] == 1
     assert payload["scope"] == "BMD Compute executable implementation, not a methodology authority"
     assert payload["contract"] == {
+        "automatic_default_treatments": "Read-only policy describing BMD-managed Desired Output treatment resolution.",
         "base_stage_definitions": "Theory-neutral stage definitions from list_stage_definitions().",
         "capabilities": "Supported stage/theory descriptions from describe_stage(); unsupported combinations are not invented.",
         "modifier_policies": "Stage-local executable modifiers with controlled options; unsupported pairings are not invented.",
@@ -152,6 +153,29 @@ def test_dispersion_modifier_policy_survives_contract():
     assert policy["phase_1_support"]["theories"] == ["pbe"]
     assert policy["phase_1_support"]["stage_types"] == ["relax", "static"]
     assert policy["phase_1_support"]["blocked_with_modifiers"] == ["soc"]
+
+
+def test_automatic_default_treatment_policy_survives_contract():
+    payload = build_capability_payload(include_provenance=False)
+    policy = payload["automatic_default_treatments"]
+
+    assert policy["applies_to"] == {
+        "workflow_mode": "bmd_managed_desired_output",
+        "custom_workflow": "preserved_without_automatic_changes",
+    }
+    assert [
+        treatment["consideration_id"]
+        for treatment in policy["treatments"]
+    ] == [
+        "spin.composition_screen",
+        "dispersion.two_dimensional_connectivity",
+    ]
+    assert policy["treatments"][1]["method"] == "dftd3-bj"
+    assert policy["treatments"][1]["incar_effect"] == {"IVDW": 12}
+    assert policy["advisory_only"] == [
+        {"consideration_id": "soc.heavy_elements", "modifier": "soc"},
+        {"modifier": "dft_u"},
+    ]
 
 
 def test_capability_payload_is_json_safe_and_deterministic():
