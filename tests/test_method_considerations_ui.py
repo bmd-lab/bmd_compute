@@ -208,11 +208,12 @@ def test_real_style_bi2se3_renders_independent_dispersion_and_soc_considerations
     assert dispersion["observed_evidence"]["triggers"][0]["dimensionality"] == 2
     assert soc["trigger_elements"] == ["Bi"]
     assert dispersion["display_name"] == "Dispersion Correction"
-    assert dispersion["browser_display_name"] == "van der Waals Correction"
+    assert dispersion["browser_display_name"] == "van der Waals correction applied"
     assert "This structure has two-dimensional bonded connectivity" in dispersion["reason"]
     assert "Spin-Orbit Coupling (SOC)" in html
-    assert "van der Waals Correction" in html
+    assert "van der Waals correction applied" in html
     assert "Likely 2-dimensional structure detected" in html
+    assert "The van der Waals correction has been included automatically" in html
     assert "Bi detected. Suggested to activate the Spin-Orbit Coupling (SOC)" in html
     block = method_considerations_block(html)
     assert "Two-dimensional bonded connectivity" not in block
@@ -281,11 +282,11 @@ def test_sns2_renders_dispersion_consideration_with_structural_trigger():
     )
     assert consideration["observed_evidence"]["triggers"][0]["components"][0]["formula"] == "SnS2"
     assert consideration["display_name"] == "Dispersion Correction"
-    assert consideration["browser_display_name"] == "van der Waals Correction"
-    assert "van der Waals Correction" in html
+    assert consideration["browser_display_name"] == "van der Waals correction applied"
+    assert "van der Waals correction applied" in html
     assert 'class="step-mark advisory"' in html
     assert "Likely 2-dimensional structure detected" in html
-    assert "Suggested to activate the van der Waals correction Advanced Option" in html
+    assert "The van der Waals correction has been included automatically" in html
     assert "PBE Geometry Optimisation" in html
     assert "PBE Static Energy" in html
     block = method_considerations_block(html)
@@ -331,7 +332,8 @@ def test_fe_structure_renders_spin_polarisation_consideration_only():
     assert considerations[0]["trigger_elements"] == ["Fe"]
     assert considerations[0]["trigger_classes"] == ["3d_spin_screen"]
     assert "Spin Polarisation" in html
-    assert "Fe detected. Suggested to activate the Spin Polarised Advanced Option." in html
+    assert "Spin Polarisation applied" in html
+    assert "Fe detected. Spin Polarisation has been included automatically" in html
     assert "3d spin-screening element" not in method_considerations_block(html)
     assert 'data-method-consideration-id="soc.heavy_elements"' not in html
     assert "ISPIN=2 is required" not in html
@@ -354,7 +356,7 @@ def test_eu_and_ir_render_independent_spin_and_soc_cards():
         assert html.count('data-method-consideration-id="soc.heavy_elements"') == 1
         assert "Spin Polarisation" in html
         assert "Spin-Orbit Coupling (SOC)" in html
-        assert f"{symbol} detected. Suggested to activate the Spin Polarised Advanced Option." in html
+        assert f"{symbol} detected. Spin Polarisation has been included automatically" in html
         assert f"{symbol} detected. Suggested to activate the Spin-Orbit Coupling (SOC)" in html
         block = method_considerations_block(html)
         assert spin_label not in block
@@ -408,7 +410,7 @@ def test_analyze_reuses_the_parsed_structure_for_method_considerations(monkeypat
             "crystal_system": "triclinic",
         }
 
-    def fake_method_consideration_payload(structure_obj):
+    def fake_method_consideration_payload(structure_obj, *, workflow=None):
         assert structure_obj is sentinel
         return {
             "policy_version": 4,

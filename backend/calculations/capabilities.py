@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from backend.calculations.default_treatments import automatic_default_treatment_policy
 from backend.calculations.dispersion import dispersion_modifier_policy
 from backend.calculations.models import Theory
 from backend.calculations.vasp_stage_definitions import (
@@ -37,10 +38,12 @@ def build_capability_payload(
             "base_stage_definitions": "Theory-neutral stage definitions from list_stage_definitions().",
             "capabilities": "Supported stage/theory descriptions from describe_stage(); unsupported combinations are not invented.",
             "modifier_policies": "Stage-local executable modifiers with controlled options; unsupported pairings are not invented.",
+            "automatic_default_treatments": "Read-only policy describing BMD-managed Desired Output treatment resolution.",
         },
         "base_stage_definitions": base_stage_definitions,
         "capabilities": _supported_stage_theory_capabilities(base_stage_definitions),
         "modifier_policies": [dispersion_modifier_policy()],
+        "automatic_default_treatments": automatic_default_treatment_policy(),
     }
 
 

@@ -5,7 +5,7 @@ import json
 from starlette.requests import Request
 
 import main
-from backend.calculations.models import StageSpec, StageType, Theory, WorkflowSpec
+from backend.calculations.models import Modifier, StageSpec, StageType, Theory, WorkflowSpec
 from backend.calculations.registry import (
     calculation_form_options,
     desired_output_from_workflow_spec,
@@ -29,6 +29,17 @@ Si
 direct
 0.0 0.0 0.0
 0.25 0.25 0.25
+"""
+
+FE_POSCAR = """Fe
+2.87
+1.0 0.0 0.0
+0.0 1.0 0.0
+0.0 0.0 1.0
+Fe
+1
+direct
+0.0 0.0 0.0
 """
 
 
@@ -65,6 +76,12 @@ def _render_index(**context_overrides) -> str:
 def _desired_output_select_block(html: str) -> str:
     start = html.index('id="desired-output-select"')
     end = html.index("</select>", start)
+    return html[start:end]
+
+
+def _workflow_stage_list_block(html: str) -> str:
+    start = html.index('id="workflow-stage-list"')
+    end = html.index('class="workflow-controls"', start)
     return html[start:end]
 
 
@@ -141,6 +158,48 @@ def test_rendered_normal_selector_uses_desired_output_not_workflow_recipes():
     assert "DFT+U" in html
     assert "van der Waals correction" in html
     assert "DFT-D3(BJ)" in html
+
+
+def test_bmd_managed_desired_output_shows_read_only_applied_treatments():
+    response = main.build_workflow(
+        _request(),
+        structure=FE_POSCAR,
+        fmt="poscar",
+        purpose=None,
+        theory=None,
+        modifiers=None,
+        cpus=None,
+        memory_gb=None,
+        walltime=None,
+        queue=None,
+        workflow_spec_json=None,
+        workflow="energy_only",
+        method=None,
+    )
+    html = response.template.render(response.context)
+    stage_block = _workflow_stage_list_block(html)
+
+    assert response.context["selected_workflow"]["stages"][0]["modifiers"] == [
+        "spin_polarized"
+    ]
+    assert "Applied Treatments" in stage_block
+    assert "Spin Polarised" in stage_block
+    assert "Advanced Options" not in stage_block
+    assert "data-stage-modifier" not in stage_block
+
+
+def test_custom_workflow_keeps_editable_advanced_options_controls():
+    custom_workflow = WorkflowSpec(
+        [StageSpec(StageType.STATIC, Theory.PBE, {Modifier.SPIN_POLARIZED})],
+        recipe="custom",
+    )
+    html = _render_index(selected_workflow=custom_workflow)
+    stage_block = _workflow_stage_list_block(html)
+
+    assert "Advanced Options" in stage_block
+    assert "Applied Treatments" not in stage_block
+    assert "data-stage-modifier" in stage_block
+    assert "Spin Polarised" in stage_block
 
 
 def test_default_desired_output_cards_keep_bmd_stage_theories_visible():

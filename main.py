@@ -13,6 +13,12 @@ from backend.calculations.models import (
     Theory,
     WorkflowSpec,
 )
+from backend.calculations.default_treatments import (
+    AUTOMATIC_APPLICATION_ADVISORY,
+    AUTOMATIC_APPLICATION_APPLIED,
+    ResolvedDefaultWorkflow,
+    resolve_default_treatments,
+)
 from backend.calculations.method_considerations import (
     DISPERSION_TWO_DIMENSIONAL_CONNECTIVITY_CONSIDERATION_ID,
     SOC_HEAVY_ELEMENTS_CONSIDERATION_ID,
@@ -74,6 +80,7 @@ def page_context(
     monitoring_result=None,
     results_summary=None,
     method_considerations=None,
+    default_treatment_resolution: ResolvedDefaultWorkflow | None = None,
     resume_job_id: str = "",
     structure_error=None,
     calculation_error=None,
@@ -118,6 +125,9 @@ def page_context(
         "monitoring_result": monitoring_result,
         "results_summary": results_summary,
         "method_considerations": method_considerations,
+        "default_treatment_resolution": default_treatment_resolution_context(
+            default_treatment_resolution
+        ),
         "resume_job_id": resume_job_id,
         "structure_error": structure_error,
         "calculation_error": calculation_error,
@@ -358,11 +368,22 @@ def selected_calculation_context(
 
 def selected_workflow_context(workflow_spec: WorkflowSpec) -> dict:
     workflow = validate_workflow_spec(workflow_spec)
+    desired_output = (
+        workflow.recipe
+        if workflow.recipe in {
+            "energy_only",
+            "relaxed_structure",
+            "electronic_dos",
+            "electronic_band_structure",
+            "custom",
+        }
+        else desired_output_from_workflow_spec(workflow)
+    )
     return {
         "json": json.dumps(workflow.to_dict(), sort_keys=True),
         "label": workflow_display_name(workflow),
         "recipe": workflow.recipe,
-        "desired_output": desired_output_from_workflow_spec(workflow),
+        "desired_output": desired_output,
         "stages": [
             {
                 "index": index + 1,
@@ -395,6 +416,10 @@ def calculation_spec_from_form(
     workflow: str | None = None,
     method: str | None = None,
 ) -> CalculationSpec:
+    purpose = optional_form_value(purpose)
+    theory = optional_form_value(theory)
+    workflow = optional_form_value(workflow)
+    method = optional_form_value(method)
     if purpose or theory or modifiers:
         return CalculationSpec(
             purpose=purpose or Purpose.STATIC,
@@ -414,6 +439,15 @@ def workflow_spec_from_form(
     workflow: str | None = None,
     method: str | None = None,
 ) -> WorkflowSpec:
+    workflow_spec_json = optional_form_value(workflow_spec_json)
+    purpose = optional_form_value(purpose)
+    theory = optional_form_value(theory)
+    workflow = optional_form_value(workflow)
+    method = optional_form_value(method)
+    desired_workflow = desired_output_workflow_spec(workflow)
+    if desired_workflow is not None:
+        return desired_workflow
+
     if workflow_spec_json:
         try:
             data = json.loads(workflow_spec_json)
@@ -424,10 +458,6 @@ def workflow_spec_from_form(
             ) from exc
         return validate_workflow_spec(WorkflowSpec.from_dict(data))
 
-    desired_workflow = desired_output_workflow_spec(workflow)
-    if desired_workflow is not None:
-        return desired_workflow
-
     return workflow_spec_from_calculation_spec(
         calculation_spec_from_form(
             purpose=purpose,
@@ -437,6 +467,33 @@ def workflow_spec_from_form(
             method=method,
         )
     )
+
+
+def optional_form_value(value):
+    if value is None:
+        return None
+    value_type = type(value)
+    if value_type.__module__ == "fastapi.params" and value_type.__name__ == "Form":
+        return None
+    return value
+
+
+def resolve_workflow_for_structure(
+    structure_obj,
+    workflow_spec: WorkflowSpec,
+    *,
+    workflow: str | None = None,
+) -> tuple[WorkflowSpec, ResolvedDefaultWorkflow | None]:
+    workflow = optional_form_value(workflow)
+    if desired_output_workflow_spec(workflow) is None:
+        return validate_workflow_spec(workflow_spec), None
+
+    resolution = resolve_default_treatments(
+        structure_obj,
+        desired_output_workflow_spec(workflow),
+        desired_output=workflow,
+    )
+    return resolution.resolved_workflow, resolution
 
 
 def execution_resources_from_form(
@@ -456,7 +513,33 @@ def execution_resources_from_form(
     )
 
 
-def method_considerations_context(structure_obj, *, workflow: WorkflowSpec | None = None) -> dict | None:
+def default_treatment_resolution_context(
+    resolution: ResolvedDefaultWorkflow | None,
+) -> dict | None:
+    return resolution.to_dict() if resolution is not None else None
+
+
+def method_considerations_for_workflow_state(
+    structure_obj,
+    *,
+    workflow: WorkflowSpec | None,
+    default_treatment_resolution: ResolvedDefaultWorkflow | None,
+) -> dict | None:
+    if default_treatment_resolution is None:
+        return method_considerations_context(structure_obj, workflow=workflow)
+    return method_considerations_context(
+        structure_obj,
+        workflow=workflow,
+        default_treatment_resolution=default_treatment_resolution,
+    )
+
+
+def method_considerations_context(
+    structure_obj,
+    *,
+    workflow: WorkflowSpec | None = None,
+    default_treatment_resolution: ResolvedDefaultWorkflow | None = None,
+) -> dict | None:
     payload = (
         method_consideration_payload(structure_obj, workflow=workflow)
         if workflow is not None
@@ -466,7 +549,22 @@ def method_considerations_context(structure_obj, *, workflow: WorkflowSpec | Non
         return None
 
     rendered = deepcopy(payload)
+    applied_by_id = {
+        treatment.consideration_id: treatment.to_dict()
+        for treatment in (
+            default_treatment_resolution.applied_treatments
+            if default_treatment_resolution is not None
+            else ()
+        )
+    }
     for consideration in rendered.get("considerations", []):
+        automatic_application = applied_by_id.get(consideration.get("id"))
+        consideration["automatic_application_state"] = (
+            AUTOMATIC_APPLICATION_APPLIED
+            if automatic_application is not None
+            else AUTOMATIC_APPLICATION_ADVISORY
+        )
+        consideration["automatic_application"] = automatic_application
         support = consideration.get("bmd_compute_support") or {}
         consideration["display_name"] = (
             consideration.get("display_name")
@@ -518,6 +616,12 @@ def method_considerations_context(structure_obj, *, workflow: WorkflowSpec | Non
 
 
 def _method_consideration_browser_name(consideration: dict) -> str:
+    if consideration.get("automatic_application_state") == AUTOMATIC_APPLICATION_APPLIED:
+        if consideration.get("id") == DISPERSION_TWO_DIMENSIONAL_CONNECTIVITY_CONSIDERATION_ID:
+            return "van der Waals correction applied"
+        if consideration.get("id") == SPIN_COMPOSITION_CONSIDERATION_ID:
+            return "Spin Polarisation applied"
+
     if consideration.get("id") == DISPERSION_TWO_DIMENSIONAL_CONNECTIVITY_CONSIDERATION_ID:
         return "van der Waals Correction"
     return str(consideration.get("display_name") or "Method Consideration")
@@ -525,7 +629,17 @@ def _method_consideration_browser_name(consideration: dict) -> str:
 
 def _method_consideration_browser_summary(consideration: dict) -> str:
     consideration_id = consideration.get("id")
+    is_applied = (
+        consideration.get("automatic_application_state")
+        == AUTOMATIC_APPLICATION_APPLIED
+    )
     if consideration_id == DISPERSION_TWO_DIMENSIONAL_CONNECTIVITY_CONSIDERATION_ID:
+        if is_applied:
+            return (
+                "Likely 2-dimensional structure detected. The van der Waals "
+                "correction has been included automatically in the applicable "
+                "PBE stages. Choose Custom workflow to configure this manually."
+            )
         support = _method_consideration_support_phrase(consideration)
         suffix = f" for {support}" if support else ""
         return (
@@ -537,6 +651,12 @@ def _method_consideration_browser_summary(consideration: dict) -> str:
     subject = f"{elements} detected" if elements else "Relevant structure feature detected"
 
     if consideration_id == SPIN_COMPOSITION_CONSIDERATION_ID:
+        if is_applied:
+            return (
+                f"{subject}. Spin Polarisation has been included automatically "
+                "in the BMD workflow. Choose Custom workflow to configure this "
+                "manually."
+            )
         return (
             f"{subject}. Suggested to activate the Spin Polarised Advanced Option."
         )
@@ -742,7 +862,16 @@ def analyze(
         )
 
     summary = summarize_structure(structure_obj)
-    method_considerations = method_considerations_context(structure_obj)
+    workflow_spec, default_treatment_resolution = resolve_workflow_for_structure(
+        structure_obj,
+        default_workflow_spec(),
+        workflow="energy_only",
+    )
+    method_considerations = method_considerations_for_workflow_state(
+        structure_obj,
+        workflow=workflow_spec,
+        default_treatment_resolution=default_treatment_resolution,
+    )
 
     return templates.TemplateResponse(
         request=request,
@@ -751,7 +880,9 @@ def analyze(
             structure_text=structure,
             fmt=fmt,
             summary=summary,
+            selected_workflow=workflow_spec,
             method_considerations=method_considerations,
+            default_treatment_resolution=default_treatment_resolution,
         ),
     )
 
@@ -823,9 +954,19 @@ def build_workflow(
             queue=queue,
         )
         structure_obj = parse_structure(structure, fmt)
-        method_considerations = method_considerations_context(
+        workflow_spec, default_treatment_resolution = resolve_workflow_for_structure(
+            structure_obj,
+            workflow_spec,
+            workflow=workflow,
+        )
+        calculation_spec = (
+            calculation_spec_from_workflow_spec(workflow_spec)
+            or default_calculation_spec()
+        )
+        method_considerations = method_considerations_for_workflow_state(
             structure_obj,
             workflow=workflow_spec,
+            default_treatment_resolution=default_treatment_resolution,
         )
         summary, calculation_summary, generated_inputs, submission_spec = build_submission_state_from_structure(
             structure_obj=structure_obj,
@@ -869,6 +1010,7 @@ def build_workflow(
             generated_inputs=generated_inputs,
             submission_spec=submission_spec,
             method_considerations=method_considerations,
+            default_treatment_resolution=default_treatment_resolution,
         ),
     )
 
@@ -915,9 +1057,19 @@ def prepare_remote(
             queue=queue,
         )
         structure_obj = parse_structure(structure, fmt)
-        method_considerations = method_considerations_context(
+        workflow_spec, default_treatment_resolution = resolve_workflow_for_structure(
+            structure_obj,
+            workflow_spec,
+            workflow=workflow,
+        )
+        calculation_spec = (
+            calculation_spec_from_workflow_spec(workflow_spec)
+            or default_calculation_spec()
+        )
+        method_considerations = method_considerations_for_workflow_state(
             structure_obj,
             workflow=workflow_spec,
+            default_treatment_resolution=default_treatment_resolution,
         )
         summary, calculation_summary, generated_inputs, submission_spec = build_submission_state_from_structure(
             structure_obj=structure_obj,
@@ -965,6 +1117,7 @@ def prepare_remote(
             submission_spec=submission_spec,
             remote_preparation=remote_preparation,
             method_considerations=method_considerations,
+            default_treatment_resolution=default_treatment_resolution,
         ),
     )
 
@@ -1012,9 +1165,19 @@ def submit_workflow(
             queue=queue,
         )
         structure_obj = parse_structure(structure, fmt)
-        method_considerations = method_considerations_context(
+        workflow_spec, default_treatment_resolution = resolve_workflow_for_structure(
+            structure_obj,
+            workflow_spec,
+            workflow=workflow,
+        )
+        calculation_spec = (
+            calculation_spec_from_workflow_spec(workflow_spec)
+            or default_calculation_spec()
+        )
+        method_considerations = method_considerations_for_workflow_state(
             structure_obj,
             workflow=workflow_spec,
+            default_treatment_resolution=default_treatment_resolution,
         )
         summary, calculation_summary, generated_inputs, submission_spec = build_submission_state_from_structure(
             structure_obj=structure_obj,
@@ -1084,6 +1247,7 @@ def submit_workflow(
             monitoring_result=monitoring_result,
             results_summary=results_summary,
             method_considerations=method_considerations,
+            default_treatment_resolution=default_treatment_resolution,
         ),
     )
 
