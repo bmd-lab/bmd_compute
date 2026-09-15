@@ -218,7 +218,7 @@ def test_si_desired_output_static_has_no_automatic_treatments_and_is_determinist
             "electronic_dos",
             [
                 ("relax", "pbe", ("spin_polarized",)),
-                ("static", "pbe", ("spin_polarized",)),
+                ("static", "hse06", ("spin_polarized",)),
                 ("dos", "hse06", ("spin_polarized",)),
             ],
         ),
@@ -256,7 +256,7 @@ def test_spin_consideration_applies_to_current_desired_outputs(desired_output, e
             "electronic_dos",
             [
                 ("relax", "pbe", ("dispersion",)),
-                ("static", "pbe", ("dispersion",)),
+                ("static", "hse06", ()),
                 ("dos", "hse06", ()),
             ],
         ),
@@ -286,7 +286,7 @@ def test_spin_and_dispersion_compose_without_overwriting_stage_modifiers():
 
     assert signature(workflow) == [
         ("relax", "pbe", ("dispersion", "spin_polarized")),
-        ("static", "pbe", ("dispersion", "spin_polarized")),
+        ("static", "hse06", ("spin_polarized",)),
         ("dos", "hse06", ("spin_polarized",)),
     ]
 
@@ -299,7 +299,7 @@ def test_spin_and_dispersion_compose_without_overwriting_stage_modifiers():
     assert len(sections) == 3
     assert all("ISPIN = 2" in section for section in sections)
     assert "IVDW = 12" in sections[0]
-    assert "IVDW = 12" in sections[1]
+    assert "IVDW" not in sections[1]
     assert "IVDW" not in sections[2]
 
 
@@ -429,19 +429,12 @@ def test_changing_desired_output_recomputes_stage_applicability_from_base_recipe
             "modifier": "dispersion",
             "display_name": "van der Waals correction",
             "application_state": "applied",
-            "stage_indices": [1, 2],
+            "stage_indices": [1],
             "stage_applications": [
                 {
                     "stage_index": 1,
                     "stage_type": "relax",
                     "stage_type_label": "Geometry Optimisation",
-                    "theory": "pbe",
-                    "theory_label": "PBE",
-                },
-                {
-                    "stage_index": 2,
-                    "stage_type": "static",
-                    "stage_type_label": "Static Energy",
                     "theory": "pbe",
                     "theory_label": "PBE",
                 },

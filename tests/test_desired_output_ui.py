@@ -119,7 +119,7 @@ def test_desired_output_options_are_backend_owned_and_beginner_facing():
     ]
     assert _stage_pairs(workflows["electronic_dos"]) == [
         ("relax", "pbe"),
-        ("static", "pbe"),
+        ("static", "hse06"),
         ("dos", "hse06"),
     ]
     assert _stage_pairs(workflows["electronic_band_structure"]) == [
@@ -232,12 +232,12 @@ def test_default_desired_output_cards_keep_bmd_stage_theories_visible():
         for stage in dos_context["selected_workflow"]["stages"]
     ] == [
         ("relax", "pbe"),
-        ("static", "pbe"),
+        ("static", "hse06"),
         ("dos", "hse06"),
     ]
     assert calculation_plan_from_workflow_spec(dos_workflow) == [
         "Geometry Optimisation (PBE)",
-        "Static Energy (PBE)",
+        "Static Energy (HSE06)",
         "Density of States (HSE06)",
     ]
     assert band_context["selected_workflow"]["desired_output"] == (
@@ -271,7 +271,7 @@ def test_desired_output_previews_use_current_authoritative_workflows():
         ],
         "electronic_dos": [
             "# Stage 1 - Geometry Optimisation (PBE)",
-            "# Stage 2 - Static Energy (PBE)",
+            "# Stage 2 - Static Energy (HSE06)",
             "# Stage 3 - Density of States (HSE06)",
         ],
         "electronic_band_structure": [
@@ -353,12 +353,15 @@ def test_build_route_can_reconstruct_desired_output_without_recipe_fallback():
         for stage in response.context["selected_workflow"]["stages"]
     ] == [
         ("relax", "pbe"),
-        ("static", "pbe"),
+        ("static", "hse06"),
         ("dos", "hse06"),
     ]
+    assert response.context["calculation"]["calculation_type"] == (
+        "Geometry Optimisation + Static Energy + Density of States"
+    )
     assert response.context["calculation"]["calculation_plan"] == [
         "Geometry Optimisation (PBE)",
-        "Static Energy (PBE)",
+        "Static Energy (HSE06)",
         "Density of States (HSE06)",
     ]
     assert response.context["selected_calculation"]["theory_label"] == "Mixed"

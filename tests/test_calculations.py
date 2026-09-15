@@ -170,7 +170,7 @@ assert [
     for stage in desired_outputs["electronic_dos"]["workflow_spec"]["stages"]
 ] == [
     ("relax", "pbe"),
-    ("static", "pbe"),
+    ("static", "hse06"),
     ("dos", "hse06"),
 ]
 assert [
