@@ -304,6 +304,8 @@ hse_soc_relax_static_spec = CalculationSpec(
     Theory.HSE06,
     {Modifier.SOC},
 )
+hse_soc_dos_spec = CalculationSpec(Purpose.DOS, Theory.HSE06, {Modifier.SOC})
+hse_soc_band_spec = CalculationSpec(Purpose.BAND_STRUCTURE, Theory.HSE06, {Modifier.SOC})
 assert validate_calculation_spec(spin_static_spec) == spin_static_spec
 assert validate_calculation_spec(spin_relax_spec) == spin_relax_spec
 assert validate_calculation_spec(spin_relax_static_spec) == spin_relax_static_spec
@@ -322,6 +324,7 @@ assert validate_calculation_spec(hse_spin_relax_static_spec) == hse_spin_relax_s
 assert validate_calculation_spec(hse_gamma_static_spec) == hse_gamma_static_spec
 assert validate_calculation_spec(hse_gamma_relax_spec) == hse_gamma_relax_spec
 assert validate_calculation_spec(hse_gamma_relax_static_spec) == hse_gamma_relax_static_spec
+assert validate_calculation_spec(hse_soc_static_spec) == hse_soc_static_spec
 assert legacy_workflow_from_spec(spin_static_spec) == "static"
 assert legacy_workflow_from_spec(spin_relax_spec) == "relax"
 assert legacy_workflow_from_spec(spin_relax_static_spec) == "relax_static"
@@ -331,6 +334,7 @@ assert legacy_workflow_from_spec(spin_band_spec) == "band_structure"
 assert legacy_workflow_from_spec(soc_static_spec) == "static"
 assert legacy_workflow_from_spec(dft_u_relax_spec) == "relax"
 assert legacy_workflow_from_spec(gamma_static_spec) == "static"
+assert legacy_workflow_from_spec(hse_soc_static_spec) == "static"
 try:
     validate_calculation_spec(gamma_band_spec)
 except CalculationValidationError as exc:
@@ -338,7 +342,13 @@ except CalculationValidationError as exc:
 else:
     raise AssertionError("Gamma-only should not be supported for line-mode bands.")
 
-for unsupported_hse_spec in (hse_double_relax_spec, hse_dos_spec, hse_band_spec):
+for unsupported_hse_spec in (
+    hse_double_relax_spec,
+    hse_dos_spec,
+    hse_band_spec,
+    hse_soc_dos_spec,
+    hse_soc_band_spec,
+):
     try:
         validate_calculation_spec(unsupported_hse_spec)
     except CalculationValidationError as exc:
@@ -356,7 +366,6 @@ for unsupported_modifier_spec in (
     hse_dft_u_static_spec,
     hse_dft_u_relax_spec,
     hse_dft_u_relax_static_spec,
-    hse_soc_static_spec,
     hse_soc_relax_spec,
     hse_soc_relax_static_spec,
 ):

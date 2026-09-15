@@ -367,6 +367,12 @@ def test_heavy_element_detection_produces_single_conservative_soc_consideration(
         {
             "stage_type": "static",
             "stage_label": "Static Energy",
+            "theory": "hse06",
+            "theory_label": "HSE06",
+        },
+        {
+            "stage_type": "static",
+            "stage_label": "Static Energy",
             "theory": "pbe",
             "theory_label": "PBE",
         }
@@ -757,15 +763,19 @@ def test_spin_consideration_workflow_statuses_are_stage_local_and_non_mutating()
 
 
 def test_heavy_element_compatible_workflow_without_soc_is_not_selected():
-    consideration = only_consideration(
-        bi2se3_structure(),
-        workflow=pbe_static_workflow(),
-    )
+    for workflow in (
+        pbe_static_workflow(),
+        WorkflowSpec([StageSpec(StageType.STATIC, Theory.HSE06)]),
+    ):
+        consideration = only_consideration(
+            bi2se3_structure(),
+            workflow=workflow,
+        )
 
-    assert consideration.selection_state == NOT_SELECTED
-    assert consideration.bmd_compute_support["workflow"]["provided"] is True
-    assert consideration.bmd_compute_support["workflow"]["supported_stage_indices"] == [1]
-    assert consideration.bmd_compute_support["workflow"]["selected_stage_indices"] == []
+        assert consideration.selection_state == NOT_SELECTED
+        assert consideration.bmd_compute_support["workflow"]["provided"] is True
+        assert consideration.bmd_compute_support["workflow"]["supported_stage_indices"] == [1]
+        assert consideration.bmd_compute_support["workflow"]["selected_stage_indices"] == []
 
 
 def test_heavy_element_compatible_workflow_with_soc_is_already_selected():
@@ -787,7 +797,7 @@ def test_heavy_element_compatible_workflow_with_soc_is_already_selected():
 def test_incompatible_workflow_support_is_represented_without_workflow_changes():
     for workflow in (
         WorkflowSpec([StageSpec(StageType.RELAX, Theory.PBE)]),
-        WorkflowSpec([StageSpec(StageType.STATIC, Theory.HSE06)]),
+        WorkflowSpec([StageSpec(StageType.RELAX, Theory.HSE06)]),
     ):
         before = workflow.to_dict()
         consideration = only_consideration(bi2se3_structure(), workflow=workflow)

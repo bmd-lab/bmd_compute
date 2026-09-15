@@ -60,6 +60,12 @@ _HSE06_SINGLE_STAGE_MODIFIERS = (
     Modifier.GAMMA_ONLY,
 )
 
+_HSE06_STATIC_MODIFIERS = (
+    Modifier.SPIN_POLARIZED,
+    Modifier.SOC,
+    Modifier.GAMMA_ONLY,
+)
+
 
 def _modifier_subsets(
     modifiers: tuple[Modifier, ...],
@@ -102,6 +108,8 @@ def _build_supported_compatibility_workflows() -> dict[
     for modifiers in _modifier_subsets(_HSE06_SINGLE_STAGE_MODIFIERS):
         supported[(Purpose.RELAX, Theory.HSE06, modifiers)] = "relax"
         supported[(Purpose.RELAX_STATIC, Theory.HSE06, modifiers)] = "relax_static"
+
+    for modifiers in _modifier_subsets(_HSE06_STATIC_MODIFIERS):
         supported[(Purpose.STATIC, Theory.HSE06, modifiers)] = "static"
 
     return supported
@@ -850,6 +858,8 @@ def _supported_modifiers_for_stage(
     if theory is Theory.HSE06:
         if stage_type is StageType.BAND_STRUCTURE:
             return frozenset({Modifier.SPIN_POLARIZED})
+        if stage_type is StageType.STATIC:
+            return frozenset(_HSE06_STATIC_MODIFIERS)
         return frozenset(_HSE06_SINGLE_STAGE_MODIFIERS)
 
     return frozenset()

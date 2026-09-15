@@ -238,6 +238,65 @@ assert "LNONCOLLINEAR = True" in static_soc_runtime_incar
 assert "ISPIN =" not in static_soc_runtime_incar
 assert "LELF =" not in static_soc_runtime_incar
 
+hse_soc_static_preview = preview_generated_inputs(
+    structure,
+    CalculationSpec(Purpose.STATIC, Theory.HSE06, {Modifier.SOC}),
+    potcar_functional="PBE_64",
+)
+assert hse_soc_static_preview["vasp_executable"] == "vasp_ncl"
+assert "LHFCALC = True" in hse_soc_static_preview["incar"]
+assert "AEXX = 0.25" in hse_soc_static_preview["incar"]
+assert "HFSCREEN = 0.2" in hse_soc_static_preview["incar"]
+assert "GGA = Pe" in hse_soc_static_preview["incar"]
+assert "ALGO = Damped" in hse_soc_static_preview["incar"]
+assert "PRECFOCK = Accurate" in hse_soc_static_preview["incar"]
+assert "TIME = 0.4" in hse_soc_static_preview["incar"]
+assert "ISMEAR = 0" in hse_soc_static_preview["incar"]
+assert "LSORBIT = True" in hse_soc_static_preview["incar"]
+assert "LNONCOLLINEAR = True" in hse_soc_static_preview["incar"]
+assert "ISPIN =" not in hse_soc_static_preview["incar"]
+assert "LELF =" not in hse_soc_static_preview["incar"]
+assert "ISYM = 0" in hse_soc_static_preview["incar"]
+assert "GGA_COMPAT = False" in hse_soc_static_preview["incar"]
+assert "SAXIS = 0 0 1" in hse_soc_static_preview["incar"]
+assert "MAGMOM = 0.0 0.0 0.6 0.0 0.0 0.6" in hse_soc_static_preview["incar"]
+assert "NCORE = 8" in hse_soc_static_preview["incar"]
+assert "LWAVE = False" in hse_soc_static_preview["incar"]
+assert magmom_component_count(hse_soc_static_preview["incar"]) == 3 * len(structure)
+
+hse_spin_soc_static_preview = preview_generated_inputs(
+    structure,
+    CalculationSpec(
+        Purpose.STATIC,
+        Theory.HSE06,
+        {Modifier.SPIN_POLARIZED, Modifier.SOC},
+    ),
+    potcar_functional="PBE_64",
+)
+assert hse_spin_soc_static_preview["vasp_executable"] == "vasp_ncl"
+assert hse_spin_soc_static_preview["incar"] == hse_soc_static_preview["incar"]
+
+hse_soc_workflow = WorkflowSpec(
+    [StageSpec(StageType.STATIC, Theory.HSE06, {Modifier.SOC})],
+    recipe="custom",
+)
+hse_soc_runtime_incar = reconstructed_runtime_stage_incar(
+    poscar,
+    hse_soc_workflow,
+    stage_index=0,
+)
+assert incar_values(hse_soc_runtime_incar, "MAGMOM") == incar_values(
+    hse_soc_static_preview["incar"],
+    "MAGMOM",
+)
+assert magmom_component_count(hse_soc_runtime_incar) == 3 * len(structure)
+assert "LHFCALC = True" in hse_soc_runtime_incar
+assert "PRECFOCK = Accurate" in hse_soc_runtime_incar
+assert "LSORBIT = True" in hse_soc_runtime_incar
+assert "LNONCOLLINEAR = True" in hse_soc_runtime_incar
+assert "ISPIN =" not in hse_soc_runtime_incar
+assert "LELF =" not in hse_soc_runtime_incar
+
 gamma_static_preview = preview_generated_inputs(
     structure,
     CalculationSpec(Purpose.STATIC, Theory.PBE, {Modifier.GAMMA_ONLY}),

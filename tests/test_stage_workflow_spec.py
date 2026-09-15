@@ -247,8 +247,19 @@ assert calculation_plan_from_workflow_spec(validated_soc_static) == [
     "Static Energy",
 ]
 
+hse_soc_static_workflow = WorkflowSpec(
+    [StageSpec(StageType.STATIC, Theory.HSE06, {Modifier.SOC})],
+    recipe="custom",
+)
+validated_hse_soc_static = validate_workflow_spec(hse_soc_static_workflow)
+assert workflow_stage_directories(validated_hse_soc_static) == ()
+assert calculation_plan_from_workflow_spec(validated_hse_soc_static) == [
+    "Static Energy",
+]
+
 for invalid_workflow in (
     WorkflowSpec([StageSpec(StageType.RELAX, Theory.PBE, {Modifier.SOC})]),
+    WorkflowSpec([StageSpec(StageType.RELAX, Theory.HSE06, {Modifier.SOC})]),
     WorkflowSpec(
         [
             StageSpec(StageType.STATIC, Theory.PBE),
@@ -257,8 +268,20 @@ for invalid_workflow in (
     ),
     WorkflowSpec(
         [
+            StageSpec(StageType.STATIC, Theory.HSE06),
+            StageSpec(StageType.DOS, Theory.HSE06, {Modifier.SOC}),
+        ]
+    ),
+    WorkflowSpec(
+        [
             StageSpec(StageType.STATIC, Theory.PBE),
             StageSpec(StageType.BAND_STRUCTURE, Theory.PBE, {Modifier.SOC}),
+        ]
+    ),
+    WorkflowSpec(
+        [
+            StageSpec(StageType.STATIC, Theory.HSE06),
+            StageSpec(StageType.BAND_STRUCTURE, Theory.HSE06, {Modifier.SOC}),
         ]
     ),
     WorkflowSpec([StageSpec(StageType.DOS, Theory.PBE)]),
@@ -325,6 +348,17 @@ with fake_atomate2_and_jobflow():
     soc_generated_inputs = preview_generated_inputs(
         "initial_structure",
         soc_static_workflow,
+        resources={"ntasks": 24},
+    )
+    hse_soc_static_flow = build_atomate2_flow_for_workflow_spec(
+        "initial_structure",
+        hse_soc_static_workflow,
+        label="Si-hse-soc",
+        resources={"ntasks": 24},
+    )
+    hse_soc_generated_inputs = preview_generated_inputs(
+        "initial_structure",
+        hse_soc_static_workflow,
         resources={"ntasks": 24},
     )
 
@@ -425,6 +459,34 @@ assert "LSORBIT = True" in soc_stage_3
 assert "GGA_COMPAT = False" in soc_stage_3
 assert "ISPIN" not in soc_stage_3
 assert "LELF" not in soc_stage_3
+
+assert hse_soc_static_flow.name == "Si-hse-soc_hse_static"
+assert [job.name for job in hse_soc_static_flow.jobs] == ["hse_static"]
+assert "vasp_ncl" in hse_soc_static_flow.jobs[0].run_vasp_kwargs["vasp_cmd"]
+hse_soc_static_incar = hse_soc_static_flow.jobs[0].input_set_generator.kwargs[
+    "user_incar_settings"
+]
+assert hse_soc_static_incar["LHFCALC"] is True
+assert hse_soc_static_incar["AEXX"] == 0.25
+assert hse_soc_static_incar["HFSCREEN"] == 0.2
+assert hse_soc_static_incar["GGA"] == "PE"
+assert hse_soc_static_incar["ALGO"] == "Damped"
+assert hse_soc_static_incar["PRECFOCK"] == "Accurate"
+assert hse_soc_static_incar["TIME"] == 0.4
+assert hse_soc_static_incar["ISMEAR"] == 0
+assert hse_soc_static_incar["LSORBIT"] is True
+assert hse_soc_static_incar["LNONCOLLINEAR"] is True
+assert hse_soc_static_incar["GGA_COMPAT"] is False
+assert hse_soc_static_incar["ISPIN"] is None
+assert hse_soc_static_incar["LELF"] is None
+assert hse_soc_static_incar["LWAVE"] is False
+assert hse_soc_static_incar["NCORE"] == 8
+assert hse_soc_generated_inputs["vasp_executable"] == "vasp_ncl"
+assert "LHFCALC = True" in hse_soc_generated_inputs["incar"]
+assert "PRECFOCK = Accurate" in hse_soc_generated_inputs["incar"]
+assert "LSORBIT = True" in hse_soc_generated_inputs["incar"]
+assert "ISPIN" not in hse_soc_generated_inputs["incar"]
+assert "LELF" not in hse_soc_generated_inputs["incar"]
 
 summary = summarize_workflow(mixed_flow, mixed_relax_static)
 assert summary["calculation_type"] == "Geometry Optimisation + Static Energy"
