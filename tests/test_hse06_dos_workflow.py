@@ -19,6 +19,7 @@ from backend.calculations.registry import (
     CalculationValidationError,
     calculation_form_options,
     calculation_spec_from_workflow_spec,
+    desired_output_workflow_spec,
     validate_calculation_spec,
     validate_stage_spec,
     validate_workflow_spec,
@@ -275,6 +276,11 @@ def test_hse06_dos_stage_and_supported_precursor_shapes_validate():
         "Static Energy (PBE)",
         "Density of States (HSE06)",
     ]
+    assert calculation_plan_from_workflow_spec(hse_precursor) == [
+        "Geometry Optimisation (PBE)",
+        "Static Energy (HSE06)",
+        "Density of States (HSE06)",
+    ]
 
 
 def test_hse06_dos_still_requires_a_static_precursor_and_legacy_recipe_stays_blocked():
@@ -367,6 +373,48 @@ def test_hse06_dos_execution_uses_hsebs_maker_and_uniform_generator():
     ]
     assert len(vasp_handlers) == 1
     assert "auto_nbands" not in vasp_handlers[0].errors_subset_to_catch
+
+
+def test_electronic_dos_desired_output_uses_existing_hse_static_and_hse_dos_paths():
+    workflow = desired_output_workflow_spec("electronic_dos")
+
+    with fake_atomate2_and_jobflow():
+        flow = build_atomate2_flow_for_workflow_spec(
+            "initial_structure",
+            workflow,
+            label="Si-default-dos",
+            resources={"ntasks": 24},
+        )
+
+    assert [job.name for job in flow.jobs] == ["stage_01", "stage_02", "stage_03"]
+    relax_job, static_job, dos_job = flow.jobs
+    assert static_job.structure == relax_job.output.structure
+    assert static_job.prev_dir == relax_job.output.dir_name
+    assert dos_job.structure == static_job.output.structure
+    assert dos_job.prev_dir == static_job.output.dir_name
+    assert dos_job.mode == "uniform"
+    assert isinstance(dos_job.input_set_generator, FakeHSEBSSetGenerator)
+
+    static_incar = static_job.input_set_generator.kwargs["user_incar_settings"]
+    assert static_incar["LHFCALC"] is True
+    assert static_incar["AEXX"] == 0.25
+    assert static_incar["HFSCREEN"] == 0.2
+    assert static_incar["PRECFOCK"] == "Accurate"
+    assert static_incar["ISMEAR"] == 0
+    assert static_incar["NCORE"] == 8
+
+    dos_kwargs = dos_job.input_set_generator.kwargs
+    assert dos_kwargs["mode"] == "uniform"
+    assert dos_kwargs["reciprocal_density"] == HSE_DOS_RECIPROCAL_DENSITY_DEFAULT
+    terminal_incar = dos_kwargs["user_incar_settings"]
+    assert terminal_incar["LHFCALC"] is True
+    assert terminal_incar["AEXX"] == 0.25
+    assert terminal_incar["HFSCREEN"] == 0.2
+    assert terminal_incar["ALGO"] == "Normal"
+    assert terminal_incar["PRECFOCK"] == "Fast"
+    assert terminal_incar["NEDOS"] == 4001
+    assert terminal_incar["ISMEAR"] == -5
+    assert "ICHARG" not in terminal_incar
 
 
 def test_hse06_dos_preview_uses_real_uniform_weighted_hse_inputs_without_line_path():

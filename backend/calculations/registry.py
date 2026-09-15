@@ -336,7 +336,7 @@ def _desired_output_workflows() -> tuple[tuple[str, str, str, WorkflowSpec | Non
             WorkflowSpec(
                 [
                     StageSpec(StageType.RELAX, Theory.PBE),
-                    StageSpec(StageType.STATIC, Theory.PBE),
+                    StageSpec(StageType.STATIC, Theory.HSE06),
                     StageSpec(StageType.DOS, Theory.HSE06),
                 ],
                 recipe="electronic_dos",
