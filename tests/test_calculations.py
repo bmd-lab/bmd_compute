@@ -218,11 +218,8 @@ assert modifier_options["dft_u"]["tooltip"] == "DFT+U is applied only when expli
 assert "van der Waals correction" in modifier_options["dispersion"]["tooltip"]
 assert modifier_options["soc"]["enabled"] is True
 assert "vasp_ncl" in modifier_options["soc"]["tooltip"]
-assert form_options["default_dispersion_method"] == "dftd3-bj"
-assert form_options["dispersion_methods"] == [
-    {"value": "dftd3", "label": "DFT-D3"},
-    {"value": "dftd3-bj", "label": "DFT-D3(BJ)"},
-]
+assert "default_dispersion_method" not in form_options
+assert "dispersion_methods" not in form_options
 
 spin_static_spec = CalculationSpec(Purpose.STATIC, Theory.PBE, {Modifier.SPIN_POLARIZED})
 spin_relax_spec = CalculationSpec(Purpose.RELAX, Theory.PBE, {Modifier.SPIN_POLARIZED})

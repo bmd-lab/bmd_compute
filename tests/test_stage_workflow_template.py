@@ -12,8 +12,8 @@ assert 'data-workflow-stage' in source
 assert 'data-stage-type' in source
 assert 'data-stage-theory' in source
 assert 'data-stage-modifier' in source
-assert 'data-stage-dispersion-method' in source
-assert 'data-dispersion-control' in source
+assert 'data-stage-dispersion-method' not in source
+assert 'data-dispersion-control' not in source
 assert 'id="add-workflow-stage"' in source
 assert "Desired Output" in source
 assert "Recommended Workflow" not in source
@@ -23,9 +23,9 @@ assert "BMD Compute workflow" in source
 assert "Calculation Type" in source
 assert "Level of Theory" in source
 assert "Advanced Options" in source
-assert "van der Waals correction" in source
-assert "default_dispersion_method" in source
-assert "dispersion_methods" in source
+assert "default_dispersion_method" not in source
+assert "dispersion_methods" not in source
+assert "DFT-D3" not in source
 assert 'id="structure-input-details"' in source
 structure_details_block = source[
     source.index('id="structure-input-details"'):
@@ -77,8 +77,9 @@ assert 'button.textContent = "Submitting..."' in source
 monitor_form = source[source.index('<form action="/monitor"'):]
 assert "workflow_spec_json" in monitor_form
 assert "monitor_state_json" in monitor_form
-assert "stageOptions.dispersion" in source
-assert "updateDispersionControls" in source
+assert "stageOptions.dispersion" not in source
+assert "updateDispersionControls" not in source
+assert "options: {}" in source
 assert "desiredOutputs" in source
 assert "recipeSelect" not in source
 assert "recipes[index]" not in source
