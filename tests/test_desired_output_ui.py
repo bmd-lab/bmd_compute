@@ -157,7 +157,8 @@ def test_rendered_normal_selector_uses_desired_output_not_workflow_recipes():
     assert "Spin-Orbit Coupling (SOC)" in html
     assert "DFT+U" in html
     assert "van der Waals correction" in html
-    assert "DFT-D3(BJ)" in html
+    assert "DFT-D3" not in html
+    assert "DFT-D3(BJ)" not in html
 
 
 def test_bmd_managed_desired_output_shows_read_only_applied_treatments():
@@ -190,7 +191,13 @@ def test_bmd_managed_desired_output_shows_read_only_applied_treatments():
 
 def test_custom_workflow_keeps_editable_advanced_options_controls():
     custom_workflow = WorkflowSpec(
-        [StageSpec(StageType.STATIC, Theory.PBE, {Modifier.SPIN_POLARIZED})],
+        [
+            StageSpec(
+                StageType.STATIC,
+                Theory.PBE,
+                {Modifier.SPIN_POLARIZED, Modifier.DISPERSION},
+            )
+        ],
         recipe="custom",
     )
     html = _render_index(selected_workflow=custom_workflow)
@@ -200,6 +207,15 @@ def test_custom_workflow_keeps_editable_advanced_options_controls():
     assert "Applied Treatments" not in stage_block
     assert "data-stage-modifier" in stage_block
     assert "Spin Polarised" in stage_block
+    assert "van der Waals correction" in stage_block
+    assert 'value="dispersion"' in stage_block
+    dispersion_checkbox = stage_block[
+        stage_block.index('value="dispersion"'):
+        stage_block.index('value="dispersion"') + 120
+    ]
+    assert "checked" in dispersion_checkbox
+    assert "data-stage-dispersion-method" not in stage_block
+    assert "DFT-D3" not in stage_block
 
 
 def test_default_desired_output_cards_keep_bmd_stage_theories_visible():

@@ -84,14 +84,19 @@ def test_dispersion_method_options_are_controlled_and_default_to_d3bj():
 
 
 def test_pbe_static_generates_upstream_vdw_ivdw_for_d3_and_d3bj():
-    default_incar = _preview_incar(
-        WorkflowSpec([
-            StageSpec(StageType.STATIC, Theory.PBE, {Modifier.DISPERSION}),
-        ])
-    )
+    plain_workflow = WorkflowSpec([
+        StageSpec(StageType.STATIC, Theory.PBE),
+    ])
+    default_workflow = WorkflowSpec([
+        StageSpec(StageType.STATIC, Theory.PBE, {Modifier.DISPERSION}),
+    ])
+    plain_incar = _preview_incar(plain_workflow)
+    default_incar = _preview_incar(default_workflow)
     d3_incar = _preview_incar(_workflow(StageType.STATIC, method="dftd3"))
     d3bj_incar = _preview_incar(_workflow(StageType.STATIC, method="dftd3-bj"))
 
+    assert default_workflow.to_dict()["stages"][0]["options"] == {}
+    assert "IVDW" not in plain_incar
     assert "IVDW = 12" in default_incar
     assert "IVDW = 11" in d3_incar
     assert "IVDW = 12" in d3bj_incar
