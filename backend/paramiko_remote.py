@@ -8,6 +8,7 @@ import re
 import shlex
 import subprocess
 import time
+from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Mapping
@@ -58,6 +59,7 @@ DEFAULT_SFTP_TIMEOUT_S = 120
 SUBMISSION_ATTEMPT_STATE_WAIT_S = 5.0
 SUBMISSION_ATTEMPT_STATE_POLL_S = 0.1
 SUBMISSION_ATTEMPT_STATE_MAX_BYTES = 1024 * 1024
+PREPARATION_VERIFY_BATCH_SIZE = 10
 
 
 def _paramiko_connect_kwargs(profile: RemoteConnectionProfile, paramiko_module) -> dict:
@@ -430,15 +432,25 @@ class ParamikoRemoteRunner(RemoteRunner):
     def __init__(self, client=None, environment: Mapping[str, str] | None = None):
         self.client = client
         self.environment = dict(environment or {})
+        self._active_sftp = None
+        self.preparation_metrics: dict[str, int | float] = {}
+        self._ssh_exec_count = 0
+        self._sftp_session_count = 0
 
     def connect(self, profile: RemoteConnectionProfile) -> None:
         import paramiko
 
         self.close()
+        self.preparation_metrics = {}
+        self._ssh_exec_count = 0
+        self._sftp_session_count = 0
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        config_started = time.perf_counter()
         connect_kwargs, diagnostics = _paramiko_connect_details(profile, paramiko)
+        self.preparation_metrics["ssh_config_s"] = time.perf_counter() - config_started
         LOGGER.debug("Paramiko connect diagnostics: %s", json.dumps(diagnostics, indent=2))
+        connect_started = time.perf_counter()
         try:
             client.connect(**connect_kwargs)
         except Exception as exc:
@@ -453,6 +465,8 @@ class ParamikoRemoteRunner(RemoteRunner):
                 exc_info=True,
             )
             raise
+        finally:
+            self.preparation_metrics["ssh_connect_s"] = time.perf_counter() - connect_started
 
         try:
             transport = client.get_transport()
@@ -476,6 +490,8 @@ class ParamikoRemoteRunner(RemoteRunner):
             raise RuntimeError("SSH transport is not active.")
 
     def close(self) -> None:
+        _close_quietly(self._active_sftp)
+        self._active_sftp = None
         client = self.client
         self.client = None
         _close_quietly(client)
@@ -483,8 +499,24 @@ class ParamikoRemoteRunner(RemoteRunner):
     def _open_sftp(self):
         self.ensure_available()
         sftp = self.client.open_sftp()
+        self._sftp_session_count += 1
         _set_timeout_quietly(_sftp_channel(sftp), DEFAULT_SFTP_TIMEOUT_S)
         return sftp
+
+    @contextmanager
+    def _preparation_sftp_session(self):
+        open_sftp = getattr(self.client, "open_sftp", None)
+        if not callable(open_sftp):
+            yield None
+            return
+
+        sftp = self._open_sftp()
+        self._active_sftp = sftp
+        try:
+            yield sftp
+        finally:
+            self._active_sftp = None
+            _close_quietly(sftp)
 
     def run(
         self,
@@ -522,6 +554,7 @@ class ParamikoRemoteRunner(RemoteRunner):
         stdin = stdout = stderr = None
         channel = None
         try:
+            self._ssh_exec_count += 1
             stdin, stdout, stderr = self.client.exec_command(
                 full_command,
                 get_pty=False,
@@ -638,21 +671,47 @@ class ParamikoRemoteRunner(RemoteRunner):
 
     def put_text(self, remote_path: str, text: str, *, mode: int = 0o640) -> RemoteTransferResult:
         self.ensure_available()
+        if self._active_sftp is not None:
+            return self._put_text_with_sftp(
+                self._active_sftp,
+                remote_path,
+                text,
+                mode=mode,
+            )
+
         parent = posixpath.dirname(remote_path.rstrip("/"))
         if parent:
             self.ensure_directory(parent)
 
         sftp = self._open_sftp()
         try:
-            with sftp.file(remote_path, "w") as handle:
-                handle.write(text)
-            sftp.chmod(remote_path, mode)
+            return self._put_text_with_sftp(sftp, remote_path, text, mode=mode)
         finally:
             _close_quietly(sftp)
 
+    def _put_text_with_sftp(
+        self,
+        sftp,
+        remote_path: str,
+        text: str,
+        *,
+        mode: int,
+    ) -> RemoteTransferResult:
+        with sftp.file(remote_path, "w") as handle:
+            handle.write(text)
+        sftp.chmod(remote_path, mode)
+        bytes_transferred = len(text.encode("utf-8"))
+        if sftp is self._active_sftp:
+            self.preparation_metrics["files_uploaded"] = (
+                int(self.preparation_metrics.get("files_uploaded", 0)) + 1
+            )
+            self.preparation_metrics["bytes_uploaded"] = (
+                int(self.preparation_metrics.get("bytes_uploaded", 0))
+                + bytes_transferred
+            )
         return RemoteTransferResult(
             remote_path=remote_path,
-            bytes_transferred=len(text.encode("utf-8")),
+            bytes_transferred=bytes_transferred,
             mode=mode,
         )
 
@@ -682,6 +741,10 @@ class ParamikoRemoteRunner(RemoteRunner):
 
     def read_bytes(self, remote_path: str, *, max_bytes: int | None = None) -> bytes:
         self.ensure_available()
+        if self._active_sftp is not None:
+            with self._active_sftp.file(remote_path, "rb") as handle:
+                return handle.read(max_bytes) if max_bytes else handle.read()
+
         sftp = self._open_sftp()
         try:
             with sftp.file(remote_path, "rb") as handle:
@@ -778,18 +841,64 @@ class ParamikoRemoteRunner(RemoteRunner):
 
     def submit(self, submission_spec: dict, dry_run: bool = False) -> JobRecord:
         self.ensure_available()
-        self._preflight(submission_spec)
 
         if dry_run:
-            output = self._prepare_submission_files(submission_spec)
-            record = self._job_record(
-                submission_spec,
-                None,
-                output + "DRY RUN\n",
-                status="dry_run",
-            )
-            self._write_prepared_submission_attempt_state(submission_spec, record)
-            return record
+            retained_metrics = {
+                key: value
+                for key, value in self.preparation_metrics.items()
+                if key in {"ssh_config_s", "ssh_connect_s"}
+            }
+            self.preparation_metrics = {
+                **retained_metrics,
+                "files_uploaded": 0,
+                "bytes_uploaded": 0,
+                "directory_preparation_s": 0.0,
+                "upload_s": 0.0,
+                "runtime_preflight_s": 0.0,
+                "potcar_preparation_s": 0.0,
+                "attempt_state_s": 0.0,
+            }
+            self._ssh_exec_count = 0
+            self._sftp_session_count = 0
+            preparation_started = time.perf_counter()
+            try:
+                self._preflight(submission_spec)
+                package_started = time.perf_counter()
+                file_groups = remote_preparation_file_groups(submission_spec)
+                self.preparation_metrics["runtime_package_build_s"] = (
+                    time.perf_counter() - package_started
+                )
+
+                with self._preparation_sftp_session():
+                    output = self._prepare_submission_files(
+                        submission_spec,
+                        file_groups=file_groups,
+                    )
+                    record = self._job_record(
+                        submission_spec,
+                        None,
+                        output + "DRY RUN\n",
+                        status="dry_run",
+                    )
+                    attempt_started = time.perf_counter()
+                    try:
+                        self._write_prepared_submission_attempt_state(
+                            submission_spec,
+                            record,
+                        )
+                    finally:
+                        self.preparation_metrics["attempt_state_s"] = (
+                            time.perf_counter() - attempt_started
+                        )
+                return record
+            finally:
+                self.preparation_metrics["remote_preparation_s"] = (
+                    time.perf_counter() - preparation_started
+                )
+                self.preparation_metrics["ssh_exec_command_count"] = self._ssh_exec_count
+                self.preparation_metrics["sftp_session_count"] = self._sftp_session_count
+
+        self._preflight(submission_spec)
 
         state = self._require_existing_submission_attempt(submission_spec)
         if state.get("state") == "SUBMITTED":
@@ -1107,20 +1216,46 @@ class ParamikoRemoteRunner(RemoteRunner):
             status="submitted",
         )
 
-    def _prepare_submission_files(self, submission_spec: dict) -> str:
+    def _prepare_submission_files(
+        self,
+        submission_spec: dict,
+        *,
+        file_groups: list[dict] | None = None,
+    ) -> str:
         output_lines = []
+        file_groups = file_groups or remote_preparation_file_groups(submission_spec)
+        upload_parents = _deduplicated_remote_paths(
+            posixpath.dirname(str(item["path"]).rstrip("/"))
+            for group in file_groups
+            for item in group.get("files", [])
+            if posixpath.dirname(str(item["path"]).rstrip("/"))
+        )
 
-        self._prepare_remote_directories(submission_spec)
+        directory_started = time.perf_counter()
+        try:
+            self._prepare_remote_directories(submission_spec)
+        finally:
+            self.preparation_metrics["directory_preparation_s"] = (
+                time.perf_counter() - directory_started
+            )
         output_lines.append("PREP_OK=Remote directories prepared")
 
-        self._prepare_remote_directory(
-            submission_spec["paths"]["run_dir"],
-            "Working directory created",
-        )
+        directory_started = time.perf_counter()
+        try:
+            self._prepare_directories(
+                _deduplicated_remote_paths(
+                    (submission_spec["paths"]["run_dir"], *upload_parents)
+                ),
+                "Working directory created",
+            )
+        finally:
+            self.preparation_metrics["directory_preparation_s"] += (
+                time.perf_counter() - directory_started
+            )
         output_lines.append("PREP_OK=Working directory created")
 
         script_group = None
-        for group in remote_preparation_file_groups(submission_spec):
+        for group in file_groups:
             if group["step"] == "Submission script written":
                 script_group = group
                 continue
@@ -1128,12 +1263,24 @@ class ParamikoRemoteRunner(RemoteRunner):
             self._upload_preparation_file_group(group)
             output_lines.append(f"PREP_OK={group['step']}")
 
-        self._run_remote_runtime_preflight(submission_spec)
+        preflight_started = time.perf_counter()
+        try:
+            self._run_remote_runtime_preflight(submission_spec)
+        finally:
+            self.preparation_metrics["runtime_preflight_s"] = (
+                time.perf_counter() - preflight_started
+            )
         output_lines.append(f"PREP_OK={REMOTE_RUNTIME_PREFLIGHT_STEP}")
 
-        if submission_spec.get("potcar", {}).get("symlink_targets"):
-            self._prepare_potcar_symlinks(submission_spec)
-            output_lines.append("PREP_OK=POTCAR links prepared")
+        potcar_started = time.perf_counter()
+        try:
+            if submission_spec.get("potcar", {}).get("symlink_targets"):
+                self._prepare_potcar_symlinks(submission_spec)
+                output_lines.append("PREP_OK=POTCAR links prepared")
+        finally:
+            self.preparation_metrics["potcar_preparation_s"] = (
+                time.perf_counter() - potcar_started
+            )
 
         if script_group is not None:
             self._upload_preparation_file_group(script_group)
@@ -1177,27 +1324,31 @@ class ParamikoRemoteRunner(RemoteRunner):
         self._run_preparation_step(REMOTE_RUNTIME_PREFLIGHT_STEP, action)
 
     def _prepare_remote_directories(self, submission_spec: dict) -> None:
+        paths = _deduplicated_remote_paths(
+            submission_spec["paths"].get("directories_to_prepare", [])
+        )
+        self._prepare_directories(paths, "Remote directories prepared")
+
+    def _prepare_directories(self, paths: tuple[str, ...], stage: str) -> None:
         def action() -> None:
-            for path in submission_spec["paths"].get("directories_to_prepare", []):
-                self.ensure_directory(path)
-                if not self.is_dir(path):
-                    self._raise_preparation_failure(
-                        "Remote directories prepared",
-                        f"Expected directory does not exist: {path}",
-                        f"test -d {shlex.quote(path)}",
+            for batch in _batched_remote_paths(paths):
+                commands = []
+                for path in batch:
+                    quoted_path = shlex.quote(path)
+                    reason = shlex.quote(f"Expected directory does not exist: {path}")
+                    commands.append(
+                        f"mkdir -p -- {quoted_path} && test -d {quoted_path} "
+                        f"|| {{ echo {reason} >&2; exit 1; }}"
                     )
-
-        self._run_preparation_step("Remote directories prepared", action)
-
-    def _prepare_remote_directory(self, path: str, stage: str) -> None:
-        def action() -> None:
-            self.ensure_directory(path)
-            if not self.is_dir(path):
-                self._raise_preparation_failure(
-                    stage,
-                    f"Expected directory does not exist: {path}",
-                    f"test -d {shlex.quote(path)}",
-                )
+                command = "\n".join(commands)
+                result = self.run(command, check=False)
+                if not result.ok:
+                    reason = (
+                        (result.stderr or "").strip()
+                        or (result.stdout or "").strip()
+                        or f"Unable to prepare remote directories for {stage}."
+                    )
+                    self._raise_preparation_failure(stage, reason, result.command)
 
         self._run_preparation_step(stage, action)
 
@@ -1205,21 +1356,50 @@ class ParamikoRemoteRunner(RemoteRunner):
         stage = str(group["step"])
 
         def action() -> None:
-            for item in group.get("files", []):
-                remote_path = str(item["path"])
-                self.put_text(
-                    remote_path,
-                    str(item.get("text", "")),
-                    mode=int(item.get("mode", 0o640)),
+            remote_paths = []
+            upload_started = time.perf_counter()
+            try:
+                for item in group.get("files", []):
+                    remote_path = str(item["path"])
+                    text = str(item.get("text", ""))
+                    try:
+                        self.put_text(
+                            remote_path,
+                            text,
+                            mode=int(item.get("mode", 0o640)),
+                        )
+                    except Exception as exc:
+                        raise RuntimeError(
+                            f"Unable to upload {remote_path}: {exc}"
+                        ) from exc
+                    remote_paths.append(remote_path)
+
+                self._verify_uploaded_files(tuple(remote_paths), stage)
+            finally:
+                self.preparation_metrics["upload_s"] += (
+                    time.perf_counter() - upload_started
                 )
-                if not self.is_file(remote_path):
-                    self._raise_preparation_failure(
-                        stage,
-                        f"Expected file does not exist: {remote_path}",
-                        f"test -f {shlex.quote(remote_path)}",
-                    )
 
         self._run_preparation_step(stage, action)
+
+    def _verify_uploaded_files(self, paths: tuple[str, ...], stage: str) -> None:
+        for batch in _batched_remote_paths(paths):
+            commands = []
+            for path in batch:
+                quoted_path = shlex.quote(path)
+                reason = shlex.quote(f"Expected file does not exist: {path}")
+                commands.append(
+                    f"test -f {quoted_path} || {{ echo {reason} >&2; exit 1; }}"
+                )
+            command = "\n".join(commands)
+            result = self.run(command, check=False)
+            if not result.ok:
+                reason = (
+                    (result.stderr or "").strip()
+                    or (result.stdout or "").strip()
+                    or f"Unable to verify uploaded files for {stage}."
+                )
+                self._raise_preparation_failure(stage, reason, result.command)
 
     def _prepare_potcar_symlinks(self, submission_spec: dict) -> None:
         potcar = submission_spec.get("potcar", {})
@@ -1456,6 +1636,26 @@ def _submission_attempt_lock_path(submission_spec: dict) -> str:
         or submission_spec.get("paths", {}).get("submission_attempt_lock")
         or ""
     )
+
+
+def _deduplicated_remote_paths(paths) -> tuple[str, ...]:
+    unique_paths = []
+    seen = set()
+    for path in paths:
+        value = str(path or "")
+        if value and value not in seen:
+            seen.add(value)
+            unique_paths.append(value)
+    return tuple(unique_paths)
+
+
+def _batched_remote_paths(
+    paths: tuple[str, ...],
+    *,
+    batch_size: int = PREPARATION_VERIFY_BATCH_SIZE,
+):
+    for start in range(0, len(paths), batch_size):
+        yield paths[start:start + batch_size]
 
 
 def _prepared_submission_attempt_output(state: Mapping[str, Any]) -> str:

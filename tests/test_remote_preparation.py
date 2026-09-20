@@ -47,6 +47,13 @@ class SuccessfulRunner:
         self.connected_profile = None
         self.dry_run = None
         self.closed = False
+        self.preparation_metrics = {
+            "runtime_package_build_s": 0.4,
+            "files_uploaded": 40,
+            "bytes_uploaded": 512000,
+            "sftp_session_count": 1,
+            "ssh_exec_command_count": 12,
+        }
 
     def connect(self, profile):
         self.connected_profile = profile
@@ -80,6 +87,7 @@ successful_runner = SuccessfulRunner()
 success = prepare_remote_submission(
     submission_spec,
     runner_factory=lambda: successful_runner,
+    initial_diagnostics={"local_reconstruction_s": 0.25},
 )
 
 assert successful_runner.connected_profile.host == DEFAULT_REMOTE_HOST
@@ -92,6 +100,15 @@ assert success["job_record"]["status"] == "dry_run"
 assert [step["label"] for step in success["steps"]][-1] == "Ready for submission"
 assert "POTCAR links prepared" not in [step["label"] for step in success["steps"]]
 assert all(step["state"] == "complete" for step in success["steps"])
+assert success["diagnostics"]["files_uploaded"] == 40
+assert success["diagnostics"]["bytes_uploaded"] == 512000
+assert success["diagnostics"]["sftp_session_count"] == 1
+assert success["diagnostics"]["ssh_exec_command_count"] == 12
+assert success["diagnostics"]["remote_slot_wait_s"] >= 0
+assert success["diagnostics"]["ssh_setup_s"] >= 0
+assert success["diagnostics"]["remote_service_s"] >= 0
+assert success["diagnostics"]["local_reconstruction_package_s"] == 0.65
+assert success["diagnostics"]["total_preparation_s"] >= 0.25
 
 
 class MissingVerificationRunner(SuccessfulRunner):

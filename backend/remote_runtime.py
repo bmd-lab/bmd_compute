@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import math
 import threading
+import time
 from contextlib import contextmanager
 from typing import Callable, Iterator
 
@@ -152,11 +153,20 @@ def connected_remote_runner(
     *,
     profile: RemoteConnectionProfile,
     runner_factory: Callable[[], RemoteRunner] | None = None,
+    metrics: dict[str, int | float] | None = None,
 ) -> Iterator[RemoteRunner]:
+    slot_started = time.perf_counter()
     with _REMOTE_OPERATION_LIMITER.slot(operation="ssh"):
+        if metrics is not None:
+            metrics["remote_slot_wait_s"] = time.perf_counter() - slot_started
         runner = create_remote_runner(runner_factory)
         try:
-            runner.connect(profile)
+            connect_started = time.perf_counter()
+            try:
+                runner.connect(profile)
+            finally:
+                if metrics is not None:
+                    metrics["ssh_setup_s"] = time.perf_counter() - connect_started
             yield runner
         finally:
             try:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 from typing import Callable
 
 from backend.submission import REMOTE_RUNTIME_PREFLIGHT_STEP
@@ -50,6 +51,7 @@ def prepare_remote_submission(
     submission_spec: dict,
     *,
     runner_factory: Callable[[], RemoteRunner] | None = None,
+    initial_diagnostics: dict[str, int | float] | None = None,
 ) -> dict:
     """
     Execute the existing remote dry-run path and return template-ready status.
@@ -61,18 +63,26 @@ def prepare_remote_submission(
 
     profile = connection_profile_from_submission_spec(submission_spec)
     stage = "SSH Connection"
+    started = time.perf_counter()
+    diagnostics = dict(initial_diagnostics or {})
+    runner = None
 
     try:
         with connected_remote_runner(
             profile=profile,
             runner_factory=runner_factory,
+            metrics=diagnostics,
         ) as runner:
             stage = "Remote Preparation"
             record = runner.submit(submission_spec, dry_run=True)
     except Exception as exc:
-        return _failure_result(exc, stage, submission_spec)
+        _merge_runner_diagnostics(diagnostics, runner)
+        _finalize_diagnostics(diagnostics, started)
+        return _failure_result(exc, stage, submission_spec, diagnostics=diagnostics)
 
-    return _success_result(record, submission_spec)
+    _merge_runner_diagnostics(diagnostics, runner)
+    _finalize_diagnostics(diagnostics, started)
+    return _success_result(record, submission_spec, diagnostics=diagnostics)
 
 
 def remembered_successful_preparation(submission_spec: dict) -> dict:
@@ -105,7 +115,12 @@ def remembered_successful_preparation(submission_spec: dict) -> dict:
     return _success_result(record, submission_spec)
 
 
-def _success_result(record: JobRecord, submission_spec: dict) -> dict:
+def _success_result(
+    record: JobRecord,
+    submission_spec: dict,
+    *,
+    diagnostics: dict[str, int | float] | None = None,
+) -> dict:
     verified = _verified_steps(record.raw_output)
     success_steps = _success_steps(submission_spec)
     missing = [
@@ -115,7 +130,7 @@ def _success_result(record: JobRecord, submission_spec: dict) -> dict:
     ]
 
     if missing:
-        return {
+        result = {
             "status": "failed",
             "title": "Remote Preparation Failed",
             "stage": missing[0],
@@ -124,8 +139,11 @@ def _success_result(record: JobRecord, submission_spec: dict) -> dict:
             "steps": _failure_steps(missing[0], submission_spec),
             "ready_for_submission": False,
         }
+        if diagnostics:
+            result["diagnostics"] = diagnostics
+        return result
 
-    return {
+    result = {
         "status": "success",
         "title": "Remote Preparation Complete",
         "steps": [
@@ -138,11 +156,20 @@ def _success_result(record: JobRecord, submission_spec: dict) -> dict:
         "job_record": record.to_dict(),
         "ready_for_submission": True,
     }
+    if diagnostics:
+        result["diagnostics"] = diagnostics
+    return result
 
 
-def _failure_result(exc: Exception, stage: str, submission_spec: dict) -> dict:
+def _failure_result(
+    exc: Exception,
+    stage: str,
+    submission_spec: dict,
+    *,
+    diagnostics: dict[str, int | float] | None = None,
+) -> dict:
     resolved_stage, reason, suggestion = _classify_failure(exc, stage, submission_spec)
-    return {
+    result = {
         "status": "failed",
         "title": "Remote Preparation Failed",
         "stage": resolved_stage,
@@ -151,6 +178,27 @@ def _failure_result(exc: Exception, stage: str, submission_spec: dict) -> dict:
         "steps": _failure_steps(resolved_stage, submission_spec),
         "ready_for_submission": False,
     }
+    if diagnostics:
+        result["diagnostics"] = diagnostics
+    return result
+
+
+def _merge_runner_diagnostics(diagnostics: dict, runner: RemoteRunner | None) -> None:
+    runner_metrics = getattr(runner, "preparation_metrics", None)
+    if isinstance(runner_metrics, dict):
+        diagnostics.update(runner_metrics)
+
+
+def _finalize_diagnostics(diagnostics: dict, started: float) -> None:
+    diagnostics["remote_service_s"] = time.perf_counter() - started
+    local_reconstruction_s = float(diagnostics.get("local_reconstruction_s", 0.0))
+    diagnostics["local_reconstruction_package_s"] = (
+        local_reconstruction_s
+        + float(diagnostics.get("runtime_package_build_s", 0.0))
+    )
+    diagnostics["total_preparation_s"] = (
+        local_reconstruction_s + diagnostics["remote_service_s"]
+    )
 
 
 def _required_remote_state_steps(submission_spec: dict) -> list[str]:
