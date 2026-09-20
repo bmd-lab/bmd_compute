@@ -1722,7 +1722,7 @@ ul {
                     <input type="hidden" name="queue" value="{{ selected_resources.queue }}">
                     <input type="hidden" name="created_at" value="{{ submission_spec.created_at }}">
                     <input type="hidden" name="submission_attempt_id" value="{{ submission_spec.submission.attempt_id }}">
-                    <button type="submit" data-current-calculation-action>Prepare Remote</button>
+                    <button type="submit" data-current-calculation-action data-prepare-remote-button>Prepare Remote</button>
                 </form>
 
                 <form action="/submit" method="post">
@@ -1788,6 +1788,24 @@ ul {
                             <td>Submission Script</td>
                             <td class="mono">{{ remote_preparation.job_record.remote_script }}</td>
                         </tr>
+                        {% if remote_preparation.diagnostics and remote_preparation.diagnostics.total_preparation_s is defined %}
+                        <tr>
+                            <td>Preparation Time</td>
+                            <td>{{ "%.1f"|format(remote_preparation.diagnostics.total_preparation_s) }} s</td>
+                        </tr>
+                        {% endif %}
+                        {% if remote_preparation.diagnostics and remote_preparation.diagnostics.files_uploaded is defined %}
+                        <tr>
+                            <td>Files Uploaded</td>
+                            <td>{{ remote_preparation.diagnostics.files_uploaded }}</td>
+                        </tr>
+                        {% endif %}
+                        {% if remote_preparation.diagnostics and remote_preparation.diagnostics.bytes_uploaded is defined %}
+                        <tr>
+                            <td>Data Transferred</td>
+                            <td>{{ "%.1f"|format(remote_preparation.diagnostics.bytes_uploaded / 1024) }} KB</td>
+                        </tr>
+                        {% endif %}
                     </table>
                 </details>
                 {% elif remote_preparation.status == "failed" %}
@@ -2697,6 +2715,23 @@ document.addEventListener("DOMContentLoaded", function () {
 
 <script>
 document.addEventListener("DOMContentLoaded", function () {
+    var prepareForms = document.querySelectorAll('form[action="/prepare-remote"]');
+    prepareForms.forEach(function (form) {
+        form.addEventListener("submit", function (event) {
+            var button = form.querySelector("[data-prepare-remote-button]");
+            if (!button || button.disabled) {
+                return;
+            }
+            if (form.dataset.preparing === "true") {
+                event.preventDefault();
+                return;
+            }
+            form.dataset.preparing = "true";
+            button.disabled = true;
+            button.textContent = "Preparing...";
+        });
+    });
+
     var submitForms = document.querySelectorAll('form[action="/submit"]');
     submitForms.forEach(function (form) {
         form.addEventListener("submit", function () {

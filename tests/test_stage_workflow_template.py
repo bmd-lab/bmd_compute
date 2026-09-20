@@ -67,6 +67,7 @@ assert "workflow_spec_json" in source[source.index('<form action="/prepare-remot
 assert "workflow_spec_json" in source[source.index('<form action="/submit"'):]
 prepare_form = source[source.index('<form action="/prepare-remote"'):]
 submit_form = source[source.index('<form action="/submit"'):]
+prepare_form_only = prepare_form[:prepare_form.index("</form>")]
 assert 'name="submission_attempt_id"' in prepare_form
 assert 'name="submission_attempt_id"' in submit_form
 assert "submission_spec.submission.attempt_id" in prepare_form
@@ -74,6 +75,15 @@ assert "submission_spec.submission.attempt_id" in submit_form
 assert "data-submit-calculation-button" in submit_form
 assert 'form[action="/submit"]' in source
 assert 'button.textContent = "Submitting..."' in source
+assert "data-prepare-remote-button" in prepare_form
+assert 'form[action="/prepare-remote"]' in source
+assert 'form.dataset.preparing === "true"' in source
+assert 'button.textContent = "Preparing..."' in source
+assert "Preparation Time" in source
+assert "Files Uploaded" in source
+assert "Data Transferred" in source
+assert "remote_preparation.diagnostics.total_preparation_s" in source
+assert "disabled" not in prepare_form_only
 monitor_form = source[source.index('<form action="/monitor"'):]
 assert "workflow_spec_json" in monitor_form
 assert "monitor_state_json" in monitor_form

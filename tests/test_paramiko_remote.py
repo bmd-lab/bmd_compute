@@ -25,7 +25,11 @@ from backend.remote import (
     RemoteConnectionProfile,
     RemotePathInfo,
 )
-from backend.submission import create_submission_spec, parse_sbatch_job_id
+from backend.submission import (
+    create_submission_spec,
+    parse_sbatch_job_id,
+    remote_preparation_file_groups,
+)
 
 
 RUN_NAME = "TiO2-static-20260629-120000"
@@ -169,6 +173,7 @@ class RecordingRunner(ParamikoRemoteRunner):
         self.directories = []
         self.remote_writes = []
         self.remote_files = {}
+        self.remote_reads = []
         self.symlinks = []
 
     def ensure_available(self):
@@ -207,6 +212,7 @@ class RecordingRunner(ParamikoRemoteRunner):
         self.remote_files[remote_path] = text
 
     def read_text(self, remote_path, *, max_bytes=None):
+        self.remote_reads.append(remote_path)
         return self.remote_files[remote_path]
 
     def submit_batch(self, request):
@@ -260,8 +266,10 @@ class FakeSftp:
 class FakeSftpClient:
     def __init__(self):
         self.sftp = FakeSftp()
+        self.open_count = 0
 
     def open_sftp(self):
+        self.open_count += 1
         return self.sftp
 
 
@@ -284,6 +292,7 @@ class SftpPreparationRunner(ParamikoRemoteRunner):
         export_env=False,
         timeout_s=None,
     ):
+        self._ssh_exec_count += 1
         self.commands.append(command)
         return RemoteCommandResult(command=command, returncode=0)
 
@@ -423,6 +432,81 @@ assert large_runner.fake_client.sftp.modes[large_submission_json] == 0o640
 assert all("cat >" not in command for command in large_runner.commands)
 assert all(large_payload[:200] not in command for command in large_runner.commands)
 assert max((len(command) for command in large_runner.commands), default=0) < 4096
+assert large_runner.fake_client.open_count == 1
+assert large_runner.fake_client.sftp.close_count == 1
+expected_preparation_files = sum(
+    len(group.get("files", []))
+    for group in remote_preparation_file_groups(large_submission_spec)
+)
+assert large_runner.preparation_metrics["files_uploaded"] == expected_preparation_files + 1
+assert large_runner.preparation_metrics["bytes_uploaded"] > len(large_payload.encode("utf-8"))
+assert large_runner.preparation_metrics["sftp_session_count"] == 1
+assert large_runner.preparation_metrics["ssh_exec_command_count"] == len(
+    large_runner.commands
+)
+assert large_runner.preparation_metrics["runtime_preflight_s"] >= 0
+assert large_runner.preparation_metrics["attempt_state_s"] >= 0
+backend_init_path = f"{large_submission_spec['paths']['run_dir']}/backend/__init__.py"
+execution_group = next(
+    group
+    for group in remote_preparation_file_groups(large_submission_spec)
+    if group["step"] == "Execution module uploaded"
+)
+assert [item["path"] for item in execution_group["files"]].count(backend_init_path) == 1
+expected_uploads = {
+    item["path"]: item["mode"]
+    for group in remote_preparation_file_groups(large_submission_spec)
+    for item in group.get("files", [])
+}
+assert expected_uploads.keys() <= large_files.keys()
+assert all(
+    large_runner.fake_client.sftp.modes[path] == mode
+    for path, mode in expected_uploads.items()
+)
+attempt_state_path = large_submission_spec["submission"]["attempt_state"]
+assert json.loads(large_files[attempt_state_path])["state"] == "PREPARED"
+assert large_runner.fake_client.sftp.modes[attempt_state_path] == 0o640
+assert sum(
+    command.count(
+        f"mkdir -p -- {large_submission_spec['paths']['run_dir']}/backend &&"
+    )
+    for command in large_runner.commands
+) == 1
+
+
+class MissingUploadedFileRunner(SftpPreparationRunner):
+    def run(
+        self,
+        command,
+        *,
+        check=False,
+        modules=False,
+        export_env=False,
+        timeout_s=None,
+    ):
+        self._ssh_exec_count += 1
+        self.commands.append(command)
+        missing_path = f"{self.missing_run_dir}/backend/execution.py"
+        if f"test -f {missing_path}" in command:
+            return RemoteCommandResult(
+                command=command,
+                returncode=1,
+                stderr=f"Expected file does not exist: {missing_path}\n",
+            )
+        return RemoteCommandResult(command=command, returncode=0)
+
+
+missing_upload_runner = MissingUploadedFileRunner()
+missing_upload_runner.missing_run_dir = large_submission_spec["paths"]["run_dir"]
+try:
+    missing_upload_runner.submit(large_submission_spec, dry_run=True)
+except Exception as exc:
+    assert "Execution module uploaded" in str(exc)
+    assert f"{missing_upload_runner.missing_run_dir}/backend/execution.py" in str(exc)
+else:
+    raise AssertionError("Missing uploaded file verification should fail preparation")
+assert missing_upload_runner.fake_client.open_count == 1
+assert missing_upload_runner.fake_client.sftp.close_count == 1
 
 private_potcars_dir = "/private/bmd-potcars"
 private_target = f"{private_potcars_dir}/PBE_64"
@@ -440,6 +524,7 @@ private_runner.submit(private_submission_spec, dry_run=True)
 private_runner.submit(private_submission_spec)
 assert (private_target, private_link, True) in private_runner.symlinks
 assert any(private_link in command for command in private_runner.commands)
+assert all(not path.startswith(private_potcars_dir) for path in private_runner.remote_reads)
 
 private_dry_runner = RecordingRunner()
 private_dry_record = private_dry_runner.submit(private_submission_spec, dry_run=True)

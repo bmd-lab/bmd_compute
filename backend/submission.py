@@ -624,6 +624,24 @@ def remote_preparation_file_groups(submission_spec: dict) -> list[dict]:
 
     backend_module_sources = build_backend_module_sources()
     backend_module_paths = _backend_module_paths(submission_spec)
+    execution_files = [
+        {
+            "path": backend_module_paths[filename],
+            "text": backend_module_sources[filename],
+            "mode": 0o640,
+        }
+        for filename in sorted(backend_module_sources)
+    ]
+    backend_init_path = _backend_init_path(submission_spec)
+    if backend_init_path not in {item["path"] for item in execution_files}:
+        execution_files.insert(
+            0,
+            {
+                "path": backend_init_path,
+                "text": "",
+                "mode": 0o640,
+            },
+        )
 
     return [
         {
@@ -638,21 +656,7 @@ def remote_preparation_file_groups(submission_spec: dict) -> list[dict]:
         },
         {
             "step": "Execution module uploaded",
-            "files": [
-                {
-                    "path": _backend_init_path(submission_spec),
-                    "text": "",
-                    "mode": 0o640,
-                },
-                *[
-                    {
-                        "path": backend_module_paths[filename],
-                        "text": backend_module_sources[filename],
-                        "mode": 0o640,
-                    }
-                    for filename in sorted(backend_module_sources)
-                ],
-            ],
+            "files": execution_files,
         },
         {
             "step": "run_job.py uploaded",

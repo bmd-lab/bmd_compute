@@ -1,4 +1,5 @@
 import json
+import time
 from copy import deepcopy
 
 from fastapi import FastAPI, Form, Request
@@ -1033,6 +1034,7 @@ def prepare_remote(
     workflow: str | None = Form(None),
     method: str | None = Form(None),
 ):
+    preparation_started = time.perf_counter()
     calculation_spec = default_calculation_spec()
     workflow_spec = default_workflow_spec()
     execution_resources = default_execution_resources()
@@ -1100,7 +1102,12 @@ def prepare_remote(
             selected_resources=execution_resources,
             exc=exc,
         )
-    remote_preparation = prepare_remote_submission(submission_spec)
+    remote_preparation = prepare_remote_submission(
+        submission_spec,
+        initial_diagnostics={
+            "local_reconstruction_s": time.perf_counter() - preparation_started,
+        },
+    )
 
     return templates.TemplateResponse(
         request=request,
