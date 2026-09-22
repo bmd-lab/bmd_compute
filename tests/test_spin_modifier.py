@@ -235,7 +235,13 @@ finally:
     else:
         os.environ["SLURM_NTASKS"] = saved_slurm_ntasks
 assert run_vasp_kwargs_for_modifiers({Modifier.SOC})["vasp_cmd"].endswith("vasp_ncl")
-assert run_vasp_kwargs_for_modifiers({Modifier.SPIN_POLARIZED}) == {}
+spin_run_vasp_kwargs = run_vasp_kwargs_for_modifiers({Modifier.SPIN_POLARIZED})
+assert "vasp_cmd" not in spin_run_vasp_kwargs
+assert spin_run_vasp_kwargs["handlers"]
+assert all(
+    type(handler).__name__ != "FrozenJobErrorHandler"
+    for handler in spin_run_vasp_kwargs["handlers"]
+)
 
 soc_si = parse_structure(
     """Si

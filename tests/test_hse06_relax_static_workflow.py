@@ -4,6 +4,8 @@ import sys
 import types
 from contextlib import contextmanager
 
+from atomate2.vasp.run import DEFAULT_HANDLERS as ATOMATE2_DEFAULT_HANDLERS
+
 from backend.calculations.models import CalculationSpec, Modifier, Purpose, Theory
 from backend.calculations.registry import (
     CalculationValidationError,
@@ -127,12 +129,14 @@ def fake_atomate2_and_jobflow():
         "atomate2.vasp": types.ModuleType("atomate2.vasp"),
         "atomate2.vasp.jobs": types.ModuleType("atomate2.vasp.jobs"),
         "atomate2.vasp.jobs.core": types.ModuleType("atomate2.vasp.jobs.core"),
+        "atomate2.vasp.run": types.ModuleType("atomate2.vasp.run"),
         "atomate2.vasp.sets": types.ModuleType("atomate2.vasp.sets"),
         "atomate2.vasp.sets.core": types.ModuleType("atomate2.vasp.sets.core"),
         "jobflow": types.ModuleType("jobflow"),
     }
     modules["atomate2.vasp.jobs.core"].RelaxMaker = FakeRelaxMaker
     modules["atomate2.vasp.jobs.core"].StaticMaker = FakeStaticMaker
+    modules["atomate2.vasp.run"].DEFAULT_HANDLERS = ATOMATE2_DEFAULT_HANDLERS
     modules["atomate2.vasp.sets.core"].RelaxSetGenerator = FakeRelaxSetGenerator
     modules["atomate2.vasp.sets.core"].StaticSetGenerator = FakeStaticSetGenerator
     modules["jobflow"].Flow = FakeFlow
