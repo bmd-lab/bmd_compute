@@ -216,3 +216,21 @@ def test_soc_noncollinear_policy_is_not_changed_by_collinear_spin_semantics():
     assert "LNONCOLLINEAR = True" in soc
     assert "MAGMOM = 0.0 0.0 0.6 0.0 0.0 0.6" in soc
     assert soc_with_spin_modifier == soc
+
+    hse_soc = _preview_incar(
+        SI_POSCAR,
+        CalculationSpec(Purpose.STATIC, Theory.HSE06, {Modifier.SOC}),
+    )
+    hse_soc_with_spin_modifier = _preview_incar(
+        SI_POSCAR,
+        CalculationSpec(Purpose.STATIC, Theory.HSE06, {Modifier.SOC, Modifier.SPIN_POLARIZED}),
+    )
+
+    assert "LHFCALC = True" in hse_soc
+    assert "PRECFOCK = Accurate" in hse_soc
+    assert "ISPIN =" not in hse_soc
+    assert "LSORBIT = True" in hse_soc
+    assert "LNONCOLLINEAR = True" in hse_soc
+    assert "LELF =" not in hse_soc
+    assert "MAGMOM = 0.0 0.0 0.6 0.0 0.0 0.6" in hse_soc
+    assert hse_soc_with_spin_modifier == hse_soc
