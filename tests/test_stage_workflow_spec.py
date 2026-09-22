@@ -4,6 +4,8 @@ import sys
 import types
 from contextlib import contextmanager
 
+from atomate2.vasp.run import DEFAULT_HANDLERS as ATOMATE2_DEFAULT_HANDLERS
+
 from backend.calculations.models import Modifier, StageSpec, StageType, Theory, WorkflowSpec
 from backend.calculations.registry import (
     CalculationValidationError,
@@ -133,6 +135,7 @@ def fake_atomate2_and_jobflow():
         "atomate2.vasp": types.ModuleType("atomate2.vasp"),
         "atomate2.vasp.jobs": types.ModuleType("atomate2.vasp.jobs"),
         "atomate2.vasp.jobs.core": types.ModuleType("atomate2.vasp.jobs.core"),
+        "atomate2.vasp.run": types.ModuleType("atomate2.vasp.run"),
         "atomate2.vasp.sets": types.ModuleType("atomate2.vasp.sets"),
         "atomate2.vasp.sets.core": types.ModuleType("atomate2.vasp.sets.core"),
         "jobflow": types.ModuleType("jobflow"),
@@ -140,6 +143,7 @@ def fake_atomate2_and_jobflow():
     modules["atomate2.vasp.jobs.core"].RelaxMaker = FakeMaker
     modules["atomate2.vasp.jobs.core"].StaticMaker = FakeMaker
     modules["atomate2.vasp.jobs.core"].NonSCFMaker = FakeMaker
+    modules["atomate2.vasp.run"].DEFAULT_HANDLERS = ATOMATE2_DEFAULT_HANDLERS
     modules["atomate2.vasp.sets.core"].RelaxSetGenerator = FakeRelaxSetGenerator
     modules["atomate2.vasp.sets.core"].StaticSetGenerator = FakeGenerator
     modules["atomate2.vasp.sets.core"].NonSCFSetGenerator = FakeGenerator
@@ -400,6 +404,14 @@ assert band_static_incar["ISPIN"] == 1
 assert band_incar["ISPIN"] == 1
 assert "NCORE" not in band_incar
 
+for built_flow in (mixed_flow, dos_flow, band_flow, soc_static_flow, hse_soc_static_flow):
+    for job in built_flow.jobs:
+        assert job.run_vasp_kwargs["handlers"]
+        assert all(
+            type(handler).__name__ != "FrozenJobErrorHandler"
+            for handler in job.run_vasp_kwargs["handlers"]
+        )
+
 relax_section, static_section = generated_inputs["incar"].split("\n\n", 1)
 assert "# Stage 1 - Geometry Optimisation (PBE)" in relax_section
 assert "# Stage 2 - Static Energy (HSE06)" in static_section
@@ -431,8 +443,8 @@ assert soc_static_flow.metadata["bmd_stage_artifacts"] == [
     {"write_wavecar": False, "copy_from_previous": []},
     {"write_wavecar": False, "copy_from_previous": []},
 ]
-assert soc_static_flow.jobs[0].run_vasp_kwargs == {}
-assert soc_static_flow.jobs[1].run_vasp_kwargs == {}
+assert "vasp_cmd" not in soc_static_flow.jobs[0].run_vasp_kwargs
+assert "vasp_cmd" not in soc_static_flow.jobs[1].run_vasp_kwargs
 assert "vasp_ncl" in soc_static_flow.jobs[2].run_vasp_kwargs["vasp_cmd"]
 assert "vasp_std" not in soc_static_flow.jobs[2].run_vasp_kwargs["vasp_cmd"]
 soc_static_incar = soc_static_flow.jobs[2].input_set_generator.kwargs["user_incar_settings"]
@@ -463,6 +475,10 @@ assert "LELF" not in soc_stage_3
 assert hse_soc_static_flow.name == "Si-hse-soc_hse_static"
 assert [job.name for job in hse_soc_static_flow.jobs] == ["hse_static"]
 assert "vasp_ncl" in hse_soc_static_flow.jobs[0].run_vasp_kwargs["vasp_cmd"]
+assert all(
+    type(handler).__name__ != "FrozenJobErrorHandler"
+    for handler in hse_soc_static_flow.jobs[0].run_vasp_kwargs["handlers"]
+)
 hse_soc_static_incar = hse_soc_static_flow.jobs[0].input_set_generator.kwargs[
     "user_incar_settings"
 ]

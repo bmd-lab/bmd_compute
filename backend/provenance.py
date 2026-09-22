@@ -7,6 +7,7 @@ from importlib import metadata
 from pathlib import Path
 from typing import Any
 
+from backend.calculations.custodian_policy import resolved_custodian_policy
 from backend.workflows import vasp_command_for_modifiers, vasp_executable_for_modifiers
 from backend.runtime_package import runtime_package_manifest_metadata
 
@@ -74,6 +75,7 @@ def build_submission_provenance(submission_spec: dict) -> dict:
         "execution": {
             "workflow_spec": _json_safe_value(workflow_spec),
             "stage_order": stage_order_provenance(workflow_spec),
+            "custodian": stage_custodian_provenance(workflow_spec),
             "resources": _json_safe_value(resources),
             "cluster": {
                 "partition": _json_safe_scalar(cluster.get("partition")),
@@ -189,6 +191,26 @@ def stage_order_provenance(workflow_spec: dict) -> list[dict]:
     ]
 
 
+def stage_custodian_provenance(workflow_spec: dict) -> dict:
+    stages = workflow_spec.get("stages") if isinstance(workflow_spec, dict) else []
+    if not isinstance(stages, list):
+        stages = []
+
+    return {
+        "stages": [
+            {
+                "index": index,
+                **resolved_custodian_policy(
+                    stage.get("stage_type"),
+                    stage.get("theory"),
+                ),
+            }
+            for index, stage in enumerate(stages, start=1)
+            if isinstance(stage, dict)
+        ]
+    }
+
+
 def _workflow_spec_dict(submission_spec: dict) -> dict:
     flow_spec = submission_spec.get("flow_spec") or {}
     workflow_spec = flow_spec.get("workflow_spec")
@@ -246,6 +268,7 @@ __all__ = [
     "build_submission_provenance",
     "preparation_python_environment",
     "source_metadata",
+    "stage_custodian_provenance",
     "stage_order_provenance",
     "stage_vasp_provenance",
 ]

@@ -143,6 +143,13 @@ class FakeOtherHandler:
         self.name = name
 
 
+class FrozenJobErrorHandler(FakeOtherHandler):
+    pass
+
+
+FrozenJobErrorHandler.__module__ = "custodian.vasp.handlers"
+
+
 class FakeMaker:
     def __init__(self, *, input_set_generator, name, **kwargs):
         self.input_set_generator = input_set_generator
@@ -197,13 +204,14 @@ def fake_atomate2_and_jobflow():
     modules["atomate2.vasp.run"].DEFAULT_HANDLERS = (
         FakeVaspErrorHandler(),
         FakeOtherHandler("mesh_symmetry"),
-        FakeOtherHandler("frozen_job"),
+        FrozenJobErrorHandler("frozen_job"),
     )
     modules["atomate2.vasp.sets.core"].RelaxSetGenerator = FakeRelaxSetGenerator
     modules["atomate2.vasp.sets.core"].StaticSetGenerator = FakeGenerator
     modules["atomate2.vasp.sets.core"].NonSCFSetGenerator = FakeGenerator
     modules["atomate2.vasp.sets.core"].HSEBSSetGenerator = FakeHSEBSSetGenerator
     modules["custodian.vasp.handlers"].VaspErrorHandler = FakeVaspErrorHandler
+    modules["custodian.vasp.handlers"].FrozenJobErrorHandler = FrozenJobErrorHandler
     modules["jobflow"].Flow = FakeFlow
 
     previous = {name: sys.modules.get(name) for name in modules}
@@ -232,6 +240,7 @@ def assert_hsebs_custodian_policy_allows_auto_nbands(job):
     assert "brmix" in vasp_handlers[0].errors_subset_to_catch
     assert "tet" in vasp_handlers[0].errors_subset_to_catch
     assert any(isinstance(handler, FakeOtherHandler) for handler in handlers)
+    assert not any(isinstance(handler, FrozenJobErrorHandler) for handler in handlers)
 
 
 hse_band_stage = StageSpec(StageType.BAND_STRUCTURE, Theory.HSE06)

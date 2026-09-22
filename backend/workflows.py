@@ -36,7 +36,10 @@ from backend.calculations.resources import (
     stage_allows_automatic_ncore,
 )
 from backend.calculations.dispersion import dispersion_method_from_options
-from backend.calculations.custodian_policy import hse_band_structure_run_vasp_kwargs
+from backend.calculations.custodian_policy import (
+    bmd_custodian_handlers,
+    hse_band_structure_run_vasp_kwargs,
+)
 from backend.calculations.vasp_stage_definitions import (
     BAND_STRUCTURE_LINE_DENSITY_DEFAULT,
     HSE_DOS_RECIPROCAL_DENSITY_DEFAULT,
@@ -234,9 +237,10 @@ def vasp_command_for_modifiers(modifiers, *, base_command: str | None = None) ->
 
 
 def run_vasp_kwargs_for_modifiers(modifiers) -> dict:
+    kwargs = {"handlers": bmd_custodian_handlers()}
     if vasp_executable_for_modifiers(modifiers) == VASP_NCL_EXECUTABLE:
-        return {"vasp_cmd": vasp_command_for_modifiers(modifiers)}
-    return {}
+        kwargs["vasp_cmd"] = vasp_command_for_modifiers(modifiers)
+    return kwargs
 
 
 def wavecar_carry_forward_transition(
@@ -1587,8 +1591,8 @@ def build_atomate2_flow_for_workflow_spec(
             if theory_uses_hybrid_functional(stage.theory):
                 from atomate2.vasp.jobs.core import HSEBSMaker
 
-                hse_run_vasp_kwargs = hse_band_structure_run_vasp_kwargs()
-                hse_run_vasp_kwargs.update(run_vasp_kwargs)
+                hse_run_vasp_kwargs = dict(run_vasp_kwargs)
+                hse_run_vasp_kwargs.update(hse_band_structure_run_vasp_kwargs())
                 job = HSEBSMaker(
                     input_set_generator=generator,
                     name=stage_name,
@@ -1623,8 +1627,8 @@ def build_atomate2_flow_for_workflow_spec(
             if theory_uses_hybrid_functional(stage.theory):
                 from atomate2.vasp.jobs.core import HSEBSMaker
 
-                hse_run_vasp_kwargs = hse_band_structure_run_vasp_kwargs()
-                hse_run_vasp_kwargs.update(run_vasp_kwargs)
+                hse_run_vasp_kwargs = dict(run_vasp_kwargs)
+                hse_run_vasp_kwargs.update(hse_band_structure_run_vasp_kwargs())
                 job = HSEBSMaker(
                     input_set_generator=generator,
                     name=stage_name,

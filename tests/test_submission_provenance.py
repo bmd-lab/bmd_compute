@@ -63,6 +63,44 @@ def test_submission_provenance_block_is_json_safe_and_versioned():
     assert restored["execution"]["cluster"]["account"] == spec["cluster"]["account"]
 
 
+def test_resolved_custodian_policy_is_persisted_per_stage():
+    workflow = WorkflowSpec([
+        StageSpec(StageType.STATIC, Theory.HSE06, {Modifier.SOC}),
+    ])
+    spec = _submission_spec(workflow)
+    stage = spec["provenance"]["execution"]["custodian"]["stages"][0]
+
+    json.dumps(stage, sort_keys=True, allow_nan=False)
+    assert stage["index"] == 1
+    assert stage["stage"] == {"stage_type": "static", "theory": "hse06"}
+    assert stage["walltime_authority"] == "slurm"
+    assert stage["walltime_handler"] is None
+    assert stage["vasp_error_exclusions"] == []
+    assert stage["explicit_handler_exclusions"] == [
+        "custodian.vasp.handlers.FrozenJobErrorHandler"
+    ]
+    assert all(
+        item["class"] != "custodian.vasp.handlers.FrozenJobErrorHandler"
+        for item in stage["handlers"]
+    )
+    assert [item["class"] for item in stage["validators"]["resolved"]] == [
+        "custodian.vasp.validators.VasprunXMLValidator",
+        "custodian.vasp.validators.VaspFilesValidator",
+    ]
+
+
+def test_hse_terminal_stage_provenance_preserves_auto_nbands_exclusion():
+    workflow = WorkflowSpec([
+        StageSpec(StageType.STATIC, Theory.HSE06),
+        StageSpec(StageType.BAND_STRUCTURE, Theory.HSE06),
+    ])
+    spec = _submission_spec(workflow)
+    stages = spec["provenance"]["execution"]["custodian"]["stages"]
+
+    assert stages[0]["vasp_error_exclusions"] == []
+    assert stages[1]["vasp_error_exclusions"] == ["auto_nbands"]
+
+
 def test_git_source_metadata_is_explicit():
     provenance.source_metadata.cache_clear()
     source = provenance.source_metadata()
