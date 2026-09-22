@@ -1,4 +1,6 @@
 import hashlib
+import json
+from pathlib import Path
 
 import pytest
 
@@ -6,8 +8,10 @@ import backend.submission as submission
 from backend.calculations.models import Modifier, StageSpec, StageType, Theory, WorkflowSpec
 from backend.calculations.resources import ExecutionResources
 from backend.config import DEFAULT_ACCOUNT, DEFAULT_PARTITION, MODULES
+from backend.provenance import stage_vasp_provenance
 from backend.submission import (
     build_sbatch_script,
+    build_submission_summary,
     build_submission_script_artifact,
     remote_preparation_file_groups,
 )
@@ -26,6 +30,8 @@ direct
 0.0 0.0 0.0
 0.25 0.25 0.25
 """
+
+TEMPLATE_SOURCE = Path("templates/index.html").read_text(encoding="utf-8")
 
 
 def _submission_state(workflow_spec: WorkflowSpec):
@@ -114,7 +120,95 @@ def test_mixed_workflow_keeps_stage_local_executable_provenance():
         "vasp_std",
         "vasp_ncl",
     ]
+    assert [
+        stage["executable"]
+        for stage in generated_inputs["submission_summary"]["execution"]["stages"]
+    ] == ["vasp_std", "vasp_ncl"]
     assert generated_inputs["slurm_script"] == _uploaded_script(submission_spec)
+
+
+def test_submission_summary_is_structured_from_submission_and_provenance():
+    workflow = WorkflowSpec([StageSpec(StageType.STATIC, Theory.PBE)])
+    _, _, generated_inputs, submission_spec = _submission_state(workflow)
+    summary = generated_inputs["submission_summary"]
+
+    assert summary == build_submission_summary(submission_spec)
+    assert summary["job_name"] == submission_spec["run_name"]
+    assert summary["resources"] == {
+        "partition": submission_spec["cluster"]["partition"],
+        "account": submission_spec["cluster"]["account"],
+        "walltime": submission_spec["resources"]["walltime"],
+        "nodes": submission_spec["resources"]["nodes"],
+        "tasks": submission_spec["resources"]["ntasks"],
+        "memory_gb": submission_spec["resources"]["mem_gb"],
+    }
+    assert summary["execution"]["run_directory"] == submission_spec["paths"]["run_dir"]
+    assert summary["execution"]["runner_script"] == submission_spec["runner"]["script_name"]
+    assert summary["environment"]["modules"] == submission_spec["modules"]["load"]
+    assert summary["execution"]["stages"] == [{
+        "index": 1,
+        "display_name": "PBE Static Energy",
+        "stage_type": "static",
+        "theory": "pbe",
+        "modifiers": [],
+        "executable": "vasp_std",
+    }]
+    assert summary["artifact"]["sha256"] == submission_spec["provenance"]["execution"][
+        "submission_script"
+    ]["sha256"]
+    assert "#!/usr/bin/env bash" not in json.dumps(summary)
+    assert summary != _uploaded_script(submission_spec)
+
+
+def test_soc_submission_summary_reports_vasp_ncl():
+    workflow = WorkflowSpec([
+        StageSpec(StageType.STATIC, Theory.PBE, {Modifier.SOC}),
+    ])
+    _, _, generated_inputs, _ = _submission_state(workflow)
+    stage = generated_inputs["submission_summary"]["execution"]["stages"][0]
+
+    assert stage["display_name"] == "PBE Static Energy + Spin-Orbit Coupling (SOC)"
+    assert stage["executable"] == "vasp_ncl"
+
+
+def test_hse06_soc_submission_summary_uses_authoritative_stage_provenance():
+    workflow = WorkflowSpec([StageSpec(StageType.STATIC, Theory.HSE06)])
+    _, _, _, submission_spec = _submission_state(workflow)
+    hse_soc_stage = StageSpec(StageType.STATIC, Theory.HSE06, {Modifier.SOC})
+    submission_spec["provenance"]["vasp"]["stages"] = stage_vasp_provenance(
+        {"stages": [hse_soc_stage.to_dict()]},
+        submission_spec["environment"],
+    )
+
+    stage = build_submission_summary(submission_spec)["execution"]["stages"][0]
+
+    assert stage["display_name"] == "HSE06 Static Energy + Spin-Orbit Coupling (SOC)"
+    assert stage["executable"] == "vasp_ncl"
+
+
+def test_exact_script_emits_each_environment_export_once():
+    workflow = WorkflowSpec([StageSpec(StageType.STATIC, Theory.PBE)])
+    _, _, generated_inputs, _ = _submission_state(workflow)
+    script = generated_inputs["slurm_script"]
+
+    assert script.count("set -e -o pipefail") == 1
+    for variable in (
+        "VASP_CMD",
+        "PMG_VASP_PSP_DIR",
+        "JOBFLOW_CONFIG_FILE",
+        "CUSTODIAN_NO_GZIP",
+        "ATOMATE2_VASP_ZIP_FILES",
+    ):
+        assert script.count(f"export {variable}=") == 1
+
+
+def test_template_distinguishes_summary_from_exact_script_artifact():
+    assert 'for="input-tab-submission-summary">Submission Summary</label>' in TEMPLATE_SOURCE
+    assert 'for="input-tab-slurm">Exact SLURM Script</label>' in TEMPLATE_SOURCE
+    assert "generated_inputs.submission_summary.resources.partition" in TEMPLATE_SOURCE
+    assert "generated_inputs.submission_summary.execution.stages" in TEMPLATE_SOURCE
+    assert "generated_inputs.submission_summary.artifact.sha256" in TEMPLATE_SOURCE
+    assert "{{ generated_inputs.slurm_script }}" in TEMPLATE_SOURCE
 
 
 @pytest.mark.parametrize("theory", [Theory.PBE, Theory.HSE06])

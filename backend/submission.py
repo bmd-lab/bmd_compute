@@ -14,6 +14,9 @@ from backend.calculations.models import CalculationSpec, WorkflowSpec
 from backend.calculations.registry import (
     calculation_spec_from_workflow_spec,
     legacy_workflow_from_spec,
+    modifier_display_name,
+    stage_display_name,
+    theory_display_name,
     validate_calculation_spec,
     validate_workflow_spec,
     workflow_result_stage_directory,
@@ -474,7 +477,6 @@ def _backend_init_path(submission_spec: dict) -> str:
 def build_job_body(submission_spec: dict) -> str:
     paths = submission_spec["paths"]
     runner = submission_spec["runner"]
-    environment = submission_spec["environment"]
     run_job_path = _run_job_path(submission_spec)
     submission_json_path = _submission_json_path(submission_spec)
     backend_module_paths = _backend_module_paths(submission_spec)
@@ -497,20 +499,12 @@ def build_job_body(submission_spec: dict) -> str:
         else 'echo "[sbatch] MP_API_KEY not provided for this run."'
     )
 
-    psp_dir = environment.get("PMG_VASP_PSP_DIR")
-    jobflow_config = environment.get("JOBFLOW_CONFIG_FILE")
     attempt_id = (submission_spec.get("submission") or {}).get("attempt_id")
 
     return f"""
-set -e -o pipefail
 mkdir -p {shlex.quote(paths["run_dir"])}
 cd {shlex.quote(paths["run_dir"])}
 {mp_export}
-export CUSTODIAN_NO_GZIP=1
-export ATOMATE2_VASP_ZIP_FILES=False
-{_shell_export("VASP_CMD", environment.get("VASP_CMD"))}
-{_shell_export("PMG_VASP_PSP_DIR", psp_dir) if psp_dir else 'echo "[sbatch] PMG_VASP_PSP_DIR not set"'}
-{_shell_export("JOBFLOW_CONFIG_FILE", jobflow_config) if jobflow_config else "true"}
 {_shell_export("BMD_SUBMISSION_ATTEMPT_ID", attempt_id) if attempt_id else "true"}
 echo "[sbatch] Using partition={submission_spec["cluster"]["partition"]} account={submission_spec["cluster"]["account"]}"
 echo "[sbatch] VASP_CMD=$VASP_CMD"
@@ -596,6 +590,60 @@ def build_submission_script_artifact(submission_spec: dict) -> dict:
         "text": text,
         "sha256": hashlib.sha256(payload).hexdigest(),
         "size_bytes": len(payload),
+    }
+
+
+def build_submission_summary(submission_spec: dict) -> dict:
+    """Build a human-readable summary from authoritative submission data."""
+
+    provenance = submission_spec.get("provenance") or {}
+    stages = []
+    for stage in (provenance.get("vasp") or {}).get("stages") or []:
+        modifiers = list(stage.get("modifiers") or [])
+        stage_name = stage_display_name(stage.get("stage_type"))
+        theory_name = theory_display_name(stage.get("theory"))
+        modifier_names = [modifier_display_name(modifier) for modifier in modifiers]
+        display_name = f"{theory_name} {stage_name}"
+        if modifier_names:
+            display_name += f" + {', '.join(modifier_names)}"
+        stages.append({
+            "index": stage.get("index"),
+            "display_name": display_name,
+            "stage_type": stage.get("stage_type"),
+            "theory": stage.get("theory"),
+            "modifiers": modifiers,
+            "executable": stage.get("executable"),
+        })
+
+    script = ((provenance.get("execution") or {}).get("submission_script") or {})
+    return {
+        "job_name": submission_spec.get("run_name"),
+        "resources": {
+            "partition": (submission_spec.get("cluster") or {}).get("partition"),
+            "account": (submission_spec.get("cluster") or {}).get("account"),
+            "walltime": (submission_spec.get("resources") or {}).get("walltime"),
+            "nodes": (submission_spec.get("resources") or {}).get("nodes"),
+            "tasks": (submission_spec.get("resources") or {}).get("ntasks"),
+            "memory_gb": (submission_spec.get("resources") or {}).get("mem_gb"),
+        },
+        "execution": {
+            "run_directory": (submission_spec.get("paths") or {}).get("run_dir"),
+            "runner_script": (submission_spec.get("runner") or {}).get("script_name"),
+            "python": (submission_spec.get("runner") or {}).get("python"),
+            "runtime_environment": (submission_spec.get("environment") or {}).get(
+                "ATOMATE2_REMOTE_ENV"
+            ),
+            "stages": stages,
+        },
+        "environment": {
+            "modules": list((submission_spec.get("modules") or {}).get("load") or []),
+        },
+        "artifact": {
+            "status": "available" if script.get("sha256") else "not_generated",
+            "path": script.get("path"),
+            "sha256": script.get("sha256"),
+            "size_bytes": script.get("size_bytes"),
+        },
     }
 
 
@@ -1184,6 +1232,7 @@ __all__ = [
     "build_execution_module_source",
     "build_remote_runtime_preflight_source",
     "build_sbatch_script",
+    "build_submission_summary",
     "build_submission_script_artifact",
     "build_run_job_script",
     "build_submission_command",

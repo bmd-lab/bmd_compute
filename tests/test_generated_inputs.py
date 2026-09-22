@@ -774,8 +774,9 @@ assert "selected_resources.allowed_queues" in queue_select_block
 assert 'value="{{ queue }}"' in queue_select_block
 assert "{% if selected_resources.queue == queue %}selected{% endif %}" in queue_select_block
 assert 'name="account"' not in template_source
-assert "Account" not in template_source
+assert "<label>Account</label>" not in template_source
 assert "submission_spec.cluster.account" not in template_source
+assert "generated_inputs.submission_summary.resources.account" in template_source
 assert "input-tab-poscar" in template_source
 assert "tab-panel-poscar" in template_source
 assert "generated_inputs.poscar" in template_source

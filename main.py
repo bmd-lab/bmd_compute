@@ -56,7 +56,11 @@ from backend.parser import StructureValidationError, parse_structure
 from backend.remote_preparation import prepare_remote_submission, remembered_successful_preparation
 from backend.remote_submission import remembered_successful_submission, submit_remote_workflow
 from backend.results import load_results_for_completed_job, monitoring_indicates_success
-from backend.submission import build_submission_script_artifact, create_submission_spec
+from backend.submission import (
+    build_submission_script_artifact,
+    build_submission_summary,
+    create_submission_spec,
+)
 from backend.summary import summarize_structure
 from backend.workflow_summary import summarize_workflow
 
@@ -833,6 +837,7 @@ def build_submission_state_from_structure(
         account=execution_resources.account,
         submission_attempt_id=submission_attempt_id,
     )
+    generated_inputs["submission_summary"] = build_submission_summary(submission_spec)
     generated_inputs["slurm_script"] = build_submission_script_artifact(submission_spec)["text"]
     return summary, calculation_summary, generated_inputs, submission_spec
 
