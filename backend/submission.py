@@ -593,9 +593,7 @@ def build_submission_script_artifact(submission_spec: dict) -> dict:
     }
 
 
-def build_submission_summary(submission_spec: dict) -> dict:
-    """Build a human-readable summary from authoritative submission data."""
-
+def _submission_stage_rows(submission_spec: dict) -> list[dict]:
     provenance = submission_spec.get("provenance") or {}
     stages = []
     for stage in (provenance.get("vasp") or {}).get("stages") or []:
@@ -614,6 +612,77 @@ def build_submission_summary(submission_spec: dict) -> dict:
             "modifiers": modifiers,
             "executable": stage.get("executable"),
         })
+    return stages
+
+
+def build_standalone_slurm_example(submission_spec: dict) -> dict:
+    """Build a direct POWER/VASP example from authoritative submission data.
+
+    This is deliberately not the BMD submission artifact. Multi-stage workflows
+    are represented as an illustrative stage sequence because BMD's atomate2
+    runner manages the state transfer between those VASP invocations.
+    """
+
+    cluster = submission_spec.get("cluster") or {}
+    resources = submission_spec.get("resources") or {}
+    modules = submission_spec.get("modules") or {}
+    stages = _submission_stage_rows(submission_spec)
+    if not stages or any(not stage.get("executable") for stage in stages):
+        raise ValueError("Standalone SLURM example requires resolved stage executables.")
+
+    lines = [
+        "#!/bin/bash",
+        "",
+        f"#SBATCH -p {cluster.get('partition')}",
+        f"#SBATCH --account={cluster.get('account')}",
+        f"#SBATCH -J {submission_spec.get('label')}",
+        f"#SBATCH --time={resources.get('walltime')}",
+        f"#SBATCH --nodes={int(resources.get('nodes'))}",
+        f"#SBATCH --ntasks={int(resources.get('ntasks'))}",
+        f"#SBATCH --mem={int(resources.get('mem_gb'))}G",
+        "",
+        "ulimit -s 81920",
+        "",
+    ]
+    if modules.get("purge_first"):
+        lines.append("module purge")
+    lines.extend(f"module load {module_name}" for module_name in modules.get("load") or [])
+    lines.append("")
+
+    illustrative = len(stages) > 1
+    if illustrative:
+        lines.extend([
+            f"# Illustrative only: BMD workflow contains {len(stages)} sequential VASP stages.",
+            "# This outline is not a standalone runnable multi-stage workflow.",
+            "",
+        ])
+        for stage in stages:
+            lines.extend([
+                f"# Stage {stage['index']} - {stage['display_name']}",
+                f"mpirun -n $SLURM_NTASKS {stage['executable']}",
+                "",
+            ])
+        lines.append("# BMD Compute manages structure and result transfer between stages.")
+    else:
+        lines.append(f"mpirun -n $SLURM_NTASKS {stages[0]['executable']}")
+
+    return {
+        "text": "\n".join(lines).rstrip() + "\n",
+        "kind": "illustrative_workflow" if illustrative else "standalone",
+        "description": (
+            "Illustrative direct-execution outline for this multi-stage workflow. "
+            "BMD Compute manages the transfers between stages."
+            if illustrative
+            else "Equivalent standalone script for running this calculation directly on POWER."
+        ),
+    }
+
+
+def build_submission_summary(submission_spec: dict) -> dict:
+    """Build a human-readable summary from authoritative submission data."""
+
+    provenance = submission_spec.get("provenance") or {}
+    stages = _submission_stage_rows(submission_spec)
 
     script = ((provenance.get("execution") or {}).get("submission_script") or {})
     return {
@@ -1232,6 +1301,7 @@ __all__ = [
     "build_execution_module_source",
     "build_remote_runtime_preflight_source",
     "build_sbatch_script",
+    "build_standalone_slurm_example",
     "build_submission_summary",
     "build_submission_script_artifact",
     "build_run_job_script",

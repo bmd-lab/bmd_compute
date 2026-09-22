@@ -57,6 +57,7 @@ from backend.remote_preparation import prepare_remote_submission, remembered_suc
 from backend.remote_submission import remembered_successful_submission, submit_remote_workflow
 from backend.results import load_results_for_completed_job, monitoring_indicates_success
 from backend.submission import (
+    build_standalone_slurm_example,
     build_submission_script_artifact,
     build_submission_summary,
     create_submission_spec,
@@ -837,8 +838,14 @@ def build_submission_state_from_structure(
         account=execution_resources.account,
         submission_attempt_id=submission_attempt_id,
     )
+    slurm_example = build_standalone_slurm_example(submission_spec)
     generated_inputs["submission_summary"] = build_submission_summary(submission_spec)
-    generated_inputs["slurm_script"] = build_submission_script_artifact(submission_spec)["text"]
+    generated_inputs["slurm_script"] = slurm_example["text"]
+    generated_inputs["slurm_script_kind"] = slurm_example["kind"]
+    generated_inputs["slurm_script_description"] = slurm_example["description"]
+    generated_inputs["exact_slurm_script"] = build_submission_script_artifact(
+        submission_spec
+    )["text"]
     return summary, calculation_summary, generated_inputs, submission_spec
 
 

@@ -555,6 +555,10 @@ ul {
     padding: 20px;
 }
 
+.generated-input-diagnostics {
+    margin-top: 16px;
+}
+
 .submission-summary-note {
     color: var(--bmd-text-muted);
     font-size: 13px;
@@ -1484,7 +1488,7 @@ ul {
                     {% if generated_inputs.submission_summary %}
                     <label for="input-tab-submission-summary">Submission Summary</label>
                     {% endif %}
-                    <label for="input-tab-slurm">Exact SLURM Script</label>
+                    <label for="input-tab-slurm">SLURM Script</label>
                 </div>
 
                 <div class="tab-panel tab-panel-incar">
@@ -1565,12 +1569,33 @@ ul {
                 {% endif %}
 
                 <div class="tab-panel tab-panel-slurm">
+                    <div class="submission-summary-note">
+                        {{ generated_inputs.slurm_script_description or "Equivalent standalone script for running this calculation directly on POWER." }}
+                    </div>
                     <div class="input-pane">
                         <button type="button" class="input-copy-button" data-copy-input>Copy</button>
                         <pre class="input-preview">{{ generated_inputs.slurm_script }}</pre>
                     </div>
                 </div>
             </div>
+
+            {% if generated_inputs.exact_slurm_script %}
+            <details class="disclosure details-wide generated-input-diagnostics">
+                <summary>Exact BMD Submission Script</summary>
+                <div class="submission-summary-view">
+                    <div class="submission-summary-note">
+                        BMD Compute's internal execution artifact. This exact script is uploaded for submission.
+                        {% if generated_inputs.submission_summary %}
+                        SHA-256: <span class="mono">{{ generated_inputs.submission_summary.artifact.sha256 }}</span>
+                        {% endif %}
+                    </div>
+                    <div class="input-pane">
+                        <button type="button" class="input-copy-button" data-copy-input>Copy</button>
+                        <pre class="input-preview">{{ generated_inputs.exact_slurm_script }}</pre>
+                    </div>
+                </div>
+            </details>
+            {% endif %}
 
         </section>
         {% endif %}

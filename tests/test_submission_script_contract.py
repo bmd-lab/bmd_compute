@@ -8,9 +8,9 @@ import backend.submission as submission
 from backend.calculations.models import Modifier, StageSpec, StageType, Theory, WorkflowSpec
 from backend.calculations.resources import ExecutionResources
 from backend.config import DEFAULT_ACCOUNT, DEFAULT_PARTITION, MODULES
-from backend.provenance import stage_vasp_provenance
 from backend.submission import (
     build_sbatch_script,
+    build_standalone_slurm_example,
     build_submission_summary,
     build_submission_script_artifact,
     remote_preparation_file_groups,
@@ -63,32 +63,52 @@ def _uploaded_script(submission_spec: dict) -> str:
 
 
 @pytest.mark.parametrize("theory", [Theory.PBE, Theory.HSE06])
-def test_displayed_slurm_script_is_the_exact_uploaded_script(theory):
+def test_single_stage_pedagogical_script_uses_resolved_vasp_std(theory):
     workflow = WorkflowSpec([StageSpec(StageType.STATIC, theory)])
     _, _, generated_inputs, submission_spec = _submission_state(workflow)
 
-    displayed = generated_inputs["slurm_script"]
-    authoritative = build_sbatch_script(submission_spec)
-    uploaded = _uploaded_script(submission_spec)
-
-    assert displayed == authoritative == uploaded
-    assert displayed.startswith("#!/usr/bin/env bash\n")
-    assert f"#SBATCH -p {DEFAULT_PARTITION}" in displayed
-    assert f"#SBATCH --account={DEFAULT_ACCOUNT}" in displayed
-    assert "#SBATCH --time=12:00:00" in displayed
-    assert "#SBATCH --nodes=1" in displayed
-    assert "#SBATCH --ntasks=48" in displayed
-    assert "#SBATCH --mem=256G" in displayed
+    script = generated_inputs["slurm_script"]
+    assert script == build_standalone_slurm_example(submission_spec)["text"]
+    assert script.startswith("#!/bin/bash\n")
+    assert f"#SBATCH -p {DEFAULT_PARTITION}" in script
+    assert f"#SBATCH --account={DEFAULT_ACCOUNT}" in script
+    expected_job_name = "vasp_run_hse_static" if theory is Theory.HSE06 else "vasp_run_static"
+    assert f"#SBATCH -J {expected_job_name}" in script
+    assert "#SBATCH --time=12:00:00" in script
+    assert "#SBATCH --nodes=1" in script
+    assert "#SBATCH --ntasks=48" in script
+    assert "#SBATCH --mem=256G" in script
     for module_name in MODULES:
-        assert f"module load {module_name}\n" in displayed
-    assert f"{submission_spec['runner']['python']} -u run_job.py" in displayed
-    assert "\nmpirun -n $SLURM_NTASKS vasp_std\n" not in displayed
+        assert f"module load {module_name}\n" in script
+    assert "mpirun -n $SLURM_NTASKS vasp_std\n" in script
+    assert generated_inputs["slurm_script_kind"] == "standalone"
+    assert generated_inputs["slurm_script_description"] == (
+        "Equivalent standalone script for running this calculation directly on POWER."
+    )
 
 
-def test_submission_script_digest_covers_displayed_and_uploaded_bytes():
+def test_pedagogical_script_omits_bmd_execution_plumbing():
     workflow = WorkflowSpec([StageSpec(StageType.STATIC, Theory.PBE)])
     _, _, generated_inputs, submission_spec = _submission_state(workflow)
-    displayed = generated_inputs["slurm_script"]
+    script = generated_inputs["slurm_script"]
+
+    for internal_text in (
+        "run_job.py",
+        "submission.json",
+        "BMD_SUBMISSION_ATTEMPT_ID",
+        "BMD_RUNTIME",
+        submission_spec["runner"]["python"],
+        submission_spec["paths"]["log_out"],
+    ):
+        assert internal_text not in script
+    assert "export VASP_CMD=" not in script
+    assert script != generated_inputs["exact_slurm_script"]
+
+
+def test_submission_script_digest_covers_exact_displayed_and_uploaded_bytes():
+    workflow = WorkflowSpec([StageSpec(StageType.STATIC, Theory.PBE)])
+    _, _, generated_inputs, submission_spec = _submission_state(workflow)
+    displayed = generated_inputs["exact_slurm_script"]
     uploaded = _uploaded_script(submission_spec)
     artifact = build_submission_script_artifact(submission_spec)
     provenance = submission_spec["provenance"]["execution"]["submission_script"]
@@ -124,7 +144,15 @@ def test_mixed_workflow_keeps_stage_local_executable_provenance():
         stage["executable"]
         for stage in generated_inputs["submission_summary"]["execution"]["stages"]
     ] == ["vasp_std", "vasp_ncl"]
-    assert generated_inputs["slurm_script"] == _uploaded_script(submission_spec)
+    pedagogical = generated_inputs["slurm_script"]
+    assert generated_inputs["slurm_script_kind"] == "illustrative_workflow"
+    assert "not a standalone runnable multi-stage workflow" in pedagogical
+    assert "# Stage 1 - PBE Static Energy" in pedagogical
+    assert "# Stage 2 - PBE Static Energy + Spin-Orbit Coupling (SOC)" in pedagogical
+    assert "mpirun -n $SLURM_NTASKS vasp_std" in pedagogical
+    assert "mpirun -n $SLURM_NTASKS vasp_ncl" in pedagogical
+    assert "manages structure and result transfer between stages" in pedagogical
+    assert generated_inputs["exact_slurm_script"] == _uploaded_script(submission_spec)
 
 
 def test_submission_summary_is_structured_from_submission_and_provenance():
@@ -172,24 +200,42 @@ def test_soc_submission_summary_reports_vasp_ncl():
 
 
 def test_hse06_soc_submission_summary_uses_authoritative_stage_provenance():
-    workflow = WorkflowSpec([StageSpec(StageType.STATIC, Theory.HSE06)])
-    _, _, _, submission_spec = _submission_state(workflow)
-    hse_soc_stage = StageSpec(StageType.STATIC, Theory.HSE06, {Modifier.SOC})
-    submission_spec["provenance"]["vasp"]["stages"] = stage_vasp_provenance(
-        {"stages": [hse_soc_stage.to_dict()]},
-        submission_spec["environment"],
-    )
-
-    stage = build_submission_summary(submission_spec)["execution"]["stages"][0]
+    workflow = WorkflowSpec([
+        StageSpec(StageType.STATIC, Theory.HSE06, {Modifier.SOC}),
+    ])
+    _, _, generated_inputs, _ = _submission_state(workflow)
+    stage = generated_inputs["submission_summary"]["execution"]["stages"][0]
 
     assert stage["display_name"] == "HSE06 Static Energy + Spin-Orbit Coupling (SOC)"
     assert stage["executable"] == "vasp_ncl"
 
 
+@pytest.mark.parametrize(
+    ("theory", "modifiers", "expected_executable"),
+    [
+        (Theory.PBE, set(), "vasp_std"),
+        (Theory.HSE06, set(), "vasp_std"),
+        (Theory.PBE, {Modifier.SOC}, "vasp_ncl"),
+        (Theory.HSE06, {Modifier.SOC}, "vasp_ncl"),
+    ],
+)
+def test_pedagogical_script_uses_authoritative_stage_executable(
+    theory, modifiers, expected_executable
+):
+    workflow = WorkflowSpec([StageSpec(StageType.STATIC, theory, modifiers)])
+    _, _, _, submission_spec = _submission_state(workflow)
+    submission_spec["environment"]["VASP_CMD"] = "mpirun -n $SLURM_NTASKS wrong_global"
+
+    script = build_standalone_slurm_example(submission_spec)["text"]
+
+    assert f"mpirun -n $SLURM_NTASKS {expected_executable}" in script
+    assert "wrong_global" not in script
+
+
 def test_exact_script_emits_each_environment_export_once():
     workflow = WorkflowSpec([StageSpec(StageType.STATIC, Theory.PBE)])
     _, _, generated_inputs, _ = _submission_state(workflow)
-    script = generated_inputs["slurm_script"]
+    script = generated_inputs["exact_slurm_script"]
 
     assert script.count("set -e -o pipefail") == 1
     for variable in (
@@ -204,11 +250,18 @@ def test_exact_script_emits_each_environment_export_once():
 
 def test_template_distinguishes_summary_from_exact_script_artifact():
     assert 'for="input-tab-submission-summary">Submission Summary</label>' in TEMPLATE_SOURCE
-    assert 'for="input-tab-slurm">Exact SLURM Script</label>' in TEMPLATE_SOURCE
+    assert 'for="input-tab-slurm">SLURM Script</label>' in TEMPLATE_SOURCE
+    assert 'for="input-tab-slurm">Exact SLURM Script</label>' not in TEMPLATE_SOURCE
+    assert "Equivalent standalone script for running this calculation directly on POWER." in (
+        TEMPLATE_SOURCE
+    )
     assert "generated_inputs.submission_summary.resources.partition" in TEMPLATE_SOURCE
     assert "generated_inputs.submission_summary.execution.stages" in TEMPLATE_SOURCE
     assert "generated_inputs.submission_summary.artifact.sha256" in TEMPLATE_SOURCE
     assert "{{ generated_inputs.slurm_script }}" in TEMPLATE_SOURCE
+    assert "<summary>Exact BMD Submission Script</summary>" in TEMPLATE_SOURCE
+    assert "BMD Compute's internal execution artifact" in TEMPLATE_SOURCE
+    assert "{{ generated_inputs.exact_slurm_script }}" in TEMPLATE_SOURCE
 
 
 @pytest.mark.parametrize("theory", [Theory.PBE, Theory.HSE06])

@@ -487,12 +487,11 @@ summary, calculation, generated_inputs, submission_spec = build_submission_state
 assert summary["formula"] == "Si2"
 assert calculation["calculation_type"] == "Static Energy"
 assert generated_inputs["incar"] == static_preview["incar"]
-assert generated_inputs["slurm_script"] == build_sbatch_script(submission_spec)
 assert "\r" not in generated_inputs["slurm_script"]
-assert generated_inputs["slurm_script"].startswith("#!/usr/bin/env bash\n")
+assert generated_inputs["slurm_script"].startswith("#!/bin/bash\n")
 assert f"#SBATCH -p {DEFAULT_PARTITION}" in generated_inputs["slurm_script"]
 assert f"#SBATCH --account={DEFAULT_ACCOUNT}" in generated_inputs["slurm_script"]
-assert "#SBATCH --job-name=vasp_run_static-20260728-120000" in generated_inputs["slurm_script"]
+assert "#SBATCH -J vasp_run_static" in generated_inputs["slurm_script"]
 assert f"#SBATCH --nodes={DEFAULT_RESOURCES['nodes']}" in generated_inputs["slurm_script"]
 assert f"#SBATCH --ntasks={DEFAULT_RESOURCES['ntasks']}" in generated_inputs["slurm_script"]
 assert f"#SBATCH --mem={DEFAULT_RESOURCES['mem_gb']}G" in generated_inputs["slurm_script"]
@@ -500,15 +499,16 @@ assert f"#SBATCH --time={DEFAULT_RESOURCES['walltime']}" in generated_inputs["sl
 assert "ulimit -s 81920" in generated_inputs["slurm_script"]
 assert "module load intel/rocky8-oneAPI-2023" in generated_inputs["slurm_script"]
 assert "module load vasp/rocky8-intel-6.4.1" in generated_inputs["slurm_script"]
-assert f"{submission_spec['runner']['python']} -u run_job.py" in generated_inputs["slurm_script"]
-assert "\nmpirun -n $SLURM_NTASKS vasp_std\n" not in generated_inputs["slurm_script"]
+assert f"{submission_spec['runner']['python']} -u run_job.py" not in generated_inputs["slurm_script"]
+assert "\nmpirun -n $SLURM_NTASKS vasp_std\n" in generated_inputs["slurm_script"]
+assert generated_inputs["exact_slurm_script"] == build_sbatch_script(submission_spec)
 uploaded_script = next(
     item["text"]
     for group in remote_preparation_file_groups(submission_spec)
     if group["step"] == "Submission script written"
     for item in group["files"]
 )
-assert generated_inputs["slurm_script"] == uploaded_script
+assert generated_inputs["exact_slurm_script"] == uploaded_script
 assert submission_spec["flow_spec"]["calculation_spec"]["purpose"] == "static"
 assert submission_spec["flow_spec"]["execution_resources"]["ntasks"] == 24
 assert submission_spec["resources"]["ntasks"] == 24
@@ -540,9 +540,12 @@ assert response.status_code == 200
 assert response.context["generated_inputs"]["incar"] == static_preview["incar"]
 assert response.context["generated_inputs"]["kpoints"] == static_preview["kpoints"]
 assert response.context["generated_inputs"]["poscar"] == static_preview["poscar"]
-assert response.context["generated_inputs"]["slurm_script"] == build_sbatch_script(
+assert response.context["generated_inputs"]["exact_slurm_script"] == build_sbatch_script(
     response.context["submission_spec"]
 )
+assert "mpirun -n $SLURM_NTASKS vasp_std" in response.context["generated_inputs"][
+    "slurm_script"
+]
 assert response.context["submission_spec"]["flow_spec"]["calculation_spec"] == {
     "purpose": "static",
     "theory": "pbe",
@@ -582,12 +585,12 @@ assert resource_response.context["submission_spec"]["resources"]["ntasks"] == 48
 assert resource_response.context["submission_spec"]["resources"]["mem_gb"] == 256
 assert resource_response.context["submission_spec"]["cluster"]["partition"] == DEFAULT_PARTITION
 assert resource_response.context["submission_spec"]["cluster"]["account"] == DEFAULT_ACCOUNT
-assert resource_response.context["generated_inputs"]["slurm_script"] == build_sbatch_script(
+assert resource_response.context["generated_inputs"]["exact_slurm_script"] == build_sbatch_script(
     resource_response.context["submission_spec"]
 )
 assert f"#SBATCH -p {DEFAULT_PARTITION}" in resource_response.context["generated_inputs"]["slurm_script"]
 assert f"#SBATCH --account={DEFAULT_ACCOUNT}" in resource_response.context["generated_inputs"]["slurm_script"]
-assert "#SBATCH --job-name=vasp_run_static-" in resource_response.context["generated_inputs"]["slurm_script"]
+assert "#SBATCH -J vasp_run_static" in resource_response.context["generated_inputs"]["slurm_script"]
 assert "#SBATCH --nodes=1" in resource_response.context["generated_inputs"]["slurm_script"]
 assert "#SBATCH --ntasks=48" in resource_response.context["generated_inputs"]["slurm_script"]
 assert "#SBATCH --mem=256G" in resource_response.context["generated_inputs"]["slurm_script"]
@@ -783,9 +786,10 @@ assert "generated_inputs.poscar" in template_source
 assert "input-tab-slurm" in template_source
 assert "tab-panel-slurm" in template_source
 assert "generated_inputs.slurm_script" in template_source
+assert "generated_inputs.exact_slurm_script" in template_source
 assert "SLURM Script" in template_source
-assert template_source.count("data-copy-input") == 5
-assert template_source.count('class="input-copy-button" data-copy-input') == 4
+assert template_source.count("data-copy-input") == 6
+assert template_source.count('class="input-copy-button" data-copy-input') == 5
 assert "navigator.clipboard.writeText" in template_source
 assert "\\u2713 Copied" in template_source
 assert "Copy failed" in template_source
