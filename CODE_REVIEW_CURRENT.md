@@ -147,16 +147,14 @@ Impact: users may read a Stage 2 POSCAR preview as the literal final runtime str
 
 Direction: keep behavior unchanged, but label generated inputs as "pre-submission input policy preview" or add small text for downstream stages: "Runtime structure for this stage comes from the previous completed stage."
 
-### Finding PV-3: SLURM preview is conceptual rather than the exact submitted script
+### Finding PV-3: RESOLVED - displayed SLURM script differed from the submitted script
 
-Severity: LOW  
+Severity: RESOLVED
 Evidence: VERIFIED
 
-`build_slurm_preview_script()` in `backend/submission.py:560` renders a concise conceptual script ending in the VASP launch command, while the actual submitted script from `build_sbatch_script()` in `backend/submission.py:444` runs `run_job.py`, which invokes atomate2/jobflow/custodian.
+The former `build_slurm_preview_script()` maintained a separate conceptual script that ended in a direct VASP command, while remote preparation uploaded the script from `build_sbatch_script()`, which runs `run_job.py`.
 
-Impact: this is acceptable for student-facing clarity, but maintainers should not use the preview as the exact runtime script when debugging execution-layer issues.
-
-Direction: document the distinction in generated-input UI or developer docs. Keep the preview student-friendly.
+Resolution: `build_sbatch_script()` is now the sole script-text producer. The UI and remote preparation consume the same deterministic artifact, and submission provenance records its SHA-256 digest and UTF-8 byte size.
 
 ## 5. Workflow / Jobflow Execution
 

@@ -50,13 +50,13 @@ from backend.calculations.registry import (
     workflow_display_name,
     workflow_spec_from_calculation_spec,
 )
-from backend.generated_inputs import preview_generated_inputs, preview_slurm_script
+from backend.generated_inputs import preview_generated_inputs
 from backend.monitoring import monitor_job
 from backend.parser import StructureValidationError, parse_structure
 from backend.remote_preparation import prepare_remote_submission, remembered_successful_preparation
 from backend.remote_submission import remembered_successful_submission, submit_remote_workflow
 from backend.results import load_results_for_completed_job, monitoring_indicates_success
-from backend.submission import create_submission_spec
+from backend.submission import build_submission_script_artifact, create_submission_spec
 from backend.summary import summarize_structure
 from backend.workflow_summary import summarize_workflow
 
@@ -833,7 +833,7 @@ def build_submission_state_from_structure(
         account=execution_resources.account,
         submission_attempt_id=submission_attempt_id,
     )
-    generated_inputs["slurm_script"] = preview_slurm_script(submission_spec)
+    generated_inputs["slurm_script"] = build_submission_script_artifact(submission_spec)["text"]
     return summary, calculation_summary, generated_inputs, submission_spec
 
 

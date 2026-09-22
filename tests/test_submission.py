@@ -1,3 +1,5 @@
+import hashlib
+
 from backend.config import (
     DEFAULT_ACCOUNT,
     DEFAULT_FLOWS_DIR,
@@ -19,7 +21,7 @@ from backend.submission import (
     build_execution_module_source,
     build_run_job_script,
     build_sbatch_script,
-    build_slurm_preview_script,
+    build_submission_script_artifact,
     create_submission_spec,
     default_resources_for_workflow,
     summarize_potcar_species,
@@ -390,34 +392,11 @@ assert "run_submission(spec)" in run_job_script
 assert "RelaxMaker" not in run_job_script
 assert "StaticSetGenerator" not in run_job_script
 
-slurm_preview_script = build_slurm_preview_script(spec)
-assert slurm_preview_script.startswith("#!/bin/bash\n\n")
-assert f"#SBATCH -p {DEFAULT_PARTITION}" in slurm_preview_script
-assert f"#SBATCH --account={DEFAULT_ACCOUNT}" in slurm_preview_script
-assert "#SBATCH -J Si-static" in slurm_preview_script
-assert f"#SBATCH --nodes={DEFAULT_RESOURCES['nodes']}" in slurm_preview_script
-assert f"#SBATCH --ntasks={DEFAULT_RESOURCES['ntasks']}" in slurm_preview_script
-assert f"#SBATCH --mem={DEFAULT_RESOURCES['mem_gb']}G" in slurm_preview_script
-assert f"#SBATCH --time={DEFAULT_RESOURCES['walltime']}" in slurm_preview_script
-assert "ulimit -s 81920" in slurm_preview_script
-for module_name in MODULES:
-    assert f"module load {module_name}\n" in slurm_preview_script
-assert DEFAULT_VASP_CMD in slurm_preview_script
-for internal_detail in (
-    "/bmd-db/guest",
-    "run_job.py",
-    "submission.json",
-    "JOBFLOW_CONFIG_FILE",
-    "PMG_VASP_PSP_DIR",
-    "CUSTODIAN_",
-    "ATOMATE2_",
-    "BMD_SUBMISSION_SPEC",
-    "echo ",
-    "test -f",
-):
-    assert internal_detail not in slurm_preview_script
-
 sbatch_script = build_sbatch_script(spec)
+script_artifact = build_submission_script_artifact(spec)
+assert script_artifact["text"] == sbatch_script
+assert script_artifact["sha256"] == hashlib.sha256(sbatch_script.encode("utf-8")).hexdigest()
+assert script_artifact["size_bytes"] == len(sbatch_script.encode("utf-8"))
 assert f"#SBATCH -p {DEFAULT_PARTITION}" in sbatch_script
 assert f"#SBATCH --account={DEFAULT_ACCOUNT}" in sbatch_script
 assert f"#SBATCH --nodes={DEFAULT_RESOURCES['nodes']}" in sbatch_script

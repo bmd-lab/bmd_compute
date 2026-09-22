@@ -587,6 +587,18 @@ ls -ld "$PMG_VASP_PSP_DIR"/POT_* >/dev/null 2>&1 || echo "[warn] No POT_* dir fo
     return body.rstrip() + "\n"
 
 
+def build_submission_script_artifact(submission_spec: dict) -> dict:
+    """Return the exact UTF-8 SLURM script artifact used for display and upload."""
+
+    text = build_sbatch_script(submission_spec)
+    payload = text.encode("utf-8")
+    return {
+        "text": text,
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "size_bytes": len(payload),
+    }
+
+
 def build_remote_runtime_preflight_source(submission_spec: dict) -> str:
     submission_json_path = _submission_json_path(submission_spec)
     return f"""
@@ -623,6 +635,7 @@ def remote_preparation_file_groups(submission_spec: dict) -> list[dict]:
     """
 
     backend_module_sources = build_backend_module_sources()
+    submission_script = build_submission_script_artifact(submission_spec)
     backend_module_paths = _backend_module_paths(submission_spec)
     execution_files = [
         {
@@ -673,40 +686,12 @@ def remote_preparation_file_groups(submission_spec: dict) -> list[dict]:
             "files": [
                 {
                     "path": submission_spec["paths"]["remote_script"],
-                    "text": build_sbatch_script(submission_spec),
+                    "text": submission_script["text"],
                     "mode": 0o640,
                 },
             ],
         },
     ]
-
-
-def build_slurm_preview_script(submission_spec: dict) -> str:
-    cluster = submission_spec["cluster"]
-    resources = submission_spec["resources"]
-    modules = submission_spec.get("modules", {}).get("load", MODULES)
-    vasp_cmd = submission_spec.get("environment", {}).get("VASP_CMD") or NOTEBOOK_DEFAULTS["VASP_CMD"]
-    job_name = submission_spec.get("label") or submission_spec["run_name"]
-
-    module_lines = "\n".join(f"module load {module_name}" for module_name in modules)
-
-    return (
-        "#!/bin/bash\n"
-        "\n"
-        f"#SBATCH -p {cluster['partition']}\n"
-        f"#SBATCH --account={cluster['account']}\n"
-        f"#SBATCH -J {job_name}\n"
-        f"#SBATCH --time={resources['walltime']}\n"
-        f"#SBATCH --nodes={int(resources['nodes'])}\n"
-        f"#SBATCH --ntasks={int(resources['ntasks'])}\n"
-        f"#SBATCH --mem={int(resources['mem_gb'])}G\n"
-        "\n"
-        "ulimit -s 81920\n"
-        "\n"
-        f"{module_lines}\n"
-        "\n"
-        f"{vasp_cmd}\n"
-    )
 
 
 def build_submission_command(submission_spec: dict, *, dry_run: bool = False) -> str:
@@ -722,7 +707,7 @@ def build_submission_command(submission_spec: dict, *, dry_run: bool = False) ->
     backend_module_sources = build_backend_module_sources()
     run_job_script = build_run_job_script(submission_spec)
     run_job_path = _run_job_path(submission_spec)
-    sbatch_script = build_sbatch_script(submission_spec)
+    sbatch_script = build_submission_script_artifact(submission_spec)["text"]
     pot_links = " ".join(shlex.quote(link) for link in potcar.get("symlink_targets", []))
     link_command = (
         f"for L in {pot_links}; do ln -sfn {shlex.quote(potcar['target'])} \"$L\"; done"
@@ -1165,10 +1150,20 @@ def create_submission_spec(
         },
     }
     spec["provenance"] = build_submission_provenance(spec)
-    return initialize_submission_attempt(
+    spec = initialize_submission_attempt(
         spec,
         attempt_id=submission_attempt_id,
     )
+    script_artifact = build_submission_script_artifact(spec)
+    spec["provenance"]["execution"]["submission_script"] = {
+        "path": spec["paths"]["remote_script"],
+        "builder": "backend.submission.build_sbatch_script",
+        "encoding": "utf-8",
+        "hash_algorithm": "sha256",
+        "sha256": script_artifact["sha256"],
+        "size_bytes": script_artifact["size_bytes"],
+    }
+    return spec
 
 
 __all__ = [
@@ -1188,8 +1183,8 @@ __all__ = [
     "build_backend_module_sources",
     "build_execution_module_source",
     "build_remote_runtime_preflight_source",
-    "build_slurm_preview_script",
     "build_sbatch_script",
+    "build_submission_script_artifact",
     "build_run_job_script",
     "build_submission_command",
     "create_submission_spec",
