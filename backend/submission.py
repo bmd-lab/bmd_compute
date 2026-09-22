@@ -14,6 +14,9 @@ from backend.calculations.models import CalculationSpec, WorkflowSpec
 from backend.calculations.registry import (
     calculation_spec_from_workflow_spec,
     legacy_workflow_from_spec,
+    modifier_display_name,
+    stage_display_name,
+    theory_display_name,
     validate_calculation_spec,
     validate_workflow_spec,
     workflow_result_stage_directory,
@@ -474,7 +477,6 @@ def _backend_init_path(submission_spec: dict) -> str:
 def build_job_body(submission_spec: dict) -> str:
     paths = submission_spec["paths"]
     runner = submission_spec["runner"]
-    environment = submission_spec["environment"]
     run_job_path = _run_job_path(submission_spec)
     submission_json_path = _submission_json_path(submission_spec)
     backend_module_paths = _backend_module_paths(submission_spec)
@@ -497,20 +499,12 @@ def build_job_body(submission_spec: dict) -> str:
         else 'echo "[sbatch] MP_API_KEY not provided for this run."'
     )
 
-    psp_dir = environment.get("PMG_VASP_PSP_DIR")
-    jobflow_config = environment.get("JOBFLOW_CONFIG_FILE")
     attempt_id = (submission_spec.get("submission") or {}).get("attempt_id")
 
     return f"""
-set -e -o pipefail
 mkdir -p {shlex.quote(paths["run_dir"])}
 cd {shlex.quote(paths["run_dir"])}
 {mp_export}
-export CUSTODIAN_NO_GZIP=1
-export ATOMATE2_VASP_ZIP_FILES=False
-{_shell_export("VASP_CMD", environment.get("VASP_CMD"))}
-{_shell_export("PMG_VASP_PSP_DIR", psp_dir) if psp_dir else 'echo "[sbatch] PMG_VASP_PSP_DIR not set"'}
-{_shell_export("JOBFLOW_CONFIG_FILE", jobflow_config) if jobflow_config else "true"}
 {_shell_export("BMD_SUBMISSION_ATTEMPT_ID", attempt_id) if attempt_id else "true"}
 echo "[sbatch] Using partition={submission_spec["cluster"]["partition"]} account={submission_spec["cluster"]["account"]}"
 echo "[sbatch] VASP_CMD=$VASP_CMD"
@@ -587,6 +581,141 @@ ls -ld "$PMG_VASP_PSP_DIR"/POT_* >/dev/null 2>&1 || echo "[warn] No POT_* dir fo
     return body.rstrip() + "\n"
 
 
+def build_submission_script_artifact(submission_spec: dict) -> dict:
+    """Return the exact UTF-8 SLURM script artifact used for display and upload."""
+
+    text = build_sbatch_script(submission_spec)
+    payload = text.encode("utf-8")
+    return {
+        "text": text,
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "size_bytes": len(payload),
+    }
+
+
+def _submission_stage_rows(submission_spec: dict) -> list[dict]:
+    provenance = submission_spec.get("provenance") or {}
+    stages = []
+    for stage in (provenance.get("vasp") or {}).get("stages") or []:
+        modifiers = list(stage.get("modifiers") or [])
+        stage_name = stage_display_name(stage.get("stage_type"))
+        theory_name = theory_display_name(stage.get("theory"))
+        modifier_names = [modifier_display_name(modifier) for modifier in modifiers]
+        display_name = f"{theory_name} {stage_name}"
+        if modifier_names:
+            display_name += f" + {', '.join(modifier_names)}"
+        stages.append({
+            "index": stage.get("index"),
+            "display_name": display_name,
+            "stage_type": stage.get("stage_type"),
+            "theory": stage.get("theory"),
+            "modifiers": modifiers,
+            "executable": stage.get("executable"),
+        })
+    return stages
+
+
+def build_standalone_slurm_example(submission_spec: dict) -> dict:
+    """Build a direct POWER/VASP example from authoritative submission data.
+
+    This is deliberately not the BMD submission artifact. Multi-stage workflows
+    are represented as an illustrative stage sequence because BMD's atomate2
+    runner manages the state transfer between those VASP invocations.
+    """
+
+    cluster = submission_spec.get("cluster") or {}
+    resources = submission_spec.get("resources") or {}
+    modules = submission_spec.get("modules") or {}
+    stages = _submission_stage_rows(submission_spec)
+    if not stages or any(not stage.get("executable") for stage in stages):
+        raise ValueError("Standalone SLURM example requires resolved stage executables.")
+
+    lines = [
+        "#!/bin/bash",
+        "",
+        f"#SBATCH -p {cluster.get('partition')}",
+        f"#SBATCH --account={cluster.get('account')}",
+        f"#SBATCH -J {submission_spec.get('label')}",
+        f"#SBATCH --time={resources.get('walltime')}",
+        f"#SBATCH --nodes={int(resources.get('nodes'))}",
+        f"#SBATCH --ntasks={int(resources.get('ntasks'))}",
+        f"#SBATCH --mem={int(resources.get('mem_gb'))}G",
+        "",
+        "ulimit -s 81920",
+        "",
+    ]
+    if modules.get("purge_first"):
+        lines.append("module purge")
+    lines.extend(f"module load {module_name}" for module_name in modules.get("load") or [])
+    lines.append("")
+
+    illustrative = len(stages) > 1
+    if illustrative:
+        lines.extend([
+            f"# Illustrative only: BMD workflow contains {len(stages)} sequential VASP stages.",
+            "# This outline is not a standalone runnable multi-stage workflow.",
+            "",
+        ])
+        for stage in stages:
+            lines.extend([
+                f"# Stage {stage['index']} - {stage['display_name']}",
+                f"mpirun -n $SLURM_NTASKS {stage['executable']}",
+                "",
+            ])
+        lines.append("# BMD Compute manages structure and result transfer between stages.")
+    else:
+        lines.append(f"mpirun -n $SLURM_NTASKS {stages[0]['executable']}")
+
+    return {
+        "text": "\n".join(lines).rstrip() + "\n",
+        "kind": "illustrative_workflow" if illustrative else "standalone",
+        "description": (
+            "Illustrative direct-execution outline for this multi-stage workflow. "
+            "BMD Compute manages the transfers between stages."
+            if illustrative
+            else "Equivalent standalone script for running this calculation directly on POWER."
+        ),
+    }
+
+
+def build_submission_summary(submission_spec: dict) -> dict:
+    """Build a human-readable summary from authoritative submission data."""
+
+    provenance = submission_spec.get("provenance") or {}
+    stages = _submission_stage_rows(submission_spec)
+
+    script = ((provenance.get("execution") or {}).get("submission_script") or {})
+    return {
+        "job_name": submission_spec.get("run_name"),
+        "resources": {
+            "partition": (submission_spec.get("cluster") or {}).get("partition"),
+            "account": (submission_spec.get("cluster") or {}).get("account"),
+            "walltime": (submission_spec.get("resources") or {}).get("walltime"),
+            "nodes": (submission_spec.get("resources") or {}).get("nodes"),
+            "tasks": (submission_spec.get("resources") or {}).get("ntasks"),
+            "memory_gb": (submission_spec.get("resources") or {}).get("mem_gb"),
+        },
+        "execution": {
+            "run_directory": (submission_spec.get("paths") or {}).get("run_dir"),
+            "runner_script": (submission_spec.get("runner") or {}).get("script_name"),
+            "python": (submission_spec.get("runner") or {}).get("python"),
+            "runtime_environment": (submission_spec.get("environment") or {}).get(
+                "ATOMATE2_REMOTE_ENV"
+            ),
+            "stages": stages,
+        },
+        "environment": {
+            "modules": list((submission_spec.get("modules") or {}).get("load") or []),
+        },
+        "artifact": {
+            "status": "available" if script.get("sha256") else "not_generated",
+            "path": script.get("path"),
+            "sha256": script.get("sha256"),
+            "size_bytes": script.get("size_bytes"),
+        },
+    }
+
+
 def build_remote_runtime_preflight_source(submission_spec: dict) -> str:
     submission_json_path = _submission_json_path(submission_spec)
     return f"""
@@ -623,6 +752,7 @@ def remote_preparation_file_groups(submission_spec: dict) -> list[dict]:
     """
 
     backend_module_sources = build_backend_module_sources()
+    submission_script = build_submission_script_artifact(submission_spec)
     backend_module_paths = _backend_module_paths(submission_spec)
     execution_files = [
         {
@@ -673,40 +803,12 @@ def remote_preparation_file_groups(submission_spec: dict) -> list[dict]:
             "files": [
                 {
                     "path": submission_spec["paths"]["remote_script"],
-                    "text": build_sbatch_script(submission_spec),
+                    "text": submission_script["text"],
                     "mode": 0o640,
                 },
             ],
         },
     ]
-
-
-def build_slurm_preview_script(submission_spec: dict) -> str:
-    cluster = submission_spec["cluster"]
-    resources = submission_spec["resources"]
-    modules = submission_spec.get("modules", {}).get("load", MODULES)
-    vasp_cmd = submission_spec.get("environment", {}).get("VASP_CMD") or NOTEBOOK_DEFAULTS["VASP_CMD"]
-    job_name = submission_spec.get("label") or submission_spec["run_name"]
-
-    module_lines = "\n".join(f"module load {module_name}" for module_name in modules)
-
-    return (
-        "#!/bin/bash\n"
-        "\n"
-        f"#SBATCH -p {cluster['partition']}\n"
-        f"#SBATCH --account={cluster['account']}\n"
-        f"#SBATCH -J {job_name}\n"
-        f"#SBATCH --time={resources['walltime']}\n"
-        f"#SBATCH --nodes={int(resources['nodes'])}\n"
-        f"#SBATCH --ntasks={int(resources['ntasks'])}\n"
-        f"#SBATCH --mem={int(resources['mem_gb'])}G\n"
-        "\n"
-        "ulimit -s 81920\n"
-        "\n"
-        f"{module_lines}\n"
-        "\n"
-        f"{vasp_cmd}\n"
-    )
 
 
 def build_submission_command(submission_spec: dict, *, dry_run: bool = False) -> str:
@@ -722,7 +824,7 @@ def build_submission_command(submission_spec: dict, *, dry_run: bool = False) ->
     backend_module_sources = build_backend_module_sources()
     run_job_script = build_run_job_script(submission_spec)
     run_job_path = _run_job_path(submission_spec)
-    sbatch_script = build_sbatch_script(submission_spec)
+    sbatch_script = build_submission_script_artifact(submission_spec)["text"]
     pot_links = " ".join(shlex.quote(link) for link in potcar.get("symlink_targets", []))
     link_command = (
         f"for L in {pot_links}; do ln -sfn {shlex.quote(potcar['target'])} \"$L\"; done"
@@ -1165,10 +1267,20 @@ def create_submission_spec(
         },
     }
     spec["provenance"] = build_submission_provenance(spec)
-    return initialize_submission_attempt(
+    spec = initialize_submission_attempt(
         spec,
         attempt_id=submission_attempt_id,
     )
+    script_artifact = build_submission_script_artifact(spec)
+    spec["provenance"]["execution"]["submission_script"] = {
+        "path": spec["paths"]["remote_script"],
+        "builder": "backend.submission.build_sbatch_script",
+        "encoding": "utf-8",
+        "hash_algorithm": "sha256",
+        "sha256": script_artifact["sha256"],
+        "size_bytes": script_artifact["size_bytes"],
+    }
+    return spec
 
 
 __all__ = [
@@ -1188,8 +1300,10 @@ __all__ = [
     "build_backend_module_sources",
     "build_execution_module_source",
     "build_remote_runtime_preflight_source",
-    "build_slurm_preview_script",
     "build_sbatch_script",
+    "build_standalone_slurm_example",
+    "build_submission_summary",
+    "build_submission_script_artifact",
     "build_run_job_script",
     "build_submission_command",
     "create_submission_spec",

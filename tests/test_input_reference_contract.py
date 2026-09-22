@@ -371,14 +371,12 @@ def test_symbolic_potcar_only_no_raw_contents_or_deployment_details():
 
 
 def test_no_submission_scheduler_or_execution_path_is_used(monkeypatch):
-    import backend.generated_inputs as generated_inputs
     import backend.submission as submission
     import backend.workflows as workflows
 
     def fail(*args, **kwargs):
         raise AssertionError("execution or scheduler path should not be used")
 
-    monkeypatch.setattr(generated_inputs, "build_slurm_preview_script", fail)
     monkeypatch.setattr(submission, "build_sbatch_script", fail)
     monkeypatch.setattr(workflows, "build_atomate2_flow_from_spec", fail)
 

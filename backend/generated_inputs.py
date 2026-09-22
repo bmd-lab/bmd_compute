@@ -18,7 +18,6 @@ from backend.calculations.registry import (
     workflow_spec_from_calculation_spec,
     workflow_stage_directories,
 )
-from backend.submission import build_slurm_preview_script
 from backend.workflow_summary import calculation_plan_from_spec
 from backend.workflows import (
     build_band_structure_input_set_generator,
@@ -374,12 +373,7 @@ def _input_text(input_object) -> str:
     return str(input_object).rstrip()
 
 
-def preview_slurm_script(submission_spec: dict) -> str:
-    return build_slurm_preview_script(submission_spec).replace("\r\n", "\n").replace("\r", "\n")
-
-
 __all__ = [
     "generated_input_stage_previews",
     "preview_generated_inputs",
-    "preview_slurm_script",
 ]

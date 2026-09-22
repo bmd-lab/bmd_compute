@@ -473,6 +473,7 @@ ul {
 .tab-labels {
     border-bottom: 1px solid var(--bmd-border);
     display: flex;
+    flex-wrap: wrap;
     gap: 0;
 }
 
@@ -536,6 +537,7 @@ ul {
 #input-tab-incar:checked ~ .tab-labels label[for="input-tab-incar"],
 #input-tab-kpoints:checked ~ .tab-labels label[for="input-tab-kpoints"],
 #input-tab-poscar:checked ~ .tab-labels label[for="input-tab-poscar"],
+#input-tab-submission-summary:checked ~ .tab-labels label[for="input-tab-submission-summary"],
 #input-tab-slurm:checked ~ .tab-labels label[for="input-tab-slurm"] {
     background: var(--bmd-accent-soft);
     color: var(--bmd-accent);
@@ -544,8 +546,40 @@ ul {
 #input-tab-incar:checked ~ .tab-panel-incar,
 #input-tab-kpoints:checked ~ .tab-panel-kpoints,
 #input-tab-poscar:checked ~ .tab-panel-poscar,
+#input-tab-submission-summary:checked ~ .tab-panel-submission-summary,
 #input-tab-slurm:checked ~ .tab-panel-slurm {
     display: block;
+}
+
+.submission-summary-view {
+    padding: 20px;
+}
+
+.generated-input-diagnostics {
+    margin-top: 16px;
+}
+
+.submission-summary-note {
+    color: var(--bmd-text-muted);
+    font-size: 13px;
+    line-height: 1.5;
+    margin-bottom: 20px;
+}
+
+.submission-summary-grid {
+    display: grid;
+    gap: 24px 30px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.submission-summary-section h3 {
+    color: var(--bmd-text);
+    font-size: 15px;
+    margin: 0 0 8px;
+}
+
+.submission-summary-section td:first-child {
+    width: 125px;
 }
 
 .input-preview {
@@ -883,6 +917,7 @@ ul {
     .configuration-grid,
     .resource-grid,
     .submission-grid,
+    .submission-summary-grid,
     .button-row {
         grid-template-columns: 1fr;
     }
@@ -1429,7 +1464,7 @@ ul {
                         <h2>Generated Inputs</h2>
                     </div>
                     <div class="summary-line">
-                        Local preview generated from the selected calculation.
+                        Scientific input previews and submission execution details.
                     </div>
                 </div>
                 <div class="stage-status">
@@ -1441,12 +1476,18 @@ ul {
                 <input type="radio" id="input-tab-incar" name="generated-input-tab" checked>
                 <input type="radio" id="input-tab-kpoints" name="generated-input-tab">
                 <input type="radio" id="input-tab-poscar" name="generated-input-tab">
+                {% if generated_inputs.submission_summary %}
+                <input type="radio" id="input-tab-submission-summary" name="generated-input-tab">
+                {% endif %}
                 <input type="radio" id="input-tab-slurm" name="generated-input-tab">
 
                 <div class="tab-labels">
                     <label for="input-tab-incar">INCAR</label>
                     <label for="input-tab-kpoints">KPOINTS</label>
                     <label for="input-tab-poscar">POSCAR</label>
+                    {% if generated_inputs.submission_summary %}
+                    <label for="input-tab-submission-summary">Submission Summary</label>
+                    {% endif %}
                     <label for="input-tab-slurm">SLURM Script</label>
                 </div>
 
@@ -1471,13 +1512,90 @@ ul {
                     </div>
                 </div>
 
+                {% if generated_inputs.submission_summary %}
+                <div class="tab-panel tab-panel-submission-summary">
+                    <div class="submission-summary-view">
+                        <div class="submission-summary-note">
+                            Structured submission data. The exact uploaded script is shown separately.
+                        </div>
+                        <div class="submission-summary-grid">
+                            <section class="submission-summary-section">
+                                <h3>Resources</h3>
+                                <table class="compact-table">
+                                    <tr><td>Job name</td><td class="mono">{{ generated_inputs.submission_summary.job_name }}</td></tr>
+                                    <tr><td>Partition</td><td>{{ generated_inputs.submission_summary.resources.partition }}</td></tr>
+                                    <tr><td>Account</td><td>{{ generated_inputs.submission_summary.resources.account }}</td></tr>
+                                    <tr><td>Walltime</td><td>{{ generated_inputs.submission_summary.resources.walltime }}</td></tr>
+                                    <tr><td>Nodes</td><td>{{ generated_inputs.submission_summary.resources.nodes }}</td></tr>
+                                    <tr><td>Tasks / CPUs</td><td>{{ generated_inputs.submission_summary.resources.tasks }}</td></tr>
+                                    <tr><td>Memory</td><td>{{ generated_inputs.submission_summary.resources.memory_gb }} GB</td></tr>
+                                </table>
+                            </section>
+
+                            <section class="submission-summary-section">
+                                <h3>Execution</h3>
+                                <table class="compact-table">
+                                    <tr><td>Run directory</td><td class="mono">{{ generated_inputs.submission_summary.execution.run_directory }}</td></tr>
+                                    <tr><td>Runner</td><td class="mono">{{ generated_inputs.submission_summary.execution.runner_script }}</td></tr>
+                                    <tr><td>Python</td><td class="mono">{{ generated_inputs.submission_summary.execution.python }}</td></tr>
+                                    <tr><td>Runtime</td><td class="mono">{{ generated_inputs.submission_summary.execution.runtime_environment }}</td></tr>
+                                    {% for stage in generated_inputs.submission_summary.execution.stages %}
+                                    <tr><td>Stage {{ stage.index }}</td><td>{{ stage.display_name }}</td></tr>
+                                    <tr><td>Stage {{ stage.index }} VASP</td><td class="mono">{{ stage.executable }}</td></tr>
+                                    {% endfor %}
+                                </table>
+                            </section>
+
+                            <section class="submission-summary-section">
+                                <h3>Environment</h3>
+                                <table class="compact-table">
+                                    {% for module_name in generated_inputs.submission_summary.environment.modules %}
+                                    <tr><td>Module {{ loop.index }}</td><td class="mono">{{ module_name }}</td></tr>
+                                    {% endfor %}
+                                </table>
+                            </section>
+
+                            <section class="submission-summary-section">
+                                <h3>Artifact</h3>
+                                <table class="compact-table">
+                                    <tr><td>Exact script</td><td>{{ generated_inputs.submission_summary.artifact.status }}</td></tr>
+                                    <tr><td>SHA-256</td><td class="mono">{{ generated_inputs.submission_summary.artifact.sha256 }}</td></tr>
+                                    <tr><td>Size</td><td>{{ generated_inputs.submission_summary.artifact.size_bytes }} bytes</td></tr>
+                                </table>
+                            </section>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+
                 <div class="tab-panel tab-panel-slurm">
+                    <div class="submission-summary-note">
+                        {{ generated_inputs.slurm_script_description or "Equivalent standalone script for running this calculation directly on POWER." }}
+                    </div>
                     <div class="input-pane">
                         <button type="button" class="input-copy-button" data-copy-input>Copy</button>
                         <pre class="input-preview">{{ generated_inputs.slurm_script }}</pre>
                     </div>
                 </div>
             </div>
+
+            {% if generated_inputs.exact_slurm_script %}
+            <details class="disclosure details-wide generated-input-diagnostics">
+                <summary>Exact BMD Submission Script</summary>
+                <div class="submission-summary-view">
+                    <div class="submission-summary-note">
+                        BMD Compute's internal execution artifact. This exact script is uploaded for submission.
+                        {% if generated_inputs.submission_summary %}
+                        SHA-256: <span class="mono">{{ generated_inputs.submission_summary.artifact.sha256 }}</span>
+                        {% endif %}
+                    </div>
+                    <div class="input-pane">
+                        <button type="button" class="input-copy-button" data-copy-input>Copy</button>
+                        <pre class="input-preview">{{ generated_inputs.exact_slurm_script }}</pre>
+                    </div>
+                </div>
+            </details>
+            {% endif %}
 
         </section>
         {% endif %}
