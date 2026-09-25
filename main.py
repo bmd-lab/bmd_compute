@@ -61,6 +61,7 @@ from backend.submission import (
     build_submission_script_artifact,
     build_submission_summary,
     create_submission_spec,
+    verify_submission_identity_token,
 )
 from backend.summary import summarize_structure
 from backend.workflow_summary import summarize_workflow
@@ -191,7 +192,6 @@ def lightweight_submission_spec_from_monitor_form(
     fmt: str,
     workflow_spec: WorkflowSpec,
     execution_resources: ExecutionResources,
-    timestamp: str,
     calculation_summary=None,
 ) -> dict:
     calculation_spec = calculation_spec_from_workflow_spec(workflow_spec)
@@ -225,7 +225,6 @@ def lightweight_submission_spec_from_monitor_form(
         flow_spec,
         structure=None,
         label=(calculation_summary or {}).get("flow_name", "vasp_run"),
-        timestamp=timestamp,
         nodes=execution_resources.nodes,
         ntasks=execution_resources.cpus,
         mem_gb=execution_resources.memory_gb,
@@ -233,6 +232,22 @@ def lightweight_submission_spec_from_monitor_form(
         partition=execution_resources.queue,
         account=execution_resources.account,
     )
+
+
+def authoritative_submission_identity(
+    identity_token: str | None,
+    submission_attempt_id: str | None,
+) -> dict:
+    try:
+        return verify_submission_identity_token(
+            identity_token,
+            expected_attempt_id=submission_attempt_id,
+        )
+    except ValueError as exc:
+        raise CalculationValidationError(
+            "The submission identity is missing, expired, or invalid.",
+            suggestion="Rebuild the calculation before preparing or submitting it.",
+        ) from exc
 
 
 def structure_error_context(exc: StructureValidationError) -> dict:
@@ -1040,18 +1055,25 @@ def prepare_remote(
     memory_gb: str | None = Form(None),
     walltime: str | None = Form(None),
     queue: str | None = Form(None),
-    created_at: str = Form(...),
+    created_at: str | None = Form(None),
     submission_attempt_id: str | None = Form(None),
+    submission_identity_token: str | None = Form(None),
     workflow_spec_json: str | None = Form(None),
     workflow: str | None = Form(None),
     method: str | None = Form(None),
 ):
     preparation_started = time.perf_counter()
+    # Accepted for legacy clients only; the signed server identity is authoritative.
+    del created_at
     calculation_spec = default_calculation_spec()
     workflow_spec = default_workflow_spec()
     execution_resources = default_execution_resources()
     method_considerations = None
     try:
+        identity = authoritative_submission_identity(
+            submission_identity_token,
+            submission_attempt_id,
+        )
         workflow_spec = workflow_spec_from_form(
             workflow_spec_json=workflow_spec_json,
             purpose=purpose,
@@ -1091,8 +1113,8 @@ def prepare_remote(
             fmt=fmt,
             workflow_spec=workflow_spec,
             execution_resources=execution_resources,
-            timestamp=created_at,
-            submission_attempt_id=submission_attempt_id,
+            timestamp=identity["run_timestamp"],
+            submission_attempt_id=identity["attempt_id"],
         )
     except StructureValidationError as exc:
         return structure_error_response(
@@ -1153,18 +1175,25 @@ def submit_workflow(
     memory_gb: str | None = Form(None),
     walltime: str | None = Form(None),
     queue: str | None = Form(None),
-    created_at: str = Form(...),
+    created_at: str | None = Form(None),
     submission_attempt_id: str | None = Form(None),
+    submission_identity_token: str | None = Form(None),
     remote_prepared: str = Form("false"),
     workflow_spec_json: str | None = Form(None),
     workflow: str | None = Form(None),
     method: str | None = Form(None),
 ):
+    # Accepted for legacy clients only; the signed server identity is authoritative.
+    del created_at
     calculation_spec = default_calculation_spec()
     workflow_spec = default_workflow_spec()
     execution_resources = default_execution_resources()
     method_considerations = None
     try:
+        identity = authoritative_submission_identity(
+            submission_identity_token,
+            submission_attempt_id,
+        )
         workflow_spec = workflow_spec_from_form(
             workflow_spec_json=workflow_spec_json,
             purpose=purpose,
@@ -1204,8 +1233,8 @@ def submit_workflow(
             fmt=fmt,
             workflow_spec=workflow_spec,
             execution_resources=execution_resources,
-            timestamp=created_at,
-            submission_attempt_id=submission_attempt_id,
+            timestamp=identity["run_timestamp"],
+            submission_attempt_id=identity["attempt_id"],
         )
     except StructureValidationError as exc:
         return structure_error_response(
@@ -1283,7 +1312,7 @@ def refresh_monitoring(
     memory_gb: str | None = Form(None),
     walltime: str | None = Form(None),
     queue: str | None = Form(None),
-    created_at: str = Form(...),
+    created_at: str | None = Form(None),
     job_id: str = Form(...),
     submitted_at: str = Form(""),
     monitor_state_json: str | None = Form(None),
@@ -1291,6 +1320,8 @@ def refresh_monitoring(
     workflow: str | None = Form(None),
     method: str | None = Form(None),
 ):
+    # Accepted for legacy clients only; monitoring never trusts a client run timestamp.
+    del created_at
     calculation_spec = default_calculation_spec()
     workflow_spec = default_workflow_spec()
     execution_resources = default_execution_resources()
@@ -1329,7 +1360,6 @@ def refresh_monitoring(
                 fmt=fmt,
                 workflow_spec=workflow_spec,
                 execution_resources=execution_resources,
-                timestamp=created_at,
                 calculation_summary=calculation_summary,
             )
         if not isinstance(submission_spec, dict):

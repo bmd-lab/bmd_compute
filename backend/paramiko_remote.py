@@ -60,6 +60,11 @@ SUBMISSION_ATTEMPT_STATE_WAIT_S = 5.0
 SUBMISSION_ATTEMPT_STATE_POLL_S = 0.1
 SUBMISSION_ATTEMPT_STATE_MAX_BYTES = 1024 * 1024
 PREPARATION_VERIFY_BATCH_SIZE = 10
+SSH_KNOWN_HOSTS_ENV = "BMD_SSH_KNOWN_HOSTS_FILE"
+
+
+class SshHostKeyTrustError(RuntimeError):
+    """Raised when fail-closed SSH host identity verification cannot be configured."""
 
 
 def _paramiko_connect_kwargs(profile: RemoteConnectionProfile, paramiko_module) -> dict:
@@ -152,6 +157,10 @@ def _paramiko_connect_details_from_ssh_options(
         "proxy_command": proxy_command if proxy_command and str(proxy_command).lower() != "none" else None,
         "ssh_config_applied": use_ssh_config,
         "ssh_config_lookup": lookup_diagnostics,
+        "known_hosts_candidates": [
+            str(path)
+            for path in _known_hosts_paths(ssh_options if use_ssh_config else {})
+        ],
     }
 
     return kwargs, diagnostics
@@ -234,6 +243,8 @@ def _parse_openssh_config_output(output: str) -> dict:
         if key == "identityfile":
             if value and value.lower() != "none":
                 identity_files.append(value)
+        elif key in {"userknownhostsfile", "globalknownhostsfile"}:
+            options[key] = shlex.split(value)
         elif key in {"hostname", "user", "port", "proxycommand"}:
             options[key] = value
 
@@ -346,6 +357,77 @@ def _ssh_config_paths() -> tuple[Path, ...]:
     return tuple(unique)
 
 
+def _known_hosts_paths(ssh_options: Mapping[str, Any] | None = None) -> tuple[Path, ...]:
+    options = ssh_options or {}
+    candidates = []
+    configured = os.environ.get(SSH_KNOWN_HOSTS_ENV)
+    if configured:
+        candidates.append(configured)
+
+    for option_name in ("userknownhostsfile", "globalknownhostsfile"):
+        configured_paths = options.get(option_name) or []
+        if isinstance(configured_paths, str):
+            configured_paths = shlex.split(configured_paths)
+        candidates.extend(configured_paths)
+
+    home = str(Path.home())
+    candidates.extend([
+        Path.home() / ".ssh" / "known_hosts",
+        Path.home() / ".ssh" / "known_hosts2",
+        Path("/etc/ssh/ssh_known_hosts"),
+        Path("/etc/ssh/ssh_known_hosts2"),
+    ])
+    program_data = os.environ.get("PROGRAMDATA")
+    if program_data:
+        candidates.append(Path(program_data) / "ssh" / "ssh_known_hosts")
+
+    unique = []
+    seen = set()
+    for candidate in candidates:
+        text = str(candidate or "").strip()
+        if not text or text.lower() == "none":
+            continue
+        text = text.replace("%d", home)
+        path = Path(os.path.expandvars(os.path.expanduser(text)))
+        key = str(path)
+        if key not in seen:
+            unique.append(path)
+            seen.add(key)
+    return tuple(unique)
+
+
+def _configure_host_key_verification(
+    client,
+    paramiko_module,
+    known_hosts_paths,
+) -> dict:
+    client.set_missing_host_key_policy(paramiko_module.RejectPolicy())
+    loaded = []
+    for path_value in known_hosts_paths:
+        path = Path(path_value)
+        if not path.is_file():
+            continue
+        try:
+            client.load_system_host_keys(str(path))
+        except Exception as exc:
+            raise SshHostKeyTrustError(
+                f"Unable to load trusted SSH host keys from {path}: {exc}"
+            ) from exc
+        loaded.append(str(path))
+
+    if not loaded:
+        candidates = ", ".join(str(path) for path in known_hosts_paths) or "none"
+        raise SshHostKeyTrustError(
+            "No readable SSH known-hosts file was found. Configure trusted host "
+            f"keys for the BMD service account or set {SSH_KNOWN_HOSTS_ENV}. "
+            f"Checked: {candidates}."
+        )
+    return {
+        "policy": "reject_unknown_or_changed",
+        "loaded_known_hosts_files": loaded,
+    }
+
+
 def _identity_files_from_ssh_config(ssh_options: Mapping[str, Any]) -> str | list[str] | None:
     identity_file = ssh_options.get("identityfile")
     if not identity_file:
@@ -445,10 +527,19 @@ class ParamikoRemoteRunner(RemoteRunner):
         self._ssh_exec_count = 0
         self._sftp_session_count = 0
         client = paramiko.SSHClient()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         config_started = time.perf_counter()
         connect_kwargs, diagnostics = _paramiko_connect_details(profile, paramiko)
         self.preparation_metrics["ssh_config_s"] = time.perf_counter() - config_started
+        try:
+            diagnostics["host_key_verification"] = _configure_host_key_verification(
+                client,
+                paramiko,
+                diagnostics.get("known_hosts_candidates") or (),
+            )
+        except Exception as exc:
+            _close_quietly(client)
+            setattr(exc, "ssh_diagnostics", diagnostics)
+            raise
         LOGGER.debug("Paramiko connect diagnostics: %s", json.dumps(diagnostics, indent=2))
         connect_started = time.perf_counter()
         try:

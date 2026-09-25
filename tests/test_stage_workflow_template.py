@@ -70,8 +70,14 @@ submit_form = source[source.index('<form action="/submit"'):]
 prepare_form_only = prepare_form[:prepare_form.index("</form>")]
 assert 'name="submission_attempt_id"' in prepare_form
 assert 'name="submission_attempt_id"' in submit_form
+assert 'name="submission_identity_token"' in prepare_form
+assert 'name="submission_identity_token"' in submit_form
 assert "submission_spec.submission.attempt_id" in prepare_form
 assert "submission_spec.submission.attempt_id" in submit_form
+assert "submission_spec.submission.identity_token" in prepare_form
+assert "submission_spec.submission.identity_token" in submit_form
+assert 'name="created_at"' not in prepare_form
+assert 'name="created_at"' not in submit_form
 assert "data-submit-calculation-button" in submit_form
 assert 'form[action="/submit"]' in source
 assert 'button.textContent = "Submitting..."' in source

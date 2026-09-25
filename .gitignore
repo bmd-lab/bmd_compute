@@ -2,11 +2,52 @@
 __pycache__/
 *.py[cod]
 *.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+*.egg-info/
+build/
+dist/
 
 # Virtual environments
 .venv/
 venv/
 env/
+
+# Local secrets and deployment configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.ppk
+id_rsa
+id_rsa.*
+id_dsa
+id_dsa.*
+id_ecdsa
+id_ecdsa.*
+id_ed25519
+id_ed25519.*
+*.local.json
+*.local.toml
+*.local.yaml
+*.local.yml
+*.secrets.json
+*.secrets.toml
+*.secrets.yaml
+*.secrets.yml
+
+# Licensed VASP potential data (symbolic specifications remain trackable)
+POTCAR
+POTCAR.*
+!POTCAR.spec
 
 # Jupyter
 .ipynb_checkpoints/

@@ -41,11 +41,11 @@ Supported scientific controls include:
 - HSE06 for reviewed stages and stage-first workflows
 - Spin Polarised calculations where enabled by the stage registry
 - explicit DFT+U, only when the selected input set has reviewed U values
-- SOC for reviewed PBE Static Energy stages and compatible static-to-SOC workflows
+- SOC for reviewed Static Energy stages, including PBE and HSE06, and compatible static-to-SOC workflows
 
 Validated or specifically reviewed examples include PBE Static + SOC on Si, PBE + DFT+U Static -> PBE + DFT+U + SOC Static on Fe2O3, and HSE06 Band Structure through the stage-first HSE static precursor path.
 
-Deliberately unavailable or unvalidated combinations remain blocked by validation. Examples include r2SCAN, Dielectric, GW, HSE06 DOS, HSE06 + SOC, general SOC relaxation, and arbitrary free-form INCAR editing.
+Deliberately unavailable or unreviewed combinations remain blocked by validation. Examples include r2SCAN, Dielectric, GW, general SOC relaxation, and arbitrary free-form INCAR editing.
 
 ## Scientific Policy Notes
 
@@ -77,7 +77,19 @@ There is no application-level login, SSO, CSRF protection, or per-user job owner
 
 Current operational hardening includes allow-listed CPU/memory/queue values, fixed backend account policy, bounded process-local SSH concurrency, deterministic SSH cleanup, server-side submission idempotency, explicit Load Results for completed calculations, remote-side pymatgen result parsing, production traceback hiding, and structured submission provenance.
 
-## Development
+## Local Development
+
+```bash
+git clone https://github.com/bmd-lab/bmd_compute.git
+cd bmd_compute
+conda env create -f environment.yml
+conda activate bmd-compute
+uvicorn main:app --reload
+```
+
+Open `http://127.0.0.1:8000`. Building and previewing calculations is local;
+POWER preparation and submission require deployment-local SSH, cluster, and
+licensed POTCAR configuration that is intentionally not stored here.
 
 The environment file is intentionally broad and currently not a lock file. It describes the main conda packages needed by the app, but exact production reproducibility still depends on the maintained `bmd-compute` environment.
 
@@ -94,4 +106,19 @@ On the Windows/Codex development machine, use the intended environment, for exam
 ```bash
 conda run -n bmd-compute python -m pytest tests -q
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the branch and pull-request workflow
+and the list of material that must never be committed.
+
+## License and third-party software
+
+BMD Compute's repository-owned source code and documentation are released
+under the [MIT License](LICENSE). This does not license or redistribute VASP,
+POTCAR/PAW datasets, or third-party dependencies; those remain subject to their
+own licenses and access requirements.
+
+Publishing this source repository is not a security boundary for the deployed
+service. The current web application assumes the institutional/VPN network
+boundary described above and is not suitable for direct public-Internet
+exposure without separate authentication, authorization, and CSRF work.
 
