@@ -1838,8 +1838,8 @@ ul {
                     <input type="hidden" name="memory_gb" value="{{ selected_resources.memory_gb }}">
                     <input type="hidden" name="walltime" value="{{ selected_resources.walltime }}">
                     <input type="hidden" name="queue" value="{{ selected_resources.queue }}">
-                    <input type="hidden" name="created_at" value="{{ submission_spec.created_at }}">
                     <input type="hidden" name="submission_attempt_id" value="{{ submission_spec.submission.attempt_id }}">
+                    <input type="hidden" name="submission_identity_token" value="{{ submission_spec.submission.identity_token }}">
                     <button type="submit" data-current-calculation-action data-prepare-remote-button>Prepare Remote</button>
                 </form>
 
@@ -1857,8 +1857,8 @@ ul {
                     <input type="hidden" name="memory_gb" value="{{ selected_resources.memory_gb }}">
                     <input type="hidden" name="walltime" value="{{ selected_resources.walltime }}">
                     <input type="hidden" name="queue" value="{{ selected_resources.queue }}">
-                    <input type="hidden" name="created_at" value="{{ submission_spec.created_at }}">
                     <input type="hidden" name="submission_attempt_id" value="{{ submission_spec.submission.attempt_id }}">
+                    <input type="hidden" name="submission_identity_token" value="{{ submission_spec.submission.identity_token }}">
                     <input
                         type="hidden"
                         name="remote_prepared"
@@ -2064,7 +2064,6 @@ ul {
                 <input type="hidden" name="memory_gb" value="{{ selected_resources.memory_gb }}">
                 <input type="hidden" name="walltime" value="{{ selected_resources.walltime }}">
                 <input type="hidden" name="queue" value="{{ selected_resources.queue }}">
-                <input type="hidden" name="created_at" value="{{ submission_spec.created_at }}">
                 <input type="hidden" name="job_id" value="{{ submission_result.job_id if submission_result else monitoring_result.job_id }}">
                 <input type="hidden" name="submitted_at" value="{{ submission_result.job_record.submitted_at if submission_result else '' }}">
                 <button type="submit" data-current-calculation-action>Refresh Queue Status</button>

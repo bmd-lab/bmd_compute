@@ -17,6 +17,9 @@ BMD Compute is currently intended to run as a lab-internal service reachable onl
 
 Do not expose the Uvicorn port directly to the public Internet.
 
+Source-code visibility is not an access control. A public repository does not
+change this network-bound deployment requirement.
+
 ## Network And Identity
 
 The web app does not currently provide app-level login, SSO, CSRF protection, or private per-user ownership. The access boundary is the TAU network/VPN plus the constrained shared remote identity.
@@ -24,6 +27,22 @@ The web app does not currently provide app-level login, SSO, CSRF protection, or
 Resume by Job ID is not a private authorization boundary. Jobs visible through this path should be treated as shared service/group calculations.
 
 If the app is later exposed outside the current VPN-bound model, authentication, authorization, CSRF posture, auditing, and per-user job ownership need to be redesigned before deployment.
+
+## SSH Host Trust
+
+Remote SSH connections fail closed. The service account running BMD Compute
+must trust the POWER login host in an OpenSSH-compatible known-hosts file.
+The connection layer reads the resolved `UserKnownHostsFile`, the service
+account's standard `~/.ssh/known_hosts`, and system SSH known-hosts files.
+An operator may set `BMD_SSH_KNOWN_HOSTS_FILE` to an explicit deployment-local
+file. Unknown or changed keys are rejected; never replace this with automatic
+host-key acceptance.
+
+For stable browser Prepare/Submit forms across service restarts or multiple
+workers, set `BMD_SUBMISSION_IDENTITY_SECRET` to the same high-entropy private
+value for every process. Without it, BMD Compute uses a process-local ephemeral
+key, which is secure but invalidates already-rendered forms after a restart.
+Neither value belongs in the repository.
 
 ## Uvicorn Process
 

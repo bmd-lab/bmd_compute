@@ -49,12 +49,19 @@ hostname powerslurm-login.tau.ac.il
 user bmdguest
 port 22
 identityfile ~/.ssh/bmd_guest_ed25519
+userknownhostsfile ~/.ssh/known_hosts ~/.ssh/known_hosts2
+globalknownhostsfile /etc/ssh/ssh_known_hosts
 proxycommand none
 """
 )
 assert ssh_g_options["hostname"] == "powerslurm-login.tau.ac.il"
 assert ssh_g_options["user"] == "bmdguest"
 assert ssh_g_options["port"] == "22"
+assert ssh_g_options["userknownhostsfile"] == [
+    "~/.ssh/known_hosts",
+    "~/.ssh/known_hosts2",
+]
+assert ssh_g_options["globalknownhostsfile"] == ["/etc/ssh/ssh_known_hosts"]
 identity_file = _identity_files_from_ssh_config(ssh_g_options)
 assert identity_file.replace("\\", "/").endswith("/.ssh/bmd_guest_ed25519")
 

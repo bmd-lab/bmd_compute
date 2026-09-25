@@ -257,7 +257,7 @@ def test_connect_closes_authenticated_client_if_transport_setup_fails(monkeypatc
     class FakeParamikoModule:
         SSHClient = FakeSshClient
 
-        class AutoAddPolicy:
+        class RejectPolicy:
             pass
 
     monkeypatch.setitem(sys.modules, "paramiko", FakeParamikoModule)
@@ -265,6 +265,11 @@ def test_connect_closes_authenticated_client_if_transport_setup_fails(monkeypatc
         paramiko_remote,
         "_paramiko_connect_details",
         lambda connection_profile, paramiko_module: ({}, {}),
+    )
+    monkeypatch.setattr(
+        paramiko_remote,
+        "_configure_host_key_verification",
+        lambda client, paramiko_module, known_hosts_paths: {},
     )
 
     runner = ParamikoRemoteRunner()

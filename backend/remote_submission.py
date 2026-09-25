@@ -152,6 +152,8 @@ def _submission_reason(exc: Exception) -> str:
         return "Paramiko is not installed in this Python environment."
 
     class_name = exc.__class__.__name__
+    if _looks_like_host_key_failure(exc):
+        return "SSH host identity verification failed."
     if "Authentication" in class_name or class_name in {"BadAuthenticationType", "PasswordRequiredException"}:
         return "SSH authentication failed."
 
@@ -170,6 +172,9 @@ def _submission_suggestion(exc: Exception, reason: str | None = None) -> str:
 
     if isinstance(exc, ModuleNotFoundError) and getattr(exc, "name", None) == "paramiko":
         return "Install the project environment dependencies and try again."
+
+    if _looks_like_host_key_failure(exc):
+        return "Verify the deployment known-hosts entry for the configured cluster host."
 
     if "Authentication" in class_name or class_name in {"BadAuthenticationType", "PasswordRequiredException"}:
         return "Check SSH key or agent access and try again."
@@ -275,6 +280,20 @@ def _looks_like_connection_failure(message: str) -> bool:
             "network is unreachable",
             "no route to host",
             "unable to connect",
+        )
+    )
+
+
+def _looks_like_host_key_failure(exc: Exception) -> bool:
+    class_name = exc.__class__.__name__
+    message = str(exc).lower()
+    return class_name in {"BadHostKeyException", "SshHostKeyTrustError"} or any(
+        fragment in message
+        for fragment in (
+            "not found in known_hosts",
+            "known-hosts file",
+            "host key for server",
+            "host key does not match",
         )
     )
 

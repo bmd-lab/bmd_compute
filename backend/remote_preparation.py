@@ -292,6 +292,13 @@ def _classify_failure(
             "Install the project environment dependencies and try again.",
         )
 
+    if _looks_like_host_key_failure(exc):
+        return (
+            "SSH Host Verification",
+            "SSH host identity verification failed.",
+            "Verify the deployment known-hosts entry for the configured cluster host.",
+        )
+
     if "Authentication" in class_name or class_name in {"BadAuthenticationType", "PasswordRequiredException"}:
         return (
             "SSH Authentication",
@@ -421,6 +428,20 @@ def _looks_like_connection_failure(exc: Exception) -> bool:
             "nodename nor servname",
             "network is unreachable",
             "no route to host",
+        )
+    )
+
+
+def _looks_like_host_key_failure(exc: Exception) -> bool:
+    class_name = exc.__class__.__name__
+    message = str(exc).lower()
+    return class_name in {"BadHostKeyException", "SshHostKeyTrustError"} or any(
+        fragment in message
+        for fragment in (
+            "not found in known_hosts",
+            "known-hosts file",
+            "host key for server",
+            "host key does not match",
         )
     )
 

@@ -1,4 +1,4 @@
-name: bmd_compute
+name: bmd-compute
 
 channels:
   - conda-forge
@@ -13,4 +13,5 @@ dependencies:
   - atomate2
   - jobflow
   - paramiko
+  - pytest
   - pip

@@ -46,6 +46,7 @@ Resolved or substantially reduced:
 - Production traceback exposure is controlled by debug mode. The normal production path should show user-facing errors rather than raw Python tracebacks.
 - Submission provenance is recorded in `submission.json`, including schema version, Git/source state when available, local scientific package versions, workflow/resources, POTCAR identity metadata, and per-stage VASP executable policy.
 - Documentation now describes the current stage-first, HSE06, SOC, DOS, Band Structure, monitoring, result-loading, resource, and deployment behavior.
+- Production Paramiko connections now load deployment-local or system OpenSSH known-hosts material and reject unknown or changed host keys.
 
 Accepted deployment policy, not an accidental omission:
 
@@ -55,7 +56,6 @@ Accepted deployment policy, not an accidental omission:
 
 Still future or still worth tracking:
 
-- Paramiko host-key policy should be reviewed before broader production exposure.
 - A durable job database/history is still future work.
 - The SSH concurrency limit and results cache are process-local; multiple Uvicorn workers need a cross-process design if used.
 - `main.py` remains thicker than the long-term FastAPI-thin-controller target.

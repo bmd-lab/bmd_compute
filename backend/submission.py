@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import base64
 import hashlib
+import hmac
 import json
 import os
 import posixpath
 import re
+import secrets
 import shlex
 import time
 import uuid
@@ -56,6 +59,16 @@ REMOTE_BACKEND_INIT_FILENAME = "__init__.py"
 REMOTE_BACKEND_MODULE_FILENAMES = runtime_package_relative_paths()
 REMOTE_RUNTIME_PREFLIGHT_STEP = "Runtime import preflight"
 REMOTE_RUNTIME_PREFLIGHT_TIMEOUT_S = 60
+SUBMISSION_IDENTITY_VERSION = 1
+SUBMISSION_IDENTITY_SECRET_ENV = "BMD_SUBMISSION_IDENTITY_SECRET"
+RUN_TIMESTAMP_PATTERN = re.compile(r"^[0-9]{8}-[0-9]{6}$")
+MACHINE_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
+RELATIVE_FILENAME_PATTERN = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._-]{0,95}$")
+SLURM_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+SAFE_REMOTE_PATH_PATTERN = re.compile(r"^/[A-Za-z0-9._/+\-]+$")
+SAFE_MODULE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/+\-]{0,127}$")
+WALLTIME_PATTERN = re.compile(r"^[0-9]{1,3}:[0-9]{2}:[0-9]{2}$")
+_EPHEMERAL_SUBMISSION_IDENTITY_SECRET = secrets.token_bytes(32)
 
 MP_RECOMMENDED_POTCAR_SYMBOLS = {
     "Ba": "Ba_sv",
@@ -116,6 +129,91 @@ def sanitize_label(label: str) -> str:
     label = re.sub(r"\s+", "-", label)
     label = re.sub(r"[^A-Za-z0-9._-]+", "", label)
     return (label or "vasp_run")[:60].rstrip("-_.") or "vasp_run"
+
+
+def canonical_run_timestamp(value: str | None = None) -> str:
+    timestamp = str(value or time.strftime("%Y%m%d-%H%M%S")).strip()
+    if not RUN_TIMESTAMP_PATTERN.fullmatch(timestamp):
+        raise ValueError("Run timestamp must use the canonical YYYYMMDD-HHMMSS format.")
+    try:
+        time.strptime(timestamp, "%Y%m%d-%H%M%S")
+    except ValueError as exc:
+        raise ValueError("Run timestamp is not a valid calendar timestamp.") from exc
+    return timestamp
+
+
+def create_submission_identity_token(timestamp: str, attempt_id: str) -> str:
+    payload = {
+        "attempt_id": _normalized_submission_attempt_id(attempt_id),
+        "run_timestamp": canonical_run_timestamp(timestamp),
+        "version": SUBMISSION_IDENTITY_VERSION,
+    }
+    encoded = _urlsafe_b64encode(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    )
+    signature = hmac.new(
+        _submission_identity_secret(),
+        encoded.encode("ascii"),
+        hashlib.sha256,
+    ).digest()
+    return f"{encoded}.{_urlsafe_b64encode(signature)}"
+
+
+def verify_submission_identity_token(
+    token: str | None,
+    *,
+    expected_attempt_id: str | None = None,
+) -> dict:
+    value = str(token or "").strip()
+    if not value or len(value) > 1024 or value.count(".") != 1:
+        raise ValueError("Submission identity is missing or malformed.")
+    encoded, supplied_signature = value.split(".", 1)
+    expected_signature = hmac.new(
+        _submission_identity_secret(),
+        encoded.encode("ascii"),
+        hashlib.sha256,
+    ).digest()
+    try:
+        decoded_signature = _urlsafe_b64decode(supplied_signature)
+    except (ValueError, UnicodeError) as exc:
+        raise ValueError("Submission identity signature is malformed.") from exc
+    if not hmac.compare_digest(decoded_signature, expected_signature):
+        raise ValueError("Submission identity signature is invalid.")
+    try:
+        payload = json.loads(_urlsafe_b64decode(encoded).decode("utf-8"))
+    except (ValueError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("Submission identity payload is malformed.") from exc
+    if not isinstance(payload, dict) or payload.get("version") != SUBMISSION_IDENTITY_VERSION:
+        raise ValueError("Submission identity version is unsupported.")
+    if not isinstance(payload.get("attempt_id"), str) or not isinstance(
+        payload.get("run_timestamp"), str
+    ):
+        raise ValueError("Submission identity payload is malformed.")
+    attempt_id = _normalized_submission_attempt_id(payload["attempt_id"])
+    if expected_attempt_id and attempt_id != _normalized_submission_attempt_id(expected_attempt_id):
+        raise ValueError("Submission identity does not match the submission attempt.")
+    return {
+        "attempt_id": attempt_id,
+        "run_timestamp": canonical_run_timestamp(payload["run_timestamp"]),
+    }
+
+
+def _submission_identity_secret() -> bytes:
+    configured = os.environ.get(SUBMISSION_IDENTITY_SECRET_ENV)
+    if configured:
+        return configured.encode("utf-8")
+    return _EPHEMERAL_SUBMISSION_IDENTITY_SECRET
+
+
+def _urlsafe_b64encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
+
+
+def _urlsafe_b64decode(value: str) -> bytes:
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", value or ""):
+        raise ValueError("Invalid base64url value.")
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode(value + padding)
 
 
 def _coerce_int(value, default):
@@ -352,6 +450,74 @@ def _shell_export(name: str, value: str | None) -> str:
     return f"export {name}={shlex.quote(str(value))}"
 
 
+def _shell_log(message: str) -> str:
+    return f"printf '%s\\n' {shlex.quote(str(message))}"
+
+
+def _validate_submission_script_fields(submission_spec: dict) -> None:
+    paths = submission_spec.get("paths") or {}
+    cluster = submission_spec.get("cluster") or {}
+    resources = submission_spec.get("resources") or {}
+    runner = submission_spec.get("runner") or {}
+    submission = submission_spec.get("submission") or {}
+
+    _require_pattern("run name", submission_spec.get("run_name"), MACHINE_IDENTIFIER_PATTERN)
+    _require_pattern("partition", cluster.get("partition"), SLURM_IDENTIFIER_PATTERN)
+    _require_pattern("account", cluster.get("account"), SLURM_IDENTIFIER_PATTERN)
+    _require_pattern("walltime", resources.get("walltime"), WALLTIME_PATTERN)
+    if submission.get("attempt_comment"):
+        _require_pattern(
+            "submission comment",
+            submission.get("attempt_comment"),
+            re.compile(r"^bmd_attempt:[0-9a-f-]{36}$"),
+        )
+
+    for key in (
+        "run_dir",
+        "remote_script",
+        "log_out",
+        "log_err",
+        "slurm_out",
+        "slurm_err",
+    ):
+        _require_safe_remote_path(f"paths.{key}", paths.get(key))
+    for key in ("python", "stdout", "stderr"):
+        _require_safe_remote_path(f"runner.{key}", runner.get(key))
+    for key in (
+        "script_name",
+        "submission_spec_name",
+        "backend_package_dir",
+        "backend_init_name",
+        "execution_module_name",
+    ):
+        _require_relative_filename(f"runner.{key}", runner.get(key))
+    for module_name in (submission_spec.get("modules") or {}).get("load") or []:
+        _require_pattern("module name", module_name, SAFE_MODULE_PATTERN)
+
+
+def _require_pattern(name: str, value, pattern: re.Pattern) -> str:
+    text = str(value or "")
+    if len(text) > 256 or not pattern.fullmatch(text):
+        raise ValueError(f"Unsafe or invalid {name} in submission specification.")
+    return text
+
+
+def _require_safe_remote_path(name: str, value) -> str:
+    path = str(value or "")
+    if len(path) > 4096 or not SAFE_REMOTE_PATH_PATTERN.fullmatch(path):
+        raise ValueError(f"Unsafe or invalid {name} in submission specification.")
+    if ".." in path.split("/"):
+        raise ValueError(f"Parent path components are not allowed in {name}.")
+    return path
+
+
+def _require_relative_filename(name: str, value) -> str:
+    filename = str(value or "")
+    if "/" in filename or "\\" in filename or filename in {".", ".."}:
+        raise ValueError(f"Unsafe or invalid {name} in submission specification.")
+    return _require_pattern(name, filename, RELATIVE_FILENAME_PATTERN)
+
+
 def _module_lines(submission_spec: dict) -> list[str]:
     modules = submission_spec.get("modules", {})
     lines = []
@@ -483,12 +649,12 @@ def build_job_body(submission_spec: dict) -> str:
     backend_module_checks = "\n".join(
         (
             f"test -f {shlex.quote(path)} || "
-            f'{{ echo "[sbatch] Missing execution module at {path}"; exit 1; }}'
+            f"{{ {_shell_log(f'[sbatch] Missing execution module at {path}')}; exit 1; }}"
         )
         if filename == REMOTE_EXECUTION_MODULE_FILENAME
         else (
             f"test -f {shlex.quote(path)} || "
-            f'{{ echo "[sbatch] Missing backend module {filename} at {path}"; exit 1; }}'
+            f"{{ {_shell_log(f'[sbatch] Missing backend module {filename} at {path}')}; exit 1; }}"
         )
         for filename, path in backend_module_paths.items()
     )
@@ -506,26 +672,27 @@ mkdir -p {shlex.quote(paths["run_dir"])}
 cd {shlex.quote(paths["run_dir"])}
 {mp_export}
 {_shell_export("BMD_SUBMISSION_ATTEMPT_ID", attempt_id) if attempt_id else "true"}
-echo "[sbatch] Using partition={submission_spec["cluster"]["partition"]} account={submission_spec["cluster"]["account"]}"
+{_shell_log(f'[sbatch] Using partition={submission_spec["cluster"]["partition"]} account={submission_spec["cluster"]["account"]}')}
 echo "[sbatch] VASP_CMD=$VASP_CMD"
 echo "[sbatch] SLURM_NTASKS=${{SLURM_NTASKS:-<unset>}}"
 which srun 2>/dev/null || true; srun --version 2>/dev/null | head -n1 || true
 which {shlex.quote(runner["python"])} || true
 {shlex.quote(runner["python"])} --version
-test -f {shlex.quote(run_job_path)} || {{ echo "[sbatch] Missing run_job.py at {run_job_path}"; exit 1; }}
-test -f {shlex.quote(submission_json_path)} || {{ echo "[sbatch] Missing submission.json at {submission_json_path}"; exit 1; }}
+test -f {shlex.quote(run_job_path)} || {{ {_shell_log(f'[sbatch] Missing run_job.py at {run_job_path}')}; exit 1; }}
+test -f {shlex.quote(submission_json_path)} || {{ {_shell_log(f'[sbatch] Missing submission.json at {submission_json_path}')}; exit 1; }}
 {backend_module_checks}
 export BMD_SUBMISSION_SPEC={shlex.quote(submission_json_path)}
-echo "[sbatch] Runner stdout: {runner['stdout']}"
-echo "[sbatch] Runner stderr: {runner['stderr']}"
-echo "[sbatch] SLURM stdout: {paths['slurm_out']}"
-echo "[sbatch] SLURM stderr: {paths['slurm_err']}"
+{_shell_log(f'[sbatch] Runner stdout: {runner["stdout"]}')}
+{_shell_log(f'[sbatch] Runner stderr: {runner["stderr"]}')}
+{_shell_log(f'[sbatch] SLURM stdout: {paths["slurm_out"]}')}
+{_shell_log(f'[sbatch] SLURM stderr: {paths["slurm_err"]}')}
 {shlex.quote(runner["python"])} -u {shlex.quote(runner["script_name"])} 1>{shlex.quote(runner["stdout"])} 2>{shlex.quote(runner["stderr"])}
 echo "Done. Logs:"; echo {shlex.quote(runner["stdout"])}; echo {shlex.quote(runner["stderr"])}
 """.lstrip()
 
 
 def build_sbatch_script(submission_spec: dict) -> str:
+    _validate_submission_script_fields(submission_spec)
     paths = submission_spec["paths"]
     run_name = submission_spec["run_name"]
     cluster = submission_spec["cluster"]
@@ -1106,7 +1273,7 @@ def create_submission_spec(
     resource_defaults = default_resources_for_workflow_spec(workflow_spec)
 
     sanitized_label = sanitize_label(label)
-    run_timestamp = timestamp or time.strftime("%Y%m%d-%H%M%S")
+    run_timestamp = canonical_run_timestamp(timestamp)
     run_name = f"{sanitized_label}-{run_timestamp}"
     stage_directories = workflow_stage_directories(workflow_spec)
     result_stage_directory = workflow_result_stage_directory(workflow_spec)
@@ -1271,6 +1438,10 @@ def create_submission_spec(
         spec,
         attempt_id=submission_attempt_id,
     )
+    spec["submission"]["identity_token"] = create_submission_identity_token(
+        run_timestamp,
+        spec["submission"]["attempt_id"],
+    )
     script_artifact = build_submission_script_artifact(spec)
     spec["provenance"]["execution"]["submission_script"] = {
         "path": spec["paths"]["remote_script"],
@@ -1304,6 +1475,8 @@ __all__ = [
     "build_standalone_slurm_example",
     "build_submission_summary",
     "build_submission_script_artifact",
+    "canonical_run_timestamp",
+    "create_submission_identity_token",
     "build_run_job_script",
     "build_submission_command",
     "create_submission_spec",
@@ -1318,6 +1491,7 @@ __all__ = [
     "submission_attempt_comment",
     "submission_attempt_fingerprint",
     "submission_attempt_id",
+    "verify_submission_identity_token",
     "submission_attempt_metadata",
     "summarize_potcar_species",
 ]
